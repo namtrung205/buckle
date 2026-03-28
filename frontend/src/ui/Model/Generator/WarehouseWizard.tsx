@@ -256,7 +256,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     }
 
     if (addWindLoad) {
-        const q = windMagnitude * 1000;
+        const q = windMagnitude;
         const windwardCols = frameData.map(f => f.columns[0].id);
         const leewardCols = frameData.map(f => f.columns[1].id);
         const allRafters = frameData.flatMap(f => f.rafters.map(r => r.id));
