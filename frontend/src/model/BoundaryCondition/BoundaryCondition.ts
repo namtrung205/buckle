@@ -49,7 +49,7 @@ class BoundaryCondition {
         this.dx = 1
         this.dy = 1
         this.dz = 1
-        this.rx = 0
+        this.rx = 1  // Restrain torsion to prevent mechanism/singularity
         this.ry = 0
         this.rz = 0
         this.targets.forEach(target => {
@@ -58,9 +58,9 @@ class BoundaryCondition {
         break
       case 'roller' :
         this.dx = 0
-        this.dy = 0
-        this.dz = 1
-        this.rx = 0
+        this.dy = 1  // MUST fix vertical translation (Y) to prevent rigid body rotation
+        this.dz = 1  // Fix out-of-plane translation
+        this.rx = 1  // Restrain torsion to prevent mechanism/singularity
         this.ry = 0
         this.rz = 0
         this.targets.forEach(target => {

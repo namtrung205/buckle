@@ -13,6 +13,7 @@ import random
 from .helpers import compute_section_properties
 import numpy as np
 import json
+import threading
 from .settings import *
 # Export public API
 __all__ = ['run_analysis']
@@ -51,7 +52,16 @@ def print_model_for_inspection(model: dict):
     print(json.dumps(model.get('loads', []), indent=2, default=str))
     print("\n" + "="*80 + "\n")
 
+
+# Global lock to ensure only one analysis runs at a time (OpenSees is a singleton)
+analysis_lock = threading.Lock()
+
 def run_analysis(model: dict):
+  # Use acquire with a timeout of 60 seconds to prevent total hang
+  acquired = analysis_lock.acquire(timeout=60)
+  if not acquired:
+      raise HTTPException(status_code=503, detail="Analysis engine is busy. Please try again in a few seconds.")
+      
   try:
     global output
     output = {}
@@ -114,11 +124,14 @@ def run_analysis(model: dict):
   except Exception as e:
       error_msg = str(e)
       # Check if this is a DPBSV error
-      if "DPBSV" in error_msg or "illegal value" in error_msg.lower():
-          print("\n!!! DPBSV ERROR DETECTED - Printing model for inspection !!!")
+      if "DPBSV" in error_msg or "illegal value" in error_msg.lower() or "singular" in error_msg.lower():
+          print("\n!!! SINGULARITY OR DPBSV ERROR DETECTED - Printing model for inspection !!!")
           print_model_for_inspection(model)
       print('ERROR: ', e)
       raise HTTPException(status_code=500, detail=str(e))
+  finally:
+      # Always release the lock
+      analysis_lock.release()
 
 def init():
     """Initializes a new OpenSees 3D model."""
@@ -171,14 +184,22 @@ def calculate_vecxz(member):
     cross_length = np.linalg.norm(cross_vec)
 
     # Determine local z-axis based on member orientation
-    if cross_length < 1e-6:  # Vertical member
-        vecxz = np.array([1, 0, 0])
-    else:  # Horizontal member
-        vecxz = np.array([0, 0, 1])
+    if cross_length < 1e-6:  # Element is parallel to the "up" vector (JSON Y)
+        # Try local X-axis (JSON X) as fallback for vertical members
+        fallback_up = np.array([1, 0, 0])
+        cross_fallback = np.cross(fallback_up, local_vecx)
+        if np.linalg.norm(cross_fallback) < 1e-6:
+            # If still parallel, use JSON Z as fallback
+            vecxz_json = np.array([0, 0, 1])
+        else:
+            vecxz_json = fallback_up
+    else:  # Normal horizontal or inclined member
+        vecxz_json = np.array([0, 0, 1])
         
-    vec = vecxz.tolist()
-    member['vecxz'] = vec
-    return vec
+    # Swap coordinates for OpenSees: JSON (vx, vy, vz) -> OpenSees (vx, vz, vy)
+    vecxz_ops = [float(vecxz_json[0]), float(vecxz_json[2]), float(vecxz_json[1])]
+    member['vecxz'] = vecxz_ops
+    return vecxz_ops
 
 def create_geometric_transformation(members):
     """Creates a linear geometric transformation for beam-column elements."""
@@ -215,12 +236,14 @@ def create_nodes(nodes):
 def get_release(release_type):
   if not release_type:
     return None, None
+  # Usually 'pinned' means releasing bending moments (ry, rz), NOT torsion (rx)!
+  # Releasing rx at both ends would create a singular matrix (unrestrained spin)
   if release_type == 'fixed-pinned':
-    return None, {'rx': 0, 'ry': 0, 'rz': 0}
+    return None, {'ry': 0, 'rz': 0}
   elif release_type == 'pinned-fixed':
-    return {'rx': 0, 'ry': 0, 'rz': 0}, None
+    return {'ry': 0, 'rz': 0}, None
   elif release_type == 'pinned-pinned':
-    return {'rx': 0, 'ry': 0, 'rz': 0}, {'rx': 0, 'ry': 0, 'rz': 0}
+    return {'ry': 0, 'rz': 0}, {'ry': 0, 'rz': 0}
   else:
     return None, None
 
@@ -245,8 +268,8 @@ def get_release_node(member, node_id, releases):
     constrained_dofs = []
     materials = []
     
-    # Stiffness for released DOFs (very low)
-    k_release = 1e-12
+    # Stiffness for released DOFs (small enough to act as a hinge, but large enough for double precision)
+    k_release = 1e-4
     
     # DOF mapping
     dof_mapping = {
@@ -371,23 +394,23 @@ def mesh_member(member):
         output['nodes'].append({
             'id': node_id,
             'x': x_coord, 
-            'y': z_coord,
-            'z': y_coord
+            'y': y_coord,
+            'z': z_coord
         })
         
         new_nodes.append({
           'id': node_id,
           'x': x_coord,
-          'y': z_coord,
-          'z': y_coord
+          'y': y_coord,
+          'z': z_coord
         })
     
     # Append the provided ending node
     new_nodes.append({
       'id': nj['id'],
       'x': nj['x'],
-      'y': nj['z'],
-      'z': nj['y']
+      'y': nj['y'],
+      'z': nj['z']
     })
     
     # Create elements between consecutive nodes
@@ -445,7 +468,9 @@ def apply_boundary_conditions(boundary_conditions):
         # Fix the support node (ground)
         ops.fix(support_node, 1, 1, 1, 1, 1, 1)
       else:      
-        ops.fix(target, dx, dy, dz, rx, ry, rz)
+        # Swap fixity: OpenSees coord 2 = JSON Z, OpenSees coord 3 = JSON Y
+        # JSON (dx, dy, dz, rx, ry, rz) -> OpenSees (dx, dz, dy, rx, rz, ry)
+        ops.fix(target, dx, dz, dy, rx, rz, ry)
       
 def apply_loads(loads):
     """Applies loads to the model."""
@@ -492,9 +517,19 @@ def apply_loads(loads):
 def run_static_analysis(model: dict = None):
     """Sets up and runs the static analysis."""
     try:
-        ops.system("BandSPD")
+        # Check system health
+        num_nodes = len(ops.getNodeTags())
+        num_elements = len(ops.getEleTags())
+        print(f"[ANALYSIS] Model statistics: {num_nodes} nodes, {num_elements} elements")
+        
+        # Use more robust solvers
+        # ops.system("FullGeneral") or ops.system("UmfPack")
+        try:
+            ops.system("FullGeneral")
+        except:
+            ops.system("BandGen")
         ops.numberer("RCM")
-        ops.constraints("Plain")
+        ops.constraints("Transformation")
         
         # Apply load in multiple steps instead of one
         num_steps = 10
