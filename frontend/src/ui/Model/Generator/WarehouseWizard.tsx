@@ -28,11 +28,11 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
   // State for parameters
   const [params, setParams] = useState({
     width: 20,
-    length: 30,
+    length: 10,
     height: 6,
     pitch: 15,
-    numBays: 5,
-    numPurlins: 6, // per roof side
+    numBays: 2,
+    numPurlins: 4, // spaces per roof side
     hasBracing: true,
     addSelfWeight: true,
     addWindLoad: true,
@@ -49,10 +49,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
   };
 
   const calculateArea = (section: Section): number => {
-    // If area is already specified in properties, use it
     if (section.properties?.A) return section.properties.A;
-
-    // Fallback calculation (assuming dimensions are in mm)
     let areaMm2 = 0;
     switch (section.type) {
         case 'Rectangular':
@@ -95,201 +92,160 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     const pitchRad = (pitch * Math.PI) / 180;
     const ridgeHeight = height + (width / 2) * Math.tan(pitchRad);
     
-    const framesNodes: Node[][] = [];
-    const columnsL: ElasticBeamColumn[] = [];
-    const columnsR: ElasticBeamColumn[] = [];
-    const raftersL: ElasticBeamColumn[] = [];
-    const raftersR: ElasticBeamColumn[] = [];
-    const purlins: ElasticBeamColumn[] = [];
-    const bracings: ElasticBeamColumn[] = [];
+    const frameData: {
+        baseL: Node,
+        baseR: Node,
+        eaveL: Node,
+        eaveR: Node,
+        ridge: Node,
+        raftNodesL: Node[],
+        raftNodesR: Node[],
+        columns: ElasticBeamColumn[],
+        rafters: ElasticBeamColumn[]
+    }[] = [];
 
-    // 1. Generate Frames
+    // --- 1. NODE & FRAME GENERATION ---
     for (let i = 0; i <= numBays; i++) {
         const z = i * bayLength;
-        const frameNodes: Node[] = [];
+        
+        // Helper to create & register node
+        const createNode = (x: number, y: number, z: number, name: string) => {
+            const node = new Node(new THREE.Vector3(x, y, z), name);
+            node.model = model;
+            node.create();
+            model.nodes.push(node);
+            return node;
+        };
 
-        // Base Left
-        const n1 = new Node(new THREE.Vector3(0, 0, z), `Base-L-${i}`);
-        n1.model = model;
-        n1.create();
-        model.nodes.push(n1);
-        frameNodes.push(n1);
+        const baseL = createNode(0, 0, z, `Base-L-${i}`);
+        const baseR = createNode(width, 0, z, `Base-R-${i}`);
+        const eaveL = createNode(0, height, z, `Eave-L-${i}`);
+        const eaveR = createNode(width, height, z, `Eave-R-${i}`);
+        const ridge = createNode(width / 2, ridgeHeight, z, `Ridge-${i}`);
 
-        // Eave Left
-        const n2 = new Node(new THREE.Vector3(0, height, z), `Eave-L-${i}`);
-        n2.model = model;
-        n2.create();
-        model.nodes.push(n2);
-        frameNodes.push(n2);
+        // Rafter nodes - Left side (from Eave to Ridge)
+        const raftNodesL: Node[] = [eaveL];
+        for (let p = 1; p < numPurlins; p++) {
+            const ratio = p / numPurlins;
+            const pos = new THREE.Vector3().lerpVectors(eaveL.mesh.position, ridge.mesh.position, ratio);
+            raftNodesL.push(createNode(pos.x, pos.y, pos.z, `Raft-L-Node-${i}-${p}`));
+        }
+        raftNodesL.push(ridge);
 
-        // Ridge
-        const n3 = new Node(new THREE.Vector3(width / 2, ridgeHeight, z), `Ridge-${i}`);
-        n3.model = model;
-        n3.create();
-        model.nodes.push(n3);
-        frameNodes.push(n3);
+        // Rafter nodes - Right side (from Eave to Ridge)
+        const raftNodesR: Node[] = [eaveR];
+        for (let p = 1; p < numPurlins; p++) {
+            const ratio = p / numPurlins;
+            const pos = new THREE.Vector3().lerpVectors(eaveR.mesh.position, ridge.mesh.position, ratio);
+            raftNodesR.push(createNode(pos.x, pos.y, pos.z, `Raft-R-Node-${i}-${p}`));
+        }
+        raftNodesR.push(ridge);
 
-        // Eave Right
-        const n4 = new Node(new THREE.Vector3(width, height, z), `Eave-R-${i}`);
-        n4.model = model;
-        n4.create();
-        model.nodes.push(n4);
-        frameNodes.push(n4);
-
-        // Base Right
-        const n5 = new Node(new THREE.Vector3(width, 0, z), `Base-R-${i}`);
-        n5.model = model;
-        n5.create();
-        model.nodes.push(n5);
-        frameNodes.push(n5);
-
-        framesNodes.push(frameNodes);
+        // --- Create Frame Members ---
+        const columns: ElasticBeamColumn[] = [];
+        const rafters: ElasticBeamColumn[] = [];
 
         // Columns
-        const colL = new ElasticBeamColumn(model, `Col-L-${i}`, [n1, n2], section);
+        const colL = new ElasticBeamColumn(model, `Col-L-${i}`, [baseL, eaveL], section);
         colL.create();
         model.members.push(colL);
-        columnsL.push(colL);
+        columns.push(colL);
 
-        const colR = new ElasticBeamColumn(model, `Col-R-${i}`, [n5, n4], section);
+        const colR = new ElasticBeamColumn(model, `Col-R-${i}`, [baseR, eaveR], section);
         colR.create();
         model.members.push(colR);
-        columnsR.push(colR);
+        columns.push(colR);
 
-        // Rafters
-        const raftL = new ElasticBeamColumn(model, `Raft-L-${i}`, [n2, n3], section);
-        raftL.create();
-        model.members.push(raftL);
-        raftersL.push(raftL);
+        // Segmented Rafters L
+        for (let s = 0; s < raftNodesL.length - 1; s++) {
+            const raftSeg = new ElasticBeamColumn(model, `Raft-L-Seg-${i}-${s}`, [raftNodesL[s], raftNodesL[s+1]], section);
+            raftSeg.create();
+            model.members.push(raftSeg);
+            rafters.push(raftSeg);
+        }
 
-        const raftR = new ElasticBeamColumn(model, `Raft-R-${i}`, [n3, n4], section);
-        raftR.create();
-        model.members.push(raftR);
-        raftersR.push(raftR);
+        // Segmented Rafters R
+        for (let s = 0; s < raftNodesR.length - 1; s++) {
+            const raftSeg = new ElasticBeamColumn(model, `Raft-R-Seg-${i}-${s}`, [raftNodesR[s], raftNodesR[s+1]], section);
+            raftSeg.create();
+            model.members.push(raftSeg);
+            rafters.push(raftSeg);
+        }
 
-        // Fixed Supports at base
-        const bcL = new BoundaryCondition(model, {
-            name: `Support-L-${i}`,
-            targets: [n1.id],
-            type: 'fixed',
-            dx: 1, dy: 1, dz: 1, rx: 1, ry: 1, rz: 1
-        } as any);
-        bcL.createOrUpdate();
-        model.boundaryConditions.push(bcL);
+        // --- Boundary Conditions ---
+        [baseL, baseR].forEach((node, idx) => {
+            const bc = new BoundaryCondition(model, {
+                name: `Support-${idx === 0? 'L':'R'}-${i}`,
+                targets: [node.id],
+                type: 'fixed',
+                dx: 1, dy: 1, dz: 1, rx: 1, ry: 1, rz: 1
+            } as any);
+            bc.createOrUpdate();
+        });
 
-        const bcR = new BoundaryCondition(model, {
-            name: `Support-R-${i}`,
-            targets: [n5.id],
-            type: 'fixed',
-            dx: 1, dy: 1, dz: 1, rx: 1, ry: 1, rz: 1
-        } as any);
-        bcR.createOrUpdate();
-        model.boundaryConditions.push(bcR);
+        frameData.push({ baseL, baseR, eaveL, eaveR, ridge, raftNodesL, raftNodesR, columns, rafters });
     }
 
-    // 2. Generate Purlins
-    if (numPurlins > 0) {
-        for (let i = 0; i < numBays; i++) {
-            const zStart = framesNodes[i];
-            const zEnd = framesNodes[i+1];
+    // --- 2. PURLIN GENERATION (LONGITUDINAL) ---
+    const allPurlins: ElasticBeamColumn[] = [];
+    for (let i = 0; i < numBays; i++) {
+        const f1 = frameData[i];
+        const f2 = frameData[i+1];
 
-            // Purlins along rafters
-            for (let p = 0; p <= numPurlins; p++) {
-                const ratio = p / numPurlins;
-                
-                // Left side
-                const startPosL = new THREE.Vector3().lerpVectors(zStart[1].mesh.position, zStart[2].mesh.position, ratio);
-                const endPosL = new THREE.Vector3().lerpVectors(zEnd[1].mesh.position, zEnd[2].mesh.position, ratio);
-                
-                if (p === 0 || p === numPurlins) {
-                    const nodeIdx = p === 0 ? 1 : 2;
-                    const purlinMember = new ElasticBeamColumn(model, `Purlin-L-${i}-${p}`, [zStart[nodeIdx], zEnd[nodeIdx]], section);
-                    purlinMember.create();
-                    model.members.push(purlinMember);
-                    purlins.push(purlinMember);
-                } else {
-                    const sn = new Node(startPosL, `Purlin-Node-L-${i}-${p}`);
-                    sn.model = model;
-                    sn.create();
-                    model.nodes.push(sn);
-                    
-                    const en = new Node(endPosL, `Purlin-Node-L-${i+1}-${p}`);
-                    en.model = model;
-                    en.create();
-                    model.nodes.push(en);
+        // Purlins on Left Rafters (skip last node as it's the Ridge, handled separately if needed or just part of loop)
+        for (let p = 0; p < f1.raftNodesL.length; p++) {
+            const purlin = new ElasticBeamColumn(model, `Purlin-L-${i}-${p}`, [f1.raftNodesL[p], f2.raftNodesL[p]], section);
+            purlin.create();
+            model.members.push(purlin);
+            allPurlins.push(purlin);
+        }
 
-                    const purlinMember = new ElasticBeamColumn(model, `Purlin-L-${i}-${p}`, [sn, en], section);
-                    purlinMember.create();
-                    model.members.push(purlinMember);
-                    purlins.push(purlinMember);
-                }
-
-                // Right side
-                if (p === 0) { // Ridge already done above
-                    const purlinMember = new ElasticBeamColumn(model, `Purlin-R-${i}-0`, [zStart[3], zEnd[3]], section);
-                    purlinMember.create();
-                    model.members.push(purlinMember);
-                    purlins.push(purlinMember);
-                } else if (p < numPurlins) {
-                    const startPosR = new THREE.Vector3().lerpVectors(zStart[3].mesh.position, zStart[2].mesh.position, ratio);
-                    const endPosR = new THREE.Vector3().lerpVectors(zEnd[3].mesh.position, zEnd[2].mesh.position, ratio);
-
-                    const sn = new Node(startPosR, `Purlin-Node-R-${i}-${p}`);
-                    sn.model = model;
-                    sn.create();
-                    model.nodes.push(sn);
-                    
-                    const en = new Node(endPosR, `Purlin-Node-R-${i+1}-${p}`);
-                    en.model = model;
-                    en.create();
-                    model.nodes.push(en);
-
-                    const purlinMember = new ElasticBeamColumn(model, `Purlin-R-${i}-${p}`, [sn, en], section);
-                    purlinMember.create();
-                    model.members.push(purlinMember);
-                    purlins.push(purlinMember);
-                }
-            }
+        // Purlins on Right Rafters (skip Ridge as it was already covered by Left Side raftNodesL[last] which IS ridge)
+        for (let p = 0; p < f1.raftNodesR.length - 1; p++) {
+            const purlin = new ElasticBeamColumn(model, `Purlin-R-${i}-${p}`, [f1.raftNodesR[p], f2.raftNodesR[p]], section);
+            purlin.create();
+            model.members.push(purlin);
+            allPurlins.push(purlin);
         }
     }
 
-    // 3. Generate Bracing (Side walls and roof in first/last bays)
+    // --- 3. BRACING GENERATION ---
+    const allBracings: ElasticBeamColumn[] = [];
     if (hasBracing) {
         const bracingBays = [0, numBays - 1]; // First and last bay
         for (const b of bracingBays) {
             if (b >= numBays) continue;
-            const zStart = framesNodes[b];
-            const zEnd = framesNodes[b+1];
+            const f1 = frameData[b];
+            const f2 = frameData[b+1];
 
             const addBrace = (n1: Node, n2: Node, label: string) => {
                 const bMember = new ElasticBeamColumn(model, label, [n1, n2], section);
                 bMember.create();
                 model.members.push(bMember);
-                bracings.push(bMember);
+                allBracings.push(bMember);
             };
 
-            addBrace(zStart[0], zEnd[1], `Brace-Side-L-${b}-1`);
-            addBrace(zStart[1], zEnd[0], `Brace-Side-L-${b}-2`);
-            addBrace(zStart[4], zEnd[3], `Brace-Side-R-${b}-1`);
-            addBrace(zStart[3], zEnd[4], `Brace-Side-R-${b}-2`);
-            addBrace(zStart[1], zEnd[2], `Brace-Roof-L-${b}-1`);
-            addBrace(zStart[2], zEnd[1], `Brace-Roof-L-${b}-2`);
-            addBrace(zStart[3], zEnd[2], `Brace-Roof-R-${b}-1`);
-            addBrace(zStart[2], zEnd[3], `Brace-Roof-R-${b}-2`);
+            // Side L
+            addBrace(f1.baseL, f2.eaveL, `Brace-Side-L-${b}-1`);
+            addBrace(f1.eaveL, f2.baseL, `Brace-Side-L-${b}-2`);
+            // Side R
+            addBrace(f1.baseR, f2.eaveR, `Brace-Side-R-${b}-1`);
+            addBrace(f1.eaveR, f2.baseR, `Brace-Side-R-${b}-2`);
+            // Roof L (Eave to Ridge)
+            addBrace(f1.eaveL, f2.ridge, `Brace-Roof-L-${b}-1`);
+            addBrace(f1.ridge, f2.eaveL, `Brace-Roof-L-${b}-2`);
+            // Roof R (Eave to Ridge)
+            addBrace(f1.eaveR, f2.ridge, `Brace-Roof-R-${b}-1`);
+            addBrace(f1.ridge, f2.eaveR, `Brace-Roof-R-${b}-2`);
         }
     }
 
-    // 4. Enhanced Loading (Self-weight & Wind)
-    
-    // a. Self-Weight
-    if (addSelfWeight) {
-        const area = calculateArea(section);
-        const density = 7850; // kg/m3
-        const gravity = 9.81;
-        const weight = area * density * gravity; // N/m
+    // --- 4. LOADING ---
+    const area = calculateArea(section);
+    const weight = (area * 7850 * 9.81) / 1000; // kN/m
 
-        // Apply to all frame members and purlins (bracing usually small, but can be included)
-        const allMembers = [...columnsL, ...columnsR, ...raftersL, ...raftersR, ...purlins, ...bracings];
+    if (addSelfWeight) {
+        const allMembers = model.members;
         const selfWeightLoad = new Load(model, {
             name: "Self-Weight",
             targets: allMembers.map(m => m.id),
@@ -299,37 +255,15 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         selfWeightLoad.createOrUpdate();
     }
 
-    // b. Wind Load (Simulated)
     if (addWindLoad) {
-        // Assume wind from Left (Positive X direction)
-        const q = windMagnitude * 1000; // Convert kN/m to N/m
+        const q = windMagnitude * 1000;
+        const windwardCols = frameData.map(f => f.columns[0].id);
+        const leewardCols = frameData.map(f => f.columns[1].id);
+        const allRafters = frameData.flatMap(f => f.rafters.map(r => r.id));
 
-        // Wind on Windward Columns (Pressure)
-        const windwardColLoad = new Load(model, {
-            name: "Wind-Pressure-L",
-            targets: columnsL.map(c => c.id),
-            type: 'linear',
-            value: new THREE.Vector3(q, 0, 0)
-        } as any);
-        windwardColLoad.createOrUpdate();
-
-        // Wind on Leeward Columns (Suction)
-        const leewardColLoad = new Load(model, {
-            name: "Wind-Suction-R",
-            targets: columnsR.map(c => c.id),
-            type: 'linear',
-            value: new THREE.Vector3(q * 0.5, 0, 0) // Reduced suction
-        } as any);
-        leewardColLoad.createOrUpdate();
-
-        // Wind on Rafters (Upward lift/suction)
-        const rafterLoad = new Load(model, {
-            name: "Wind-Lift-Rafters",
-            targets: [...raftersL, ...raftersR].map(r => r.id),
-            type: 'linear',
-            value: new THREE.Vector3(0, q * 0.8, 0) // Upward
-        } as any);
-        rafterLoad.createOrUpdate();
+        new Load(model, { name: "Wind-Pressure", targets: windwardCols, type: 'linear', value: new THREE.Vector3(q, 0, 0) } as any).createOrUpdate();
+        new Load(model, { name: "Wind-Suction", targets: leewardCols, type: 'linear', value: new THREE.Vector3(q * 0.5, 0, 0) } as any).createOrUpdate();
+        new Load(model, { name: "Wind-Lift", targets: allRafters, type: 'linear', value: new THREE.Vector3(0, q * 0.8, 0) } as any).createOrUpdate();
     }
 
     onClose();
@@ -349,52 +283,16 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         </Typography>
         <Grid container spacing={2}>
           <Grid item xs={6}>
-            <TextField
-              label="Width"
-              name="width"
-              type="number"
-              value={params.width}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              placeholder="20"
-            />
+            <TextField label="Width" name="width" type="number" value={params.width} onChange={handleChange} fullWidth size="small" placeholder="20" />
           </Grid>
           <Grid item xs={6}>
-            <TextField
-              label="Length"
-              name="length"
-              type="number"
-              value={params.length}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              placeholder="50"
-            />
+            <TextField label="Length" name="length" type="number" value={params.length} onChange={handleChange} fullWidth size="small" placeholder="30" />
           </Grid>
           <Grid item xs={6}>
-            <TextField
-              label="Height"
-              name="height"
-              type="number"
-              value={params.height}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              placeholder="6"
-            />
+            <TextField label="Height" name="height" type="number" value={params.height} onChange={handleChange} fullWidth size="small" placeholder="6" />
           </Grid>
           <Grid item xs={6}>
-            <TextField
-              label="Roof Pitch (°)"
-              name="pitch"
-              type="number"
-              value={params.pitch}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              placeholder="15"
-            />
+            <TextField label="Roof Pitch (°)" name="pitch" type="number" value={params.pitch} onChange={handleChange} fullWidth size="small" placeholder="15" />
           </Grid>
         </Grid>
 
@@ -405,114 +303,50 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         </Typography>
         <Grid container spacing={2}>
           <Grid item xs={6}>
-            <TextField
-              label="Number of Bays"
-              name="numBays"
-              type="number"
-              value={params.numBays}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              placeholder="10"
-            />
+            <TextField label="Number of Bays" name="numBays" type="number" value={params.numBays} onChange={handleChange} fullWidth size="small" placeholder="5" />
           </Grid>
           <Grid item xs={6}>
-            <TextField
-              label="Purlins (count/side)"
-              name="numPurlins"
-              type="number"
-              value={params.numPurlins}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              placeholder="8"
-            />
+            <TextField label="Purlins (count/side)" name="numPurlins" type="number" value={params.numPurlins} onChange={handleChange} fullWidth size="small" placeholder="6" />
           </Grid>
           
           <Grid item xs={8}>
             <FormControlLabel
-              control={
-                <Checkbox
-                  name="addWindLoad"
-                  checked={params.addWindLoad}
-                  onChange={handleChange}
-                  sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }}
-                />
-              }
+              control={<Checkbox name="addWindLoad" checked={params.addWindLoad} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }} />}
               label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Automatic Wind Load</Typography>}
             />
           </Grid>
           <Grid item xs={4}>
-            <TextField
-              label="Wind (kN/m)"
-              name="windMagnitude"
-              type="number"
-              value={params.windMagnitude}
-              onChange={handleChange}
-              fullWidth
-              size="small"
-              placeholder="2.0"
-              disabled={!params.addWindLoad}
-            />
+            <TextField label="Wind (kN/m)" name="windMagnitude" type="number" value={params.windMagnitude} onChange={handleChange} fullWidth size="small" placeholder="2.0" disabled={!params.addWindLoad} />
           </Grid>
 
           <Grid item xs={12}>
             <FormControlLabel
-              control={
-                <Checkbox
-                  name="addSelfWeight"
-                  checked={params.addSelfWeight}
-                  onChange={handleChange}
-                  sx={{ color: '#666', '&.Mui-checked': { color: '#ffeb3b' } }}
-                />
-              }
+              control={<Checkbox name="addSelfWeight" checked={params.addSelfWeight} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#ffeb3b' } }} />}
               label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Calculate & Add Self-Weight (Steel)</Typography>}
             />
           </Grid>
 
           <Grid item xs={12}>
             <FormControlLabel
-              control={
-                <Checkbox
-                  name="hasBracing"
-                  checked={params.hasBracing}
-                  onChange={handleChange}
-                  sx={{ color: '#666', '&.Mui-checked': { color: '#4caf50' } }}
-                />
-              }
+              control={<Checkbox name="hasBracing" checked={params.hasBracing} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#4caf50' } }} />}
               label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Cross Bracing</Typography>}
             />
           </Grid>
 
           <Grid item xs={12}>
             <FormControlLabel
-              control={
-                <Checkbox
-                  name="clearExisting"
-                  checked={params.clearExisting}
-                  onChange={handleChange}
-                  sx={{ color: '#666', '&.Mui-checked': { color: '#f44336' } }}
-                />
-              }
+              control={<Checkbox name="clearExisting" checked={params.clearExisting} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#f44336' } }} />}
               label={<Typography variant="body2" sx={{ color: '#e0e0e0', fontWeight: 500 }}>Clear existing model before generation</Typography>}
             />
           </Grid>
         </Grid>
 
         <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
-          <Button onClick={onClose} sx={{ color: '#aaa' }}>
-            Cancel
-          </Button>
+          <Button onClick={onClose} sx={{ color: '#aaa' }}>Cancel</Button>
           <Button
             onClick={handleGenerate}
             variant="contained"
-            sx={{
-              bgcolor: '#4caf50',
-              '&:hover': { bgcolor: '#388e3c' },
-              textTransform: 'none',
-              px: 4,
-              fontWeight: 600
-            }}
+            sx={{ bgcolor: '#4caf50', '&:hover': { bgcolor: '#388e3c' }, textTransform: 'none', px: 4, fontWeight: 600 }}
           >
             Generate & Load Model
           </Button>

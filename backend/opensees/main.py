@@ -523,29 +523,34 @@ def run_static_analysis(model: dict = None):
         print(f"[ANALYSIS] Model statistics: {num_nodes} nodes, {num_elements} elements")
         
         # Use more robust solvers
-        # ops.system("FullGeneral") or ops.system("UmfPack")
         try:
             ops.system("FullGeneral")
         except:
             ops.system("BandGen")
+        
         ops.numberer("RCM")
         ops.constraints("Transformation")
         
-        # Apply load in multiple steps instead of one
+        # Apply load in multiple steps
         num_steps = 10
         load_step = 1.0 / num_steps
         
-        # Set integrator before creating analysis
         ops.integrator("LoadControl", load_step)
         
-        # Set convergence test with slightly relaxed tolerance
-        ops.test("NormUnbalance", 1.0e-5, 50)
-        
+        # Use displacement-based convergence (robust for stiff steel structures)
+        ops.test("NormDispIncr", 1.0e-6, 50)
         ops.algorithm("Newton")
         ops.analysis("Static")
         
-        # Perform the analysis in incremental steps
+        # Perform the analysis
         ok = ops.analyze(num_steps)
+        
+        # Fallback: if Newton fails, try Modified Newton with relaxed tolerance
+        if ok != 0:
+            print(f"[ANALYSIS] Newton failed (code {ok}), trying ModifiedNewton with relaxed tolerance...")
+            ops.test("NormDispIncr", 1.0e-4, 100)
+            ops.algorithm("ModifiedNewton")
+            ok = ops.analyze(num_steps)
         
         if ok != 0:
             print(f"Analysis failed with error code: {ok}")
@@ -554,6 +559,7 @@ def run_static_analysis(model: dict = None):
         return 0
     except Exception as e:
         error_msg = str(e)
+        print(f"[ANALYSIS ERROR] {error_msg}")
         # Check if this is a DPBSV error
         if "DPBSV" in error_msg or "illegal value" in error_msg.lower():
             print("\n!!! DPBSV ERROR DETECTED IN run_static_analysis - Printing model for inspection !!!")
