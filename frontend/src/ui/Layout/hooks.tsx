@@ -12,6 +12,7 @@ type DialogName =
   | 'supports'
   | 'materials'
   | 'copy'
+  | 'warehouseWizard'
   | null;
 
 export function useActiveDialog() {
@@ -44,6 +45,7 @@ export function useActiveDialog() {
     supports: activeDialog === 'supports',
     materials: activeDialog === 'materials',
     copy: activeDialog === 'copy',
+    warehouseWizard: activeDialog === 'warehouseWizard',
   }), [activeDialog]);
 
   return { activeDialog, open, close, isOpen, dialogs };

@@ -26,6 +26,7 @@ import Load from '../../model/Load/Load';
 import * as THREE from 'three';
 import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
+import WarehouseWizard from '../Model/Generator/WarehouseWizard';
 import { useActiveDialog } from './hooks';
 const { VITE_BACKEND_SERVER } = import.meta.env;
 const APP_VERSION = '0.0.2';
@@ -456,6 +457,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     // { title: 'Column', label: 'Column', iconImage: { src: '/column.png', alt: 'Column', size: 18 }, onClick: () => handleToolChange('column')},
     { title: 'Loads', label: 'Loads', iconImage: { src: '/loads.png', alt: 'Loads', size: 22 }, onClick: () => open('loads') },
     { title: 'Supports', label: 'Supports', iconImage: { src: '/supports.png', alt: 'Supports', size: 22 }, onClick: () => open('supports') },
+    { title: 'Warehouse', label: 'Warehouse', iconImage: { src: '/warehouse.png', alt: 'Generator', size: 18 }, onClick: () => open('warehouseWizard') },
     { title: 'Move', label: 'Move', icon: <MoveIcon sx={{ fontSize: 18 }} />, onClick: () => open('move') },
     // { title: 'Copy', label: 'Copy', iconImage: { src: '/copy.png', alt: 'Copy', size: 18 }, onClick: () => open('copy'), disabled : model?.selector.selected.length === 0 },
   ];
@@ -594,6 +596,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       <AddOrEditLoad open={dialogs.loads} onClose={close} selectedLoad={null} />
       <AddOrEditBoundaryCondition open={dialogs.supports} onClose={close} selectedBoundaryCondition={null} />
       <Copy open={dialogs.copy} onClose={close} />
+      <WarehouseWizard open={dialogs.warehouseWizard} onClose={close} />
     </Box>
   );
 });
