@@ -129,7 +129,8 @@ async def proxy_middleware(request: Request, call_next):
     return await call_next(request)
 
 # Serve the static files from the React build directory only in production
-if ENVIRONMENT != "development":
+# and only if the build directory exists (not in Docker where Nginx handles the frontend)
+if ENVIRONMENT != "development" and os.path.isdir(os.path.join(build_dir, 'static')):
     app.mount("/static", StaticFiles(directory=os.path.join(build_dir, 'static')), name="static")
     
     @app.get("/")
