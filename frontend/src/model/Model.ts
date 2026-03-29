@@ -65,7 +65,7 @@ export class Model {
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
   visibility : Visibility
-  ws : WebSocketHandler = new WebSocketHandler('ws://localhost:8000/ws/1', this)
+  ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
 
   static getInstance(): Model {
     if (Model.instance === null) {
@@ -145,6 +145,7 @@ export class Model {
       this.renderer.setSize( window.innerWidth, window.innerHeight );
       this.container?.appendChild( this.renderer.domElement )
       this.scene.background = new THREE.Color('white');
+      await this.ws.connect();
       if (this.ws.isConnected())  console.log('Connected!');
       
     } catch (error) {

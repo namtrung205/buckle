@@ -28,9 +28,14 @@ const Diagrams = () => {
   const handleApply = () => {
     if (!selectedOption)  {
       model.postProcessing.dispose()
+      // Optionally could turn them back on here, but the user specifies turning them OFF when showing moments.
       return
     }
     model.postProcessing.showDiagram(selectedOption, Number(scale), selectedMembers)
+    
+    // Auto-hide loads and sections to see the diagram clearly
+    model.visibility.showOrHideLoads(false);
+    model.visibility.showOrHideSections(false);
   };
 
   return (

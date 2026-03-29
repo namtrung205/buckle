@@ -29,7 +29,8 @@ const Settings = ({open, onClose}) => {
     nodeLabels : { label: 'Node Labels', value: 'nodeLabels' },
     members : { label: 'Members', value: 'members'},
     memberLabels : { label: 'Member Labels', value: 'memberLabels', },
-    sections: { label: 'Sections', value: 'sections' }
+    sections: { label: 'Sections', value: 'sections' },
+    loads: { label: 'Loads', value: 'loads' }
   }
 
   const handleChangeSnap = (e) => {
@@ -64,6 +65,9 @@ const Settings = ({open, onClose}) => {
         break;
       case 'sections':
         model.visibility.showOrHideSections(checked)
+        break;
+      case 'loads':
+        model.visibility.showOrHideLoads(checked)
         break;
       default:
         break;
