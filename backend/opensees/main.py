@@ -122,12 +122,12 @@ def run_analysis(model: dict, log_callback=None):
     # Run the analysis
     _log("[ANALYSIS] Starting static analysis...")
     t0 = time.time()
-    run_static_analysis(model)
-    _log(f"[ANALYSIS] ✓ Static analysis completed successfully in {time.time()-t0:.3f}s")
+    run_static_analysis(model, _log)
+    _log(f"[ANALYSIS] ✓ Static analysis completed in {time.time()-t0:.3f}s")
 
     # Extract results
     t0 = time.time()
-    extract_results()
+    extract_results(_log)
     _log(f"[ANALYSIS] ✓ Results extracted in {time.time()-t0:.3f}s")
     # print('output: ', output)
     
@@ -532,13 +532,17 @@ def apply_loads(loads):
             fz = value['y'] * 1E3
             ops.load(id, fx, fy, fz, 0.0, 0.0, 0.0)
 
-def run_static_analysis(model: dict = None):
+def run_static_analysis(model: dict = None, log_callback=None):
     """Sets up and runs the static analysis."""
+    def _log(msg: str):
+        print(msg, flush=True)
+        if log_callback: log_callback(msg)
+
     try:
         # Check system health
         num_nodes = len(ops.getNodeTags())
         num_elements = len(ops.getEleTags())
-        print(f"[ANALYSIS] Model statistics: {num_nodes} nodes, {num_elements} elements")
+        _log(f"[ANALYSIS] Model statistics: {num_nodes} nodes, {num_elements} elements")
         
         # Use more robust solvers
         try:
@@ -560,24 +564,30 @@ def run_static_analysis(model: dict = None):
         ops.algorithm("Newton")
         ops.analysis("Static")
         
-        # Perform the analysis
-        ok = ops.analyze(num_steps)
-        
-        # Fallback: if Newton fails, try Modified Newton with relaxed tolerance
-        if ok != 0:
-            print(f"[ANALYSIS] Newton failed (code {ok}), trying ModifiedNewton with relaxed tolerance...")
-            ops.test("NormDispIncr", 1.0e-4, 100)
-            ops.algorithm("ModifiedNewton")
-            ok = ops.analyze(num_steps)
-        
-        if ok != 0:
-            print(f"Analysis failed with error code: {ok}")
-            raise Exception(f"Analysis failed to converge")
-        
+        # Perform the analysis step-by-step to show progress
+        for i in range(num_steps):
+            ok = ops.analyze(1)
+            
+            # Fallback: if Newton fails, try Modified Newton with relaxed tolerance
+            if ok != 0:
+                _log(f"[ANALYSIS]   > Newton failed at step {i+1}, trying ModifiedNewton...")
+                ops.test("NormDispIncr", 1.0e-4, 100)
+                ops.algorithm("ModifiedNewton")
+                ok = ops.analyze(1)
+                # Restore original algorithm for next steps
+                ops.test("NormDispIncr", 1.0e-6, 50)
+                ops.algorithm("Newton")
+            
+            if ok != 0:
+                _log(f"[ANALYSIS]   > Analysis failed to converge at step {i+1}")
+                raise Exception(f"Analysis failed to converge at step {i+1}")
+            else:
+                _log(f"[ANALYSIS]   > Completed load step {i+1}/{num_steps}")
+                
         return 0
     except Exception as e:
         error_msg = str(e)
-        print(f"[ANALYSIS ERROR] {error_msg}")
+        _log(f"[ANALYSIS ERROR] {error_msg}")
         # Check if this is a DPBSV error
         if "DPBSV" in error_msg or "illegal value" in error_msg.lower():
             print("\n!!! DPBSV ERROR DETECTED IN run_static_analysis - Printing model for inspection !!!")
@@ -606,13 +616,26 @@ def extract_node_displacements():
     except Exception as e:
       print(f"Warning: Could not extract displacement for node {node_id}: {e}")
 
-def extract_results():
+def extract_results(log_callback=None):
   """Extracts and processes results from the analysis."""
+  def _log(msg: str):
+      print(msg, flush=True)
+      if log_callback: log_callback(msg)
+      
   members = output['members']
   
+  _log(f"[ANALYSIS]   > Extracting displacements for {len(output['nodes'])} nodes...")
   extract_node_displacements()
 
-  for member in members:
+  _log(f"[ANALYSIS]   > Extracting internal forces for {len(members)} structural members...")
+  
+  total_members = len(members)
+  log_interval = max(1, total_members // 10) # Log every 10%
+  
+  for idx, member in enumerate(members):
+    if (idx + 1) % log_interval == 0 or idx == total_members - 1:
+        _log(f"[ANALYSIS]     ... processed sections for {idx + 1}/{total_members} members")
+        
     mesh = member['mesh']
     nodes = mesh['nodes']
     child_members = mesh['members']
