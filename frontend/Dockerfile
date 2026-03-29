@@ -13,6 +13,10 @@ RUN npm install --legacy-peer-deps
 # Copy the rest of the application code
 COPY . .
 
+# Inject backend URL at build time (passed via docker-compose build args)
+ARG VITE_BACKEND_SERVER
+ENV VITE_BACKEND_SERVER=$VITE_BACKEND_SERVER
+
 # Build the application
 RUN npm run build
 

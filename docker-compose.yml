@@ -21,6 +21,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_BACKEND_SERVER=${VITE_BACKEND_SERVER}
     container_name: buckle-frontend
     restart: always
     depends_on:
