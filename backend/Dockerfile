@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtcl8.6 \
     liblapack3 \
     libblas3 \
+    libopenblas-dev \
     libglu1-mesa \
     libgl1 \
     libsm6 \

@@ -544,11 +544,20 @@ def run_static_analysis(model: dict = None, log_callback=None):
         num_elements = len(ops.getEleTags())
         _log(f"[ANALYSIS] Model statistics: {num_nodes} nodes, {num_elements} elements")
         
-        # Use more robust solvers
-        try:
+        # Use sparse solver - much faster for FEM sparse stiffness matrices
+        # FullGeneral (dense O(n³)) was causing 100x slowdown on Linux vs Windows
+        solver_set = False
+        for solver in ["SparseSYM", "BandGenLinLapack", "BandGen"]:
+            try:
+                ops.system(solver)
+                _log(f"[ANALYSIS] Using solver: {solver}")
+                solver_set = True
+                break
+            except:
+                continue
+        if not solver_set:
             ops.system("FullGeneral")
-        except:
-            ops.system("BandGen")
+            _log("[ANALYSIS] Warning: Using FullGeneral solver (may be slow)")
         
         ops.numberer("RCM")
         ops.constraints("Transformation")
