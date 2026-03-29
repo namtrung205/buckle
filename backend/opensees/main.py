@@ -14,6 +14,7 @@ from .helpers import compute_section_properties
 import numpy as np
 import json
 import threading
+import time
 from .settings import *
 # Export public API
 __all__ = ['run_analysis']
@@ -56,15 +57,21 @@ def print_model_for_inspection(model: dict):
 # Global lock to ensure only one analysis runs at a time (OpenSees is a singleton)
 analysis_lock = threading.Lock()
 
-def run_analysis(model: dict):
+def run_analysis(model: dict, log_callback=None):
   # Use acquire with a timeout of 60 seconds to prevent total hang
+  
+  def _log(msg: str):
+      print(msg, flush=True)
+      if log_callback:
+          log_callback(msg)
+          
   acquired = analysis_lock.acquire(timeout=60)
   if not acquired:
       raise HTTPException(status_code=503, detail="Analysis engine is busy. Please try again in a few seconds.")
       
   try:
+    start_total_time = time.time()
     global output
-    output = {}
     output = {}
     output['nodes'] = []
     output['members'] = []
@@ -75,50 +82,61 @@ def run_analysis(model: dict):
     loads = model['loads']
     boundary_conditions = model['boundary_conditions']
     
-    print(f"\n[ANALYSIS] Starting structural analysis...")
-    print(f"[ANALYSIS] Input Summary: {len(nodes)} nodes, {len(members)} members, {len(sections)} sections, {len(loads)} loads, {len(boundary_conditions)} boundary conditions", flush=True)
+    _log(f"\n[ANALYSIS] Starting structural analysis...")
+    _log(f"[ANALYSIS] Input Summary: {len(nodes)} nodes, {len(members)} members, {len(sections)} sections, {len(loads)} loads, {len(boundary_conditions)} boundary conditions")
     # Initialize
+    t0 = time.time()
     init()
-    print(f"[ANALYSIS] ✓ Model initialized (3D, 6 DOF per node)")
+    _log(f"[ANALYSIS] ✓ Model initialized (3D, 6 DOF per node) in {time.time()-t0:.3f}s")
     
     # Create nodes
+    t0 = time.time()
     create_nodes(nodes)
-    print(f"[ANALYSIS] ✓ Created {len(nodes)} nodes")
+    _log(f"[ANALYSIS] ✓ Created {len(nodes)} nodes in {time.time()-t0:.3f}s")
 
     # Create transformation for beam-column elements
+    t0 = time.time()
     create_geometric_transformation(members)
-    print(f"[ANALYSIS] ✓ Created geometric transformations for {len(members)} members")
+    _log(f"[ANALYSIS] ✓ Created geometric transformations for {len(members)} members in {time.time()-t0:.3f}s")
 
     # Create sections 
+    t0 = time.time()
     create_sections(sections)
-    print(f"[ANALYSIS] ✓ Created {len(sections)} sections")
+    _log(f"[ANALYSIS] ✓ Created {len(sections)} sections in {time.time()-t0:.3f}s")
     
     # Create elements
+    t0 = time.time()
     create_members(members)
-    print(f"[ANALYSIS] ✓ Created elements (discretized members)")
+    _log(f"[ANALYSIS] ✓ Created elements (discretized members) in {time.time()-t0:.3f}s")
 
     # Apply boundary conditions
+    t0 = time.time()
     apply_boundary_conditions(boundary_conditions)
-    print(f"[ANALYSIS] ✓ Applied boundary conditions to {len(boundary_conditions)} constraint(s)")
+    _log(f"[ANALYSIS] ✓ Applied boundary conditions to {len(boundary_conditions)} constraint(s) in {time.time()-t0:.3f}s")
     
     # Apply loads
+    t0 = time.time()
     apply_loads(loads)
-    print(f"[ANALYSIS] ✓ Applied {len(loads)} load case(s)")
+    _log(f"[ANALYSIS] ✓ Applied {len(loads)} load case(s) in {time.time()-t0:.3f}s")
     
     # Run the analysis
-    print("[ANALYSIS] Starting static analysis...")
+    _log("[ANALYSIS] Starting static analysis...")
+    t0 = time.time()
     run_static_analysis(model)
-    print("[ANALYSIS] ✓ Static analysis completed successfully")
+    _log(f"[ANALYSIS] ✓ Static analysis completed successfully in {time.time()-t0:.3f}s")
 
     # Extract results
+    t0 = time.time()
     extract_results()
-    print("[ANALYSIS] ✓ Results extracted")
+    _log(f"[ANALYSIS] ✓ Results extracted in {time.time()-t0:.3f}s")
     # print('output: ', output)
     
     # Clean up
+    t0 = time.time()
     ops.wipe()
-    print("[ANALYSIS] ✓ Model cleaned up")
+    _log(f"[ANALYSIS] ✓ Model cleaned up in {time.time()-t0:.3f}s")
     
+    _log(f"[ANALYSIS] ✓ Total analysis time: {time.time() - start_total_time:.3f}s")
     return output
 
   except Exception as e:

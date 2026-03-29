@@ -3,6 +3,7 @@ import { makeAutoObservable } from "mobx"
 
 export default  class Console {
   prompts: Prompt[] = []
+  isFinished: boolean = true
   constructor(){
     this.prompts = []
     makeAutoObservable(this)
@@ -42,5 +43,13 @@ export default  class Console {
     const promps = this.prompts.filter(p => !ids.includes(p.id))
     this.prompts = promps
     console.log('PROMPTS', this.prompts)
+  }
+
+  clear() {
+    this.prompts = []
+  }
+
+  setFinished(finished: boolean) {
+    this.isFinished = finished
   }
 }

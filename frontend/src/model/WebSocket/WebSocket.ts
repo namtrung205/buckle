@@ -108,12 +108,22 @@ export default class WebSocketHandler {
                   success : true
                 }
                 break
-                default:
+              case 'analysis_progress':
+                this.model.console.create({
+                  id: Date.now().toString() + Math.random().toString(),
+                  message: data,
+                  timestamp: new Date(),
+                  type: 'INFO'
+                });
+                break;
+              default:
                 console.log('Unknown message type:', message);
                 break;
               
             }
-            this.send(answer)
+            if (answer !== undefined) {
+              this.send(answer)
+            }
           } catch (error) {
             console.error('Error parsing message:', error);
             console.log('Raw message data:', event.data);

@@ -13,6 +13,7 @@ type DialogName =
   | 'materials'
   | 'copy'
   | 'warehouseWizard'
+  | 'analysisProgress'
   | null;
 
 export function useActiveDialog() {
@@ -46,6 +47,7 @@ export function useActiveDialog() {
     materials: activeDialog === 'materials',
     copy: activeDialog === 'copy',
     warehouseWizard: activeDialog === 'warehouseWizard',
+    analysisProgress: activeDialog === 'analysisProgress',
   }), [activeDialog]);
 
   return { activeDialog, open, close, isOpen, dialogs };
