@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     liblapack3 \
     libblas3 \
     libglu1-mesa \
-    libgl1-mesa-glx \
+    libgl1 \
     libsm6 \
     libice6 \
     libxrender1 \
