@@ -15,10 +15,10 @@ else
   echo "✅ Docker is already installed."
 fi
 
-# 2. Check for Docker Compose
-if ! [ -x "$(command -v docker-compose)" ]; then
-  echo "📦 Installing Docker Compose..."
-  sudo apt-get install -y docker-compose
+# 2. Check for Docker Compose (V2)
+if ! docker compose version >/dev/null 2>&1; then
+  echo "📦 Installing Docker Compose V2..."
+  sudo apt-get install -y docker-compose-plugin
 else
   echo "✅ Docker Compose is already installed."
 fi
@@ -45,11 +45,11 @@ fi
 
 # 4. Build and Launch Containers
 echo "🏗️  Building and launching containers..."
-sudo docker-compose up -d --build
+sudo docker compose up -d --build
 
 # 5. Summary
 echo "--------------------------------------------------------"
 echo "✅ Deployment Process Finished!"
-echo "📡 Check logs with: sudo docker-compose logs -f"
-echo "🛠️  Check status with: sudo docker ps"
+echo "📡 Check logs with: sudo docker compose logs -f"
+echo "🛠️  Check status with: sudo docker compose ps"
 echo "--------------------------------------------------------"
