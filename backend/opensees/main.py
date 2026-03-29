@@ -75,8 +75,8 @@ def run_analysis(model: dict):
     loads = model['loads']
     boundary_conditions = model['boundary_conditions']
     
-    # print("[ANALYSIS] Starting structural analysis...", model)
-    
+    print(f"\n[ANALYSIS] Starting structural analysis...")
+    print(f"[ANALYSIS] Input Summary: {len(nodes)} nodes, {len(members)} members, {len(sections)} sections, {len(loads)} loads, {len(boundary_conditions)} boundary conditions", flush=True)
     # Initialize
     init()
     print(f"[ANALYSIS] ✓ Model initialized (3D, 6 DOF per node)")

@@ -217,6 +217,12 @@ async def get_benchmark(id: str):
 @app.post("/analysis")
 async def get_analysis(model : dict):
   try :
+    print("\n" + "="*80)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] RECEIVED NEW ANALYSIS REQUEST")
+    print(f"Nodes: {len(model.get('nodes', []))}, Members: {len(model.get('members', []))}, Loads: {len(model.get('loads', []))}")
+    print(f"RAW INPUT (First 500 chars): {str(model)[:500]}...", flush=True)
+    print("="*80 + "\n")
+    
     output = run_analysis(model)
     return {
       "status": "Analysis completed successfully",
