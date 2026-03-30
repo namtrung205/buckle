@@ -15,7 +15,7 @@ class Load {
   constructor(model : Model, load : Load) {
     this.model = model
     this.targets = load.targets
-    this.value = new THREE.Vector3(load.value.x, load.value.y, load.value.z)
+    this.value = load.value ? new THREE.Vector3(load.value.x, load.value.y, load.value.z) : new THREE.Vector3(0, 0, 0)
     this.type = 'nodal'
     this.id = load.id || Math.floor(Math.random() * 0x7FFFFFFF)
     this.name = load.name || `Load ${this.model.loads.length + 1}`
@@ -36,7 +36,7 @@ class Load {
     }
   }
   update(load : Load){
-    this.value = new THREE.Vector3(load.value.x, load.value.y, load.value.z)
+    this.value = load.value ? new THREE.Vector3(load.value.x, load.value.y, load.value.z) : new THREE.Vector3(0, 0, 0)
     this.targets = load.targets
     this.type = load.type
     this.id = load.id
@@ -281,7 +281,9 @@ class Load {
 
   createPressureLoad() {
     const arrowLength = 1.0;
-    const blueColor = 0x03a9f4; // Professional Blue
+    const WIND_COLOR = 0x9c27b0; // Purple/Magenta
+    const SNOW_COLOR = 0x00bcd4; // Cyan/Aqua
+    const DEFAULT_COLOR = 0x03a9f4; // Professional Blue
 
     for (const targetId of this.targets) {
       const shell = this.model.shells.find(s => s.id === targetId);
@@ -304,15 +306,18 @@ class Load {
       const v2 = new THREE.Vector3().subVectors(p2, p0);
       const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
 
-      // 3. Determine Direction
+      // 3. Determine Direction and Color
       let direction = new THREE.Vector3();
+      let color = DEFAULT_COLOR;
       if (this.magnitude && Math.abs(this.magnitude) > 0) {
         // Scalar magnitude provided -> Wind load (Normal to surface)
         direction.copy(normal);
         if (this.magnitude < 0) direction.negate();
+        color = WIND_COLOR;
       } else {
         // Vector value provided -> Snow load (Global direction)
         direction.copy(this.value).normalize();
+        color = SNOW_COLOR;
       }
 
       if (direction.length() < 0.1) continue;
@@ -325,9 +330,9 @@ class Load {
         direction,
         origin,
         arrowLength,
-        blueColor,
-        0.25, // headLength (slightly larger)
-        0.2 // headWidth (slightly larger)
+        color,
+        0.35, // headLength (larger for visibility)
+        0.25  // headWidth (larger for visibility)
       );
 
       arrowHelper.userData = {
@@ -449,7 +454,7 @@ class Load {
       const v2 = new THREE.Vector3().subVectors(p2, p0);
       const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
 
-      const labelPosition = center.clone().add(normal.multiplyScalar(arrowLength * 1.2));
+      const labelPosition = center.clone().add(normal.multiplyScalar(arrowLength * 1.5));
 
       labels.push({
         id: `pressure-load-${shellId}`,
