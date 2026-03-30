@@ -27,12 +27,12 @@ class Shell {
     // Initial dummy mesh
     const geometry = new THREE.BufferGeometry();
     const meshMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0x03a9f4, 
+      color: 0xeeeeee, 
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.4,
-      metalness: 0.3,
-      roughness: 0.7
+      opacity: 0.15,
+      metalness: 0.1,
+      roughness: 0.5
     });
     this.mesh = new THREE.Mesh(geometry, meshMaterial);
   }

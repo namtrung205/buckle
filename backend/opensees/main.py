@@ -511,11 +511,39 @@ def apply_boundary_conditions(boundary_conditions):
         
         # Fix the support node (ground)
         ops.fix(support_node, 1, 1, 1, 1, 1, 1)
-      else:      
+    else:      
         # Swap fixity: OpenSees coord 2 = JSON Z, OpenSees coord 3 = JSON Y
         # JSON (dx, dy, dz, rx, ry, rz) -> OpenSees (dx, dz, dy, rx, rz, ry)
         ops.fix(target, dx, dz, dy, rx, rz, ry)
-      
+
+def calculate_quad_area_and_normal(node_coords):
+    """
+    Computes area and normal vector of a 4-node quad by splitting it into 2 triangles.
+    node_coords: [[x1,z1,y1], [x2,z2,y2], [x3,z3,y3], [x4,z4,y4]] (OpenSees coords)
+    Returns: (area, normal_vector)
+    """
+    pts = [np.array(c) for c in node_coords]
+    # Triangle 1: 0-1-2
+    v1 = pts[1] - pts[0]
+    v2 = pts[2] - pts[0]
+    cp1 = np.cross(v1, v2)
+    a1 = 0.5 * np.linalg.norm(cp1)
+    
+    # Triangle 2: 0-2-3
+    v3 = pts[2] - pts[0]
+    v4 = pts[3] - pts[0]
+    cp2 = np.cross(v3, v4)
+    a2 = 0.5 * np.linalg.norm(cp2)
+    
+    total_area = a1 + a2
+    # Weighted average normal
+    if total_area > 1e-12:
+        normal = (cp1 + cp2) / (np.linalg.norm(cp1 + cp2) + 1e-16)
+    else:
+        normal = np.array([0, 0, 0])
+        
+    return total_area, normal
+
 def apply_loads(loads):
     """Applies loads to the model."""
     ops.timeSeries("Linear", 1)
@@ -557,6 +585,39 @@ def apply_loads(loads):
             fy = value['z'] * 1E3
             fz = value['y'] * 1E3
             ops.load(id, fx, fy, fz, 0.0, 0.0, 0.0)
+      elif(load['type'] == 'pressure'):
+        # Pressure load: kN/m2 on shell elements
+        for shell_id in targets:
+          try:
+            # Find the nodes of the shell
+            shell_nodes = ops.eleNodes(shell_id)
+            if not shell_nodes or len(shell_nodes) != 4:
+                continue
+            
+            # Get coordinates for area/normal calculation
+            coords = [ops.nodeCoord(n) for n in shell_nodes]
+            area, normal = calculate_quad_area_and_normal(coords)
+            
+            # Total force on this shell: P * Area * 1000 (N)
+            # Pressure can be a scalar (magnitude) or a vector (like snow)
+            magnitude = load.get('magnitude', 0)
+            if magnitude == 0 and isinstance(value, dict):
+                # If value is a vector, we'll use its components
+                fx_total = value['x'] * area * 1000
+                fy_total = value['z'] * area * 1000 # JSON Z is OPS Y
+                fz_total = value['y'] * area * 1000 # JSON Y is OPS Z
+            else:
+                # If scalar magnitude is provided, assume it's normal pressure (wind)
+                # Pressure * Normal * Area
+                force_vec = magnitude * area * 1000 * normal
+                fx_total, fy_total, fz_total = force_vec[0], force_vec[1], force_vec[2]
+            
+            # Distribute to nodes
+            for node_id in shell_nodes:
+                ops.load(node_id, fx_total/4.0, fy_total/4.0, fz_total/4.0, 0.0, 0.0, 0.0)
+                
+          except Exception as e:
+            print(f"Warning: Failed to apply pressure load to shell {shell_id}: {e}")
 
 def run_static_analysis(model: dict = None, log_callback=None):
     """Sets up and runs the static analysis."""

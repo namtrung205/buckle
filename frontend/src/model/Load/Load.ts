@@ -5,9 +5,10 @@ class Load {
   model : Model
   targets : number[]
   value : THREE.Vector3
-  type : 'nodal' | 'linear' | 'area'
+  type : 'nodal' | 'linear' | 'area' | 'pressure'
   id : number
   name : string
+  magnitude?: number
   mesh : THREE.Object3D[] = []
   // direction : THREE.Vector3
 
@@ -19,6 +20,7 @@ class Load {
     this.id = load.id || Math.floor(Math.random() * 0x7FFFFFFF)
     this.name = load.name || `Load ${this.model.loads.length + 1}`
     this.type = load.type
+    this.magnitude = (load as any).magnitude
     // this.direction = this.value.clone().normalize()
   }
 
@@ -39,6 +41,7 @@ class Load {
     this.type = load.type
     this.id = load.id
     this.name = load.name
+    this.magnitude = (load as any).magnitude
     this.mesh = this.model.loads.find(l => l.id === this.id)?.mesh || []
     // this.direction = this.value.clone().normalize()
     this.model.loads = this.model.loads.map(l => l.id === this.id ? this : l)
@@ -55,16 +58,20 @@ class Load {
         break
       case 'nodal':
         this.createNodalLoad()
+        break
+      case 'pressure':
+        this.createPressureLoad()
+        break
     }
 
     this.removeAllLabels()
     this.createLabels()
   }
+
   createLinearLoad() {
     const members = this.model.members
     const nodes = this.model.nodes
     const elements = [...members, ...nodes]
-    const labels = []
 
     const ARROW_LEN_MAX = 1.0  // Maximum arrow length
     const ARROW_LEN_MIN = 0.3  // Minimum arrow length
@@ -102,12 +109,6 @@ class Load {
       const length = elementDirection.length()
       elementDirection.normalize()
       
-      const center = new THREE.Vector3(
-        (nodei.x + nodej.x) / 2,
-        (nodei.y + nodej.y) / 2,
-        (nodei.z + nodej.z) / 2
-      )
-    
       // Generate nodes along the beam
       const nodesArray = []
       const steps = 10
@@ -122,26 +123,16 @@ class Load {
         nodesArray.push(node)
       }
       
-      // NEED TO HANDLE DIFFERENTLY FOR LOAD ON X AND Y
       const direction = this.value.clone().normalize()
       const angle = this.value.angleTo(direction)
       const directionSign = Math.cos(angle)
       const loadDirection = direction.clone().multiplyScalar(directionSign)
-      const up = new THREE.Vector3(0, 1, 0 )
-      const up_cross_load = new THREE.Vector3().crossVectors(up, direction)
 
       const d_vector = loadDirection.clone().negate().multiplyScalar(arrowLength)
 
-      // if(directionSign > 0 && up_cross_load.length() === 0) 
-      //   d_vector = loadDirection.clone().multiplyScalar(arrowLength)
-      // else
-      //   d_vector = loadDirection.clone().negate().multiplyScalar(arrowLength)
-
        // Create arrows along the element
       for(const node of nodesArray){
-        // Calculate arrow origin position
         let arrowOrigin = node.clone().add(d_vector)
-        // if(directionSign < 0 && up_cross_load.length() === 0)  arrowOrigin = node.clone().add(d_vector)
         
         const hex = 0xFF0000
         const arrowHelper = new THREE.ArrowHelper(
@@ -153,7 +144,7 @@ class Load {
           0.1
         )
         arrowHelper.userData = {
-          id: `load-${target}`,
+          id: `load-${this.id}-${target}`,
           type: 'load'
         }
         arrowHelper.userData.originalColor = '0xFF0000'
@@ -182,16 +173,12 @@ class Load {
         vertices.push(point.x, point.y, point.z);
       }
       
-      // Triangle 1: points 0, 1, 2
       indices.push(0, 1, 2);
-      // Triangle 2: points 0, 2, 3
       indices.push(0, 2, 3);
       
-      // Set the vertices and indices
       rectGeometry.setIndex(indices);
       rectGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
       
-      // Compute normals for proper lighting
       rectGeometry.computeVertexNormals();
       const rectMaterial = new THREE.MeshBasicMaterial({ 
         color: 0xFF0000,
@@ -201,15 +188,13 @@ class Load {
       });
       const rectangle = new THREE.Mesh(rectGeometry, rectMaterial);
       
-      
-      //  hide the plane if load is parallel to the element
       const crossProduct = new THREE.Vector3().crossVectors(elementDirection, loadDirection)
       if (crossProduct.length() < 0.001) {
         rectangle.visible = false 
       }
       
       rectangle.userData = {
-        id: `load-${target}`,
+        id: `load-${this.id}-${target}`,
         type: 'load',
         originalColor : '0xFF0000'
       }
@@ -222,8 +207,8 @@ class Load {
     if(index === -1){
       this.model.loads.push(this)
     }
-    // this.createLabels()
   }
+
   createNodalLoad() {
     const arrowLength = 1.0
     const direction = this.value.clone().normalize()
@@ -231,10 +216,8 @@ class Load {
       const node = this.model.nodes.find(n => n.id === target)
       if (!node)  continue
       
-  
       const nodePosition = new THREE.Vector3(node.x, node.y, node.z)
       
-      // Define axis directions and colors
       const axes = [
         { 
           direction: new THREE.Vector3(1, 0, 0),  // X-axis
@@ -256,34 +239,22 @@ class Load {
         }
       ]
       
-     
       for (const axis of axes) {
         if (Math.abs(axis.value) > 0.001) { 
           
           let arrowOrigin: THREE.Vector3
-          let arrowDirection: THREE.Vector3
           
           if (axis.label === 'Fy') {
-            // SPECIAL CASE FOR Y-AXIS (vertical forces)
             if (axis.value > 0) {
-              // POSITIVE Y: Upward force, arrow tail should be at the node
               arrowOrigin = nodePosition.clone()
-              arrowDirection = axis.direction.clone() // Points upward (+Y)
             } else {
-              // NEGATIVE Y: Downward force, arrow head should be at the node
               arrowOrigin = nodePosition.clone().add(axis.direction.clone().multiplyScalar(arrowLength))
-              arrowDirection = axis.direction.clone().negate() // Points downward (-Y)
             }
           } else {
-            // STANDARD CASE FOR X AND Z AXES
             if (axis.value > 0) {
-              // POSITIVE DIRECTION: Arrow head should be at the node
               arrowOrigin = nodePosition.clone().sub(direction.clone().multiplyScalar(arrowLength))
-              arrowDirection = direction.clone() // Points toward node
             } else {
-              // NEGATIVE DIRECTION: Arrow tail should be at the node
               arrowOrigin = nodePosition.clone()
-              arrowDirection = direction.clone()
             }
           }
           
@@ -296,7 +267,6 @@ class Load {
             0.1
           )
           
-
           this.model.scene.add(arrowHelper)
           this.mesh.push(arrowHelper)
           
@@ -307,13 +277,80 @@ class Load {
     if(index === -1){
       this.model.loads.push(this)
     }
-    // this.createLabels()
   }
+
+  createPressureLoad() {
+    const arrowLength = 1.0;
+    const blueColor = 0x03a9f4; // Professional Blue
+
+    for (const targetId of this.targets) {
+      const shell = this.model.shells.find(s => s.id === targetId);
+      if (!shell || shell.nodes.length < 3) continue;
+
+      // 1. Calculate Center
+      const center = new THREE.Vector3(0, 0, 0);
+      shell.nodes.forEach(n => {
+        center.x += n.x;
+        center.y += n.y;
+        center.z += n.z;
+      });
+      center.divideScalar(shell.nodes.length);
+
+      // 2. Calculate Normal (for Wind)
+      const p0 = new THREE.Vector3(shell.nodes[0].x, shell.nodes[0].y, shell.nodes[0].z);
+      const p1 = new THREE.Vector3(shell.nodes[1].x, shell.nodes[1].y, shell.nodes[1].z);
+      const p2 = new THREE.Vector3(shell.nodes[2].x, shell.nodes[2].y, shell.nodes[2].z);
+      const v1 = new THREE.Vector3().subVectors(p1, p0);
+      const v2 = new THREE.Vector3().subVectors(p2, p0);
+      const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
+
+      // 3. Determine Direction
+      let direction = new THREE.Vector3();
+      if (this.magnitude && Math.abs(this.magnitude) > 0) {
+        // Scalar magnitude provided -> Wind load (Normal to surface)
+        direction.copy(normal);
+        if (this.magnitude < 0) direction.negate();
+      } else {
+        // Vector value provided -> Snow load (Global direction)
+        direction.copy(this.value).normalize();
+      }
+
+      if (direction.length() < 0.1) continue;
+
+      // 4. Create Arrow
+      // Origin should be slightly offset from surface to avoid Z-fighting
+      const origin = center.clone().add(direction.clone().multiplyScalar(-arrowLength));
+      
+      const arrowHelper = new THREE.ArrowHelper(
+        direction,
+        origin,
+        arrowLength,
+        blueColor,
+        0.25, // headLength (slightly larger)
+        0.2 // headWidth (slightly larger)
+      );
+
+      arrowHelper.userData = {
+        id: `load-${this.id}-${targetId}`,
+        type: 'load'
+      };
+
+      this.model.scene.add(arrowHelper);
+      this.mesh.push(arrowHelper);
+    }
+
+    const index = this.model.loads.findIndex(l => l.id === this.id);
+    if (index === -1) {
+      this.model.loads.push(this);
+    }
+  }
+
   removeAllLabels(){
     let ids = this.model.members.map(member => `linear-load-${member.id}`)
     ids = [...ids, ...this.model.nodes.map(node => `nodal-load-${node.id}-x`)]
     ids = [...ids, ...this.model.nodes.map(node => `nodal-load-${node.id}-y`)]
     ids = [...ids, ...this.model.nodes.map(node => `nodal-load-${node.id}-z`)]
+    ids = [...ids, ...this.model.shells.map(shell => `pressure-load-${shell.id}`)]
     this.model.labeler.batchDelete(ids)
   }
   removeLoadLabels(){
@@ -321,6 +358,7 @@ class Load {
     ids = [...ids, ...this.targets.map(target => `nodal-load-${target}-x`)]
     ids = [...ids, ...this.targets.map(target => `nodal-load-${target}-y`)]
     ids = [...ids, ...this.targets.map(target => `nodal-load-${target}-z`)]
+    ids = [...ids, ...this.targets.map(target => `pressure-load-${target}`)]
     console.log('REMOVING LABELS', ids)
     this.model.labeler.batchDelete(ids)
   }
@@ -374,6 +412,54 @@ class Load {
   createLabels(){
     this.createLinearLoadLabels()
     this.createNodalLoadLabels()
+    this.createPressureLoadLabels()
+  }
+  createPressureLoadLabels() {
+    const labels = [];
+    const shellLoads: { [key: number]: number } = {};
+    const arrowLength = 1.0;
+
+    for (const load of this.model.loads.filter(l => l.type === 'pressure')) {
+      for (const targetId of load.targets) {
+        const val = load.magnitude !== undefined ? load.magnitude : load.value.length();
+        shellLoads[targetId] = (shellLoads[targetId] || 0) + val;
+      }
+    }
+
+    for (const [shellId, pressure] of Object.entries(shellLoads)) {
+      const shell = this.model.shells.find(s => s.id === Number(shellId));
+      if (!shell || shell.nodes.length < 3) continue;
+
+      // 1. Calculate Center
+      const center = new THREE.Vector3(0, 0, 0);
+      shell.nodes.forEach(n => {
+        center.x += n.x;
+        center.y += n.y;
+        center.z += n.z;
+      });
+      center.divideScalar(shell.nodes.length);
+
+      // 2. Calculate offset direction (opposite to load usually)
+      // For simplicity, we just use a slight offset from center or at the end of arrow
+      // Here we offset it 1.2x arrow length away from center
+      const p0 = new THREE.Vector3(shell.nodes[0].x, shell.nodes[0].y, shell.nodes[0].z);
+      const p1 = new THREE.Vector3(shell.nodes[1].x, shell.nodes[1].y, shell.nodes[1].z);
+      const p2 = new THREE.Vector3(shell.nodes[2].x, shell.nodes[2].y, shell.nodes[2].z);
+      const v1 = new THREE.Vector3().subVectors(p1, p0);
+      const v2 = new THREE.Vector3().subVectors(p2, p0);
+      const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
+
+      const labelPosition = center.clone().add(normal.multiplyScalar(arrowLength * 1.2));
+
+      labels.push({
+        id: `pressure-load-${shellId}`,
+        position: labelPosition,
+        text: `P: ${pressure.toFixed(2)} kN/m²`,
+        type: 'load'
+      });
+    }
+
+    this.model.labeler.batchUpdateOrCreate(labels);
   }
   createLinearLoadLabels(){
     const ARROW_LEN_MAX = 1.0  

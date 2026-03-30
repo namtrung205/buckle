@@ -7,6 +7,8 @@ import {
   FormControlLabel,
   Checkbox,
   Divider,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import { observer } from 'mobx-react-lite';
 import * as THREE from 'three';
@@ -22,6 +24,31 @@ interface WarehouseWizardProps {
   onClose: () => void;
 }
 
+interface TabPanelProps {
+  children?: React.ReactNode;
+  index: number;
+  value: number;
+}
+
+function CustomTabPanel(props: TabPanelProps) {
+  const { children, value, index, ...other } = props;
+  return (
+    <div
+      role="tabpanel"
+      hidden={value !== index}
+      id={`simple-tabpanel-${index}`}
+      aria-labelledby={`simple-tab-${index}`}
+      {...other}
+    >
+      {value === index && (
+        <Box sx={{ p: 2 }}>
+          {children}
+        </Box>
+      )}
+    </div>
+  );
+}
+
 const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
   const model = useModel();
 
@@ -31,16 +58,29 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     length: 10,
     height: 6,
     pitch: 15,
-    numBays: 2,
-    numPurlins: 4, // spaces per roof side
+    numBays: 5,
+    numPurlins: 6, // spaces per roof side
     hasBracing: true,
     addSelfWeight: true,
     addWindLoad: true,
-    windMagnitude: 2.0, // kN/m
+    windMagnitude: 1.2, // kN/m2 (Pressure)
+    addSnowLoad: true,
+    snowMagnitude: 0.8, // kN/m2 (Pressure)
     addMembrane: true,
-    membraneThickness: 0.002, // 2mm
-    clearExisting: true
+    membraneThickness: 0.002,
+    clearExisting: true,
+    // Targeted shell loads
+    windOnRoof: true,
+    windOnSideWalls: true,
+    windOnEndWalls: true,
+    snowOnRoof: true,
   });
+
+  const [tabIndex, setTabIndex] = useState(0);
+
+  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
+    setTabIndex(newValue);
+  };
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
@@ -82,7 +122,11 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
       model.clear();
     }
 
-    const { width, length, height, pitch, numBays, numPurlins, hasBracing, addSelfWeight, addWindLoad, windMagnitude } = params;
+    const { 
+        width, length, height, pitch, numBays, numPurlins, hasBracing, 
+        addSelfWeight, addWindLoad, windMagnitude, addSnowLoad, snowMagnitude,
+        windOnRoof, windOnSideWalls, windOnEndWalls, snowOnRoof
+    } = params;
     
     const section = model.sections[0];
     if (!section) {
@@ -243,81 +287,59 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     }
 
     // --- 4. SHELL/MEMBRANE GENERATION ---
+    const roofShells: Shell[] = [];
+    const sideWallShells: Shell[] = [];
+    const endWallShells: Shell[] = [];
+
     if (params.addMembrane) {
         const material = model.materials[0] || { id: 1, name: 'PVC', E: 1e9, nu: 0.3 };
         for (let i = 0; i < numBays; i++) {
             const f1 = frameData[i];
             const f2 = frameData[i+1];
 
-            // Left Side Panels
+            // Left Side Panels (Roof)
             for (let p = 0; p < f1.raftNodesL.length - 1; p++) {
-                const shellNodes = [
-                    f1.raftNodesL[p],
-                    f2.raftNodesL[p],
-                    f2.raftNodesL[p+1],
-                    f1.raftNodesL[p+1]
-                ];
-                const shell = new Shell(
-                    model, 
-                    `Membrane-L-${i}-${p}`, 
-                    shellNodes, 
-                    params.membraneThickness, 
-                    material
-                );
+                const shellNodes = [f1.raftNodesL[p], f2.raftNodesL[p], f2.raftNodesL[p+1], f1.raftNodesL[p+1]];
+                const shell = new Shell(model, `Membrane-L-${i}-${p}`, shellNodes, params.membraneThickness, material);
                 shell.create();
                 model.shells.push(shell);
+                roofShells.push(shell);
             }
 
-            // Right Side Panels
+            // Right Side Panels (Roof)
             for (let p = 0; p < f1.raftNodesR.length - 1; p++) {
-                const shellNodes = [
-                    f1.raftNodesR[p],
-                    f2.raftNodesR[p],
-                    f2.raftNodesR[p+1],
-                    f1.raftNodesR[p+1]
-                ];
-                const shell = new Shell(
-                    model, 
-                    `Membrane-R-${i}-${p}`, 
-                    shellNodes, 
-                    params.membraneThickness, 
-                    material
-                );
+                const shellNodes = [f1.raftNodesR[p], f2.raftNodesR[p], f2.raftNodesR[p+1], f1.raftNodesR[p+1]];
+                const shell = new Shell(model, `Membrane-R-${i}-${p}`, shellNodes, params.membraneThickness, material);
                 shell.create();
                 model.shells.push(shell);
+                roofShells.push(shell);
             }
-        }
 
-        // Side Walls
-        for (let i = 0; i < numBays; i++) {
-            const f1 = frameData[i];
-            const f2 = frameData[i+1];
-
-            // Wall Left
+            // Side Walls
             const shellL = new Shell(model, `Wall-L-${i}`, [f1.baseL, f2.baseL, f2.eaveL, f1.eaveL], params.membraneThickness, material);
             shellL.create();
             model.shells.push(shellL);
+            sideWallShells.push(shellL);
 
-            // Wall Right
             const shellR = new Shell(model, `Wall-R-${i}`, [f1.baseR, f2.baseR, f2.eaveR, f1.eaveR], params.membraneThickness, material);
             shellR.create();
             model.shells.push(shellR);
+            sideWallShells.push(shellR);
         }
 
-        // End Walls (Front & Back)
+        // End Walls
         const endFrames = [0, numBays];
         endFrames.forEach(i => {
             const f = frameData[i];
-            // Simple gable end mesh: 1 rectangle + triangles (as quads)
-            // Bottom rectangle
             const shellBottom = new Shell(model, `EndWall-Bottom-${i}`, [f.baseL, f.baseR, f.eaveR, f.eaveL], params.membraneThickness, material);
             shellBottom.create();
             model.shells.push(shellBottom);
+            endWallShells.push(shellBottom);
 
-            // Top Gable (approximated as quads by repeating ridge)
             const shellGable = new Shell(model, `EndWall-Gable-${i}`, [f.eaveL, f.eaveR, f.ridge, f.ridge], params.membraneThickness, material);
             shellGable.create();
             model.shells.push(shellGable);
+            endWallShells.push(shellGable);
         });
     }
 
@@ -336,15 +358,31 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         selfWeightLoad.createOrUpdate();
     }
 
-    if (addWindLoad) {
+    if (addWindLoad && params.addMembrane) {
         const q = windMagnitude;
-        const windwardCols = frameData.map(f => f.columns[0].id);
-        const leewardCols = frameData.map(f => f.columns[1].id);
-        const allRafters = frameData.flatMap(f => f.rafters.map(r => r.id));
+        const windTargets: number[] = [];
+        if (windOnRoof) windTargets.push(...roofShells.map(s => s.id));
+        if (windOnSideWalls) windTargets.push(...sideWallShells.map(s => s.id));
+        if (windOnEndWalls) windTargets.push(...endWallShells.map(s => s.id));
 
-        new Load(model, { name: "Wind-Pressure", targets: windwardCols, type: 'linear', value: new THREE.Vector3(q, 0, 0) } as any).createOrUpdate();
-        new Load(model, { name: "Wind-Suction", targets: leewardCols, type: 'linear', value: new THREE.Vector3(q * 0.5, 0, 0) } as any).createOrUpdate();
-        new Load(model, { name: "Wind-Lift", targets: allRafters, type: 'linear', value: new THREE.Vector3(0, q * 0.8, 0) } as any).createOrUpdate();
+        if (windTargets.length > 0) {
+            new Load(model, { 
+                name: "Wind-Pressure", 
+                targets: windTargets, 
+                type: 'pressure', 
+                magnitude: q 
+            } as any).createOrUpdate();
+        }
+    }
+
+    if (addSnowLoad && params.addMembrane && snowOnRoof) {
+        const s = snowMagnitude;
+        new Load(model, {
+            name: "Snow-Load",
+            targets: roofShells.map(s => s.id),
+            type: 'pressure',
+            value: new THREE.Vector3(0, -s, 0) // Downward in global Y
+        } as any).createOrUpdate();
     }
 
     onClose();
@@ -358,81 +396,113 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
       fullWidth
       title="Warehouse Wizard"
     >
-      <Box sx={{ mt: 1 }}>
-        <Typography variant="subtitle2" gutterBottom sx={{ color: '#aaa', fontWeight: 600 }}>
-          DIMENSIONS (m)
-        </Typography>
-        <Grid container spacing={2}>
-          <Grid item xs={6}>
-            <TextField label="Width" name="width" type="number" value={params.width} onChange={handleChange} fullWidth size="small" placeholder="20" />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField label="Length" name="length" type="number" value={params.length} onChange={handleChange} fullWidth size="small" placeholder="30" />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField label="Height" name="height" type="number" value={params.height} onChange={handleChange} fullWidth size="small" placeholder="6" />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField label="Roof Pitch (°)" name="pitch" type="number" value={params.pitch} onChange={handleChange} fullWidth size="small" placeholder="15" />
-          </Grid>
-        </Grid>
+      <Box sx={{ width: '100%', mt: 1 }}>
+        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+          <Tabs
+            value={tabIndex}
+            onChange={handleTabChange}
+            TabIndicatorProps={{ style: { backgroundColor: '#ffeb3b' } }}
+            sx={{
+              '& .MuiTab-root': { color: '#aaa', textTransform: 'none', fontWeight: 600 },
+              '& .Mui-selected': { color: '#ffeb3b !important' }
+            }}
+          >
+            <Tab label="1. General Info" />
+            <Tab label="2. Structure" />
+            <Tab label="3. Bracing" />
+            <Tab label="4. Shell & Loads" />
+          </Tabs>
+        </Box>
 
-        <Divider sx={{ my: 2, bgcolor: '#444' }} />
+        <CustomTabPanel value={tabIndex} index={0}>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={6}><TextField label="Width (m)" name="width" type="number" value={params.width} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
+            <Grid item xs={6}><TextField label="Length (total m)" name="length" type="number" value={params.length} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
+            <Grid item xs={6}><TextField label="Eave Height (m)" name="height" type="number" value={params.height} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
+            <Grid item xs={6}><TextField label="Roof Pitch (°)" name="pitch" type="number" value={params.pitch} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
+            <Grid item xs={12}><TextField label="Number of Bays" name="numBays" type="number" value={params.numBays} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={<Checkbox name="clearExisting" checked={params.clearExisting} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#f44336' } }} />}
+                label={<Typography variant="body2" sx={{ color: '#e0e0e0', fontWeight: 500 }}>Clear existing model before generation</Typography>}
+              />
+            </Grid>
+          </Grid>
+        </CustomTabPanel>
 
-        <Typography variant="subtitle2" gutterBottom sx={{ color: '#aaa', fontWeight: 600 }}>
-          STRUCTURAL & LOADING
-        </Typography>
-        <Grid container spacing={2}>
-          <Grid item xs={6}>
-            <TextField label="Number of Bays" name="numBays" type="number" value={params.numBays} onChange={handleChange} fullWidth size="small" placeholder="5" />
-          </Grid>
-          <Grid item xs={6}>
-            <TextField label="Purlins (count/side)" name="numPurlins" type="number" value={params.numPurlins} onChange={handleChange} fullWidth size="small" placeholder="6" />
-          </Grid>
-          
-          <Grid item xs={8}>
-            <FormControlLabel
-              control={<Checkbox name="addWindLoad" checked={params.addWindLoad} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }} />}
-              label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Automatic Wind Load</Typography>}
-            />
-          </Grid>
-          <Grid item xs={4}>
-            <TextField label="Wind (kN/m)" name="windMagnitude" type="number" value={params.windMagnitude} onChange={handleChange} fullWidth size="small" placeholder="2.0" disabled={!params.addWindLoad} />
-          </Grid>
+        <CustomTabPanel value={tabIndex} index={1}>
+           <Grid container spacing={2} sx={{ mt: 1 }}>
+             <Grid item xs={12}><TextField label="Purlins spaces per side" name="numPurlins" type="number" value={params.numPurlins} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
+             <Grid item xs={12}>
+               <Typography variant="caption" sx={{ color: '#666' }}>Note: Rafters and Columns currently use the default section defined in the model.</Typography>
+             </Grid>
+           </Grid>
+        </CustomTabPanel>
 
-          <Grid item xs={12}>
-            <FormControlLabel
-              control={<Checkbox name="addSelfWeight" checked={params.addSelfWeight} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#ffeb3b' } }} />}
-              label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Calculate & Add Self-Weight (Steel)</Typography>}
-            />
+        <CustomTabPanel value={tabIndex} index={2}>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={<Checkbox name="hasBracing" checked={params.hasBracing} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#4caf50' } }} />}
+                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Cross Bracing (Side Walls & Roof)</Typography>}
+              />
+            </Grid>
           </Grid>
+        </CustomTabPanel>
 
-          <Grid item xs={12}>
-            <FormControlLabel
-              control={<Checkbox name="hasBracing" checked={params.hasBracing} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#4caf50' } }} />}
-              label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Cross Bracing</Typography>}
-            />
-          </Grid>
+        <CustomTabPanel value={tabIndex} index={3}>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={6}>
+              <FormControlLabel
+                control={<Checkbox name="addMembrane" checked={params.addMembrane} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }} />}
+                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Enable Membrane/Bạt</Typography>}
+              />
+            </Grid>
+            <Grid item xs={6}><TextField label="Thickness (m)" name="membraneThickness" type="number" value={params.membraneThickness} onChange={handleChange} fullWidth size="small" disabled={!params.addMembrane} placeholder="" /></Grid>
+            
+            <Grid item xs={12}><Divider sx={{ my: 1, bgcolor: '#333' }} /></Grid>
 
-          <Grid item xs={12}>
-            <FormControlLabel
-              control={<Checkbox name="addMembrane" checked={params.addMembrane} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }} />}
-              label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Membrane/Shell Roofing (Bạt)</Typography>}
-            />
-          </Grid>
-          <Grid item xs={12}>
-              <TextField label="Membrane Thickness (m)" name="membraneThickness" type="number" value={params.membraneThickness} onChange={handleChange} fullWidth size="small" placeholder="0.002" disabled={!params.addMembrane} />
-          </Grid>
+            {/* Wind Load */}
+            <Grid item xs={7}>
+              <FormControlLabel
+                control={<Checkbox name="addWindLoad" checked={params.addWindLoad} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }} />}
+                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Wind Load (Pressure)</Typography>}
+              />
+            </Grid>
+            <Grid item xs={5}><TextField label="Wind (kN/m²)" name="windMagnitude" type="number" value={params.windMagnitude} onChange={handleChange} fullWidth size="small" disabled={!params.addWindLoad} placeholder="" /></Grid>
+            
+            {params.addWindLoad && (
+              <Grid item xs={12} sx={{ pl: 4, mt: -1 }}>
+                <Typography variant="caption" sx={{ display: 'block', mb: 0.5, color: '#888' }}>Target Shells:</Typography>
+                <Grid container>
+                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnRoof" checked={params.windOnRoof} onChange={handleChange} size="small" sx={{ color: '#888', '&.Mui-checked': { color: '#ffeb3b' } }} />} label={<Typography variant="caption" sx={{ color: '#e0e0e0' }}>Roof</Typography>} /></Grid>
+                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnSideWalls" checked={params.windOnSideWalls} onChange={handleChange} size="small" sx={{ color: '#888', '&.Mui-checked': { color: '#ffeb3b' } }} />} label={<Typography variant="caption" sx={{ color: '#e0e0e0' }}>Sides</Typography>} /></Grid>
+                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnEndWalls" checked={params.windOnEndWalls} onChange={handleChange} size="small" sx={{ color: '#888', '&.Mui-checked': { color: '#ffeb3b' } }} />} label={<Typography variant="caption" sx={{ color: '#e0e0e0' }}>Ends</Typography>} /></Grid>
+                </Grid>
+              </Grid>
+            )}
 
-          <Grid item xs={12}>
-            <FormControlLabel
-              control={<Checkbox name="clearExisting" checked={params.clearExisting} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#f44336' } }} />}
-              label={<Typography variant="body2" sx={{ color: '#e0e0e0', fontWeight: 500 }}>Clear existing model before generation</Typography>}
-            />
-          </Grid>
-        </Grid>
+            {/* Snow Load */}
+            <Grid item xs={7}>
+              <FormControlLabel
+                control={<Checkbox name="addSnowLoad" checked={params.addSnowLoad} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#ffeb3b' } }} />}
+                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Snow Load (Gravity)</Typography>}
+              />
+            </Grid>
+            <Grid item xs={5}><TextField label="Snow (kN/m²)" name="snowMagnitude" type="number" value={params.snowMagnitude} onChange={handleChange} fullWidth size="small" disabled={!params.addSnowLoad} placeholder="" /></Grid>
 
-        <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
+            <Grid item xs={12}><Divider sx={{ my: 1, bgcolor: '#333' }} /></Grid>
+            
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={<Checkbox name="addSelfWeight" checked={params.addSelfWeight} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#4caf50' } }} />}
+                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Include Steel Self-Weight</Typography>}
+              />
+            </Grid>
+          </Grid>
+        </CustomTabPanel>
+
+        <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end', gap: 2, p: 2 }}>
           <Button onClick={onClose} sx={{ color: '#aaa' }}>Cancel</Button>
           <Button
             onClick={handleGenerate}
