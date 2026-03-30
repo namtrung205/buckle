@@ -331,15 +331,13 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         const endFrames = [0, numBays];
         endFrames.forEach(i => {
             const f = frameData[i];
+            // End wall: rectangular panel only (eaveL, eaveR, baseR, baseL)
+            // NOTE: Gable triangle (eaveL-eaveR-ridge) is NOT created as a shell because
+            // ShellMITC4 requires 4 UNIQUE nodes; coincident nodes cause singular stiffness.
             const shellBottom = new Shell(model, `EndWall-Bottom-${i}`, [f.baseL, f.baseR, f.eaveR, f.eaveL], params.membraneThickness, material);
             shellBottom.create();
             model.shells.push(shellBottom);
             endWallShells.push(shellBottom);
-
-            const shellGable = new Shell(model, `EndWall-Gable-${i}`, [f.eaveL, f.eaveR, f.ridge, f.ridge], params.membraneThickness, material);
-            shellGable.create();
-            model.shells.push(shellGable);
-            endWallShells.push(shellGable);
         });
     }
 
@@ -370,7 +368,8 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
                 name: "Wind-Pressure", 
                 targets: windTargets, 
                 type: 'pressure', 
-                magnitude: q 
+                magnitude: q,           // scalar → normal pressure on shell surface
+                value: new THREE.Vector3(0, 0, 0) // fallback to avoid null in JSON
             } as any).createOrUpdate();
         }
     }
@@ -381,7 +380,8 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             name: "Snow-Load",
             targets: roofShells.map(s => s.id),
             type: 'pressure',
-            value: new THREE.Vector3(0, -s, 0) // Downward in global Y
+            magnitude: 0,               // explicitly 0 → route via vector path in backend
+            value: new THREE.Vector3(0, -s, 0) // Downward in global Y (JSON Y = vertical)
         } as any).createOrUpdate();
     }
 

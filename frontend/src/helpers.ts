@@ -54,6 +54,7 @@ export const exportModelJson = (model: Model) => {
         y: load.value.y,
         z: load.value.z
       },
+      magnitude: load.magnitude,
     })),
     shells: model.shells.map(shell => ({
       id: shell.id,

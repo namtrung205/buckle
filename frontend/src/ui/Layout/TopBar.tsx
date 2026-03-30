@@ -178,7 +178,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
           x: load.value.x,
           y: load.value.y,
           z: load.value.z
-        }
+        },
+        magnitude: load.magnitude  // ✅ Required for wind (scalar) vs snow (vector) distinction
       }));
 
       const boundaryConditions = model.boundaryConditions.map(boundaryCondition => {
@@ -187,6 +188,15 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       });
 
       const materials = model.materials;
+
+      // ✅ Include shells so OpenSees can create shell elements and apply pressure loads
+      const shells = model.shells.map(shell => ({
+        id: shell.id,
+        nodes: shell.nodes.map(n => n.id),
+        thickness: shell.thickness,
+        material: shell.material
+      }));
+
       const data = {
         nodes,
         members,
@@ -194,6 +204,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         sections,
         loads,
         boundary_conditions: boundaryConditions,
+        shells,  // ✅ Shell elements for pressure load distribution
       };
       
       const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);

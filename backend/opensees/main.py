@@ -455,6 +455,16 @@ def create_shells(shells):
     thickness = shell.get('thickness', 0.005) # Default 5mm
     material = shell.get('material', {'E': 2.1e11, 'nu': 0.3})
     
+    # Skip degenerate shells (duplicate nodes — e.g. triangular gable passed as quad)
+    if len(set(nodes)) < len(nodes):
+        print(f"Warning: Shell {shell_id} has duplicate node IDs {nodes} — skipping degenerate element")
+        continue
+    
+    # Skip any shell that is not exactly 4 unique nodes
+    if len(nodes) != 4:
+        print(f"Warning: Shell {shell_id} has {len(nodes)} nodes (expected 4 for ShellMITC4). Skipping.")
+        continue
+    
     # Create a unique section for this shell (simpler for now)
     # OpenSees section 'ElasticMembranePlateSection' tag E nu h rho
     section_tag = int(random.random() * 0x7FFFFFFF)
@@ -463,13 +473,7 @@ def create_shells(shells):
     rho = material.get('rho', 7850.0)
     
     ops.section('ElasticMembranePlateSection', section_tag, E, nu, thickness, rho)
-    
-    # ShellMITC4 tag iNode jNode kNode lNode secTag
-    # Ensure we have 4 nodes
-    if len(nodes) == 4:
-      ops.element('ShellMITC4', shell_id, *nodes, section_tag)
-    else:
-      print(f"Warning: Shell {shell_id} has {len(nodes)} nodes (expected 4 for ShellMITC4). Skipping.")
+    ops.element('ShellMITC4', shell_id, *nodes, section_tag)
 
 def apply_boundary_conditions(boundary_conditions):
   """Applies boundary conditions to the model."""
@@ -550,10 +554,17 @@ def apply_loads(loads):
     ops.pattern("Plain", 1, 1)
     members = output['members']
     nodes = output['nodes']
+    total_pressure_nodes = set()
+    total_loads_applied = 0
+
+    _log_info = lambda msg: print(msg, flush=True)
+    _log_info(f"[LOADS] Processing {len(loads)} load case(s):")
+    for i, load in enumerate(loads):
+        _log_info(f"  [{i+1}] type='{load.get('type')}' name='{load.get('name')}' targets={len(load.get('targets',[]))} magnitude={load.get('magnitude')} value={load.get('value')}")
 
     for load in loads:
       targets = load['targets']
-      value = load['value']
+      value = load.get('value') or {}  # Safe fallback: pressure loads may omit 'value'
       if(load['type'] == 'linear'):
         for id in targets:
           member = next((e for e in members if e['id'] == id), None)
@@ -587,6 +598,8 @@ def apply_loads(loads):
             ops.load(id, fx, fy, fz, 0.0, 0.0, 0.0)
       elif(load['type'] == 'pressure'):
         # Pressure load: kN/m2 on shell elements
+        # JSON coords: x=X, y=up, z=depth
+        # OpenSees coords: 1=X, 2=JSON_Z (depth), 3=JSON_Y (up/vertical)
         for shell_id in targets:
           try:
             # Find the nodes of the shell
@@ -598,21 +611,25 @@ def apply_loads(loads):
             coords = [ops.nodeCoord(n) for n in shell_nodes]
             area, normal = calculate_quad_area_and_normal(coords)
             
-            # Total force on this shell: P * Area * 1000 (N)
-            # Pressure can be a scalar (magnitude) or a vector (like snow)
+            # Treat None/missing magnitude as 0 (vector load path)
             magnitude = load.get('magnitude', 0)
+            if magnitude is None:
+                magnitude = 0
+
             if magnitude == 0 and isinstance(value, dict):
-                # If value is a vector, we'll use its components
-                fx_total = value['x'] * area * 1000
-                fy_total = value['z'] * area * 1000 # JSON Z is OPS Y
-                fz_total = value['y'] * area * 1000 # JSON Y is OPS Z
+                # Vector load (e.g. Snow): value is in JSON coords (x, y=up, z=depth)
+                # Convert JSON -> OpenSees: fy_ops = value_z_json, fz_ops = value_y_json
+                fx_total = value.get('x', 0) * area * 1000
+                fy_total = value.get('z', 0) * area * 1000  # JSON Z -> OPS Y
+                fz_total = value.get('y', 0) * area * 1000  # JSON Y (vertical) -> OPS Z
+                print(f"[LOAD] Shell {shell_id}: Snow/vector load area={area:.3f}m², F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
             else:
-                # If scalar magnitude is provided, assume it's normal pressure (wind)
-                # Pressure * Normal * Area
-                force_vec = magnitude * area * 1000 * normal
+                # Scalar magnitude (e.g. Wind): normal pressure perpendicular to surface
+                force_vec = float(magnitude) * area * 1000 * normal
                 fx_total, fy_total, fz_total = force_vec[0], force_vec[1], force_vec[2]
+                print(f"[LOAD] Shell {shell_id}: Wind/scalar load magnitude={magnitude} area={area:.3f}m², F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
             
-            # Distribute to nodes
+            # Distribute equally to 4 corner nodes
             for node_id in shell_nodes:
                 ops.load(node_id, fx_total/4.0, fy_total/4.0, fz_total/4.0, 0.0, 0.0, 0.0)
                 
@@ -631,10 +648,10 @@ def run_static_analysis(model: dict = None, log_callback=None):
         num_elements = len(ops.getEleTags())
         _log(f"[ANALYSIS] Model statistics: {num_nodes} nodes, {num_elements} elements")
         
-        # Use sparse solver - much faster for FEM sparse stiffness matrices
-        # FullGeneral (dense O(n³)) was causing 100x slowdown on Linux vs Windows
+        # UmfPack handles unsymmetric/ill-conditioned systems from shell drilling DOF
+        # common in mixed shell+beam models
         solver_set = False
-        for solver in ["SparseSYM", "BandGenLinLapack", "BandGen"]:
+        for solver in ["UmfPack", "SparseSYM", "BandGenLinLapack", "FullGeneral"]:
             try:
                 ops.system(solver)
                 _log(f"[ANALYSIS] Using solver: {solver}")
@@ -644,19 +661,19 @@ def run_static_analysis(model: dict = None, log_callback=None):
                 continue
         if not solver_set:
             ops.system("FullGeneral")
-            _log("[ANALYSIS] Warning: Using FullGeneral solver (may be slow)")
+            _log("[ANALYSIS] Warning: Falling back to FullGeneral solver")
         
         ops.numberer("RCM")
-        ops.constraints("Transformation")
+        # Penalty is more stable than Transformation for mixed shell+beam models
+        # with shared nodes — avoids DOF elimination issues from drilling DOF
+        ops.constraints("Penalty", 1.0e12, 1.0e12)
         
         # Apply load in multiple steps
         num_steps = 10
         load_step = 1.0 / num_steps
         
         ops.integrator("LoadControl", load_step)
-        
-        # Use displacement-based convergence (robust for stiff steel structures)
-        ops.test("NormDispIncr", 1.0e-6, 50)
+        ops.test("NormDispIncr", 1.0e-6, 100)
         ops.algorithm("Newton")
         ops.analysis("Static")
         
@@ -664,14 +681,22 @@ def run_static_analysis(model: dict = None, log_callback=None):
         for i in range(num_steps):
             ok = ops.analyze(1)
             
-            # Fallback: if Newton fails, try Modified Newton with relaxed tolerance
+            # Fallback 1: KrylovNewton — better for ill-conditioned systems
             if ok != 0:
-                _log(f"[ANALYSIS]   > Newton failed at step {i+1}, trying ModifiedNewton...")
-                ops.test("NormDispIncr", 1.0e-4, 100)
+                _log(f"[ANALYSIS]   > Newton failed at step {i+1}, trying KrylovNewton...")
+                ops.test("NormDispIncr", 1.0e-4, 200)
+                ops.algorithm("KrylovNewton")
+                ok = ops.analyze(1)
+                ops.test("NormDispIncr", 1.0e-6, 100)
+                ops.algorithm("Newton")
+            
+            # Fallback 2: ModifiedNewton with energy convergence criterion
+            if ok != 0:
+                _log(f"[ANALYSIS]   > KrylovNewton failed at step {i+1}, trying ModifiedNewton+EnergyIncr...")
+                ops.test("EnergyIncr", 1.0e-8, 200)
                 ops.algorithm("ModifiedNewton")
                 ok = ops.analyze(1)
-                # Restore original algorithm for next steps
-                ops.test("NormDispIncr", 1.0e-6, 50)
+                ops.test("NormDispIncr", 1.0e-6, 100)
                 ops.algorithm("Newton")
             
             if ok != 0:
