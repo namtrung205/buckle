@@ -1,4 +1,5 @@
 import ElasticBeamColumn  from './Elements/ElasticBeamColumn'
+import Shell from './Elements/Shell/Shell'
 import Node from './Elements/Node/Node'
 import Camera from './Camera/Camera'
 import Selector from './Geometry/Helpers/Selector'
@@ -37,5 +38,6 @@ export {
   Load,
   BoundaryCondition,
   WebSocketHandler,
-  CopyTool
+  CopyTool,
+  Shell
 }

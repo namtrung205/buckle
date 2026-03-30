@@ -79,11 +79,12 @@ def run_analysis(model: dict, log_callback=None):
     members = model['members']
     # materials = model['materials']
     sections = model['sections']
+    shells = model.get('shells', [])
     loads = model['loads']
     boundary_conditions = model['boundary_conditions']
     
     _log(f"\n[ANALYSIS] Starting structural analysis...")
-    _log(f"[ANALYSIS] Input Summary: {len(nodes)} nodes, {len(members)} members, {len(sections)} sections, {len(loads)} loads, {len(boundary_conditions)} boundary conditions")
+    _log(f"[ANALYSIS] Input Summary: {len(nodes)} nodes, {len(members)} members, {len(shells)} shells, {len(sections)} sections, {len(loads)} loads, {len(boundary_conditions)} boundary conditions")
     # Initialize
     t0 = time.time()
     init()
@@ -107,7 +108,8 @@ def run_analysis(model: dict, log_callback=None):
     # Create elements
     t0 = time.time()
     create_members(members)
-    _log(f"[ANALYSIS] ✓ Created elements (discretized members) in {time.time()-t0:.3f}s")
+    create_shells(shells)
+    _log(f"[ANALYSIS] ✓ Created elements (members + {len(shells)} shells) in {time.time()-t0:.3f}s")
 
     # Apply boundary conditions
     t0 = time.time()
@@ -444,6 +446,30 @@ def mesh_member(member):
       })
 
     return new_nodes, new_members, L
+
+def create_shells(shells):
+  """Creates ShellMITC4 elements in the OpenSees model."""
+  for shell in shells:
+    shell_id = shell['id']
+    nodes = shell['nodes']
+    thickness = shell.get('thickness', 0.005) # Default 5mm
+    material = shell.get('material', {'E': 2.1e11, 'nu': 0.3})
+    
+    # Create a unique section for this shell (simpler for now)
+    # OpenSees section 'ElasticMembranePlateSection' tag E nu h rho
+    section_tag = int(random.random() * 0x7FFFFFFF)
+    E = material.get('E', 2.1e11)
+    nu = material.get('nu', 0.3)
+    rho = material.get('rho', 7850.0)
+    
+    ops.section('ElasticMembranePlateSection', section_tag, E, nu, thickness, rho)
+    
+    # ShellMITC4 tag iNode jNode kNode lNode secTag
+    # Ensure we have 4 nodes
+    if len(nodes) == 4:
+      ops.element('ShellMITC4', shell_id, *nodes, section_tag)
+    else:
+      print(f"Warning: Shell {shell_id} has {len(nodes)} nodes (expected 4 for ShellMITC4). Skipping.")
 
 def apply_boundary_conditions(boundary_conditions):
   """Applies boundary conditions to the model."""

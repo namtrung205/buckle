@@ -81,9 +81,16 @@ export type Node = {
   z : number;
 }
 
+export type Shell = {
+  id: number
+  nodes: number[]
+  thickness: number
+  material: Material
+}
+
 export type Member = ElasticBeamColumn 
 
-export type ElementType = 'elasticBeamColumn' | '3dLine' | 'node' | 'colUp' | 'colDown'
+export type ElementType = 'elasticBeamColumn' | '3dLine' | 'node' | 'shell' | 'colUp' | 'colDown'
 
 // Levels 
 export interface Level {

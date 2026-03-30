@@ -13,7 +13,8 @@ import {
   ElasticBeamColumn,
   Console,
   Visibility,
-  WebSocketHandler
+  WebSocketHandler,
+  Shell
 } from "./index";
 import { makeAutoObservable } from "mobx";
 import { Material, mockMaterials, mockSections, Section } from "../types";
@@ -49,6 +50,7 @@ export class Model {
   // axes : Axes
   nodes : Node[]
   members : Member[]
+  shells : Shell[] = []
   boundaryConditions : BoundaryCondition[] = []
   // lines : Line3D[]
   gridHelper : GridHelper
@@ -130,6 +132,7 @@ export class Model {
     this.gizmo.attachControls(this.camera.controls);
     this.nodes = []
     this.members = []
+    this.shells = []
     this.layer = 0
     this.visibility = new Visibility(this)
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
@@ -234,6 +237,11 @@ export class Model {
       member.remove()
     })
     this.members = []
+    
+    // Dispose of all shells
+    const shells = [...this.shells]
+    shells.forEach(shell => shell.remove())
+    this.shells = []
     
     // Dispose of all nodes
     // Create a copy of the array to avoid issues when dispose() modifies the original array

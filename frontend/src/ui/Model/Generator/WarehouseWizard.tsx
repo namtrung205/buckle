@@ -13,7 +13,7 @@ import * as THREE from 'three';
 import { useModel } from '../../../model/Context';
 import Dialog from '../../../components/Dialog/Dialog';
 import TextField from '../../../components/TextField';
-import { Node, ElasticBeamColumn, Load } from '../../../model';
+import { Node, ElasticBeamColumn, Load, Shell } from '../../../model';
 import BoundaryCondition from '../../../model/BoundaryCondition/BoundaryCondition';
 import { Section } from '../../../types';
 
@@ -37,6 +37,8 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     addSelfWeight: true,
     addWindLoad: true,
     windMagnitude: 2.0, // kN/m
+    addMembrane: true,
+    membraneThickness: 0.002, // 2mm
     clearExisting: true
   });
 
@@ -240,7 +242,86 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         }
     }
 
-    // --- 4. LOADING ---
+    // --- 4. SHELL/MEMBRANE GENERATION ---
+    if (params.addMembrane) {
+        const material = model.materials[0] || { id: 1, name: 'PVC', E: 1e9, nu: 0.3 };
+        for (let i = 0; i < numBays; i++) {
+            const f1 = frameData[i];
+            const f2 = frameData[i+1];
+
+            // Left Side Panels
+            for (let p = 0; p < f1.raftNodesL.length - 1; p++) {
+                const shellNodes = [
+                    f1.raftNodesL[p],
+                    f2.raftNodesL[p],
+                    f2.raftNodesL[p+1],
+                    f1.raftNodesL[p+1]
+                ];
+                const shell = new Shell(
+                    model, 
+                    `Membrane-L-${i}-${p}`, 
+                    shellNodes, 
+                    params.membraneThickness, 
+                    material
+                );
+                shell.create();
+                model.shells.push(shell);
+            }
+
+            // Right Side Panels
+            for (let p = 0; p < f1.raftNodesR.length - 1; p++) {
+                const shellNodes = [
+                    f1.raftNodesR[p],
+                    f2.raftNodesR[p],
+                    f2.raftNodesR[p+1],
+                    f1.raftNodesR[p+1]
+                ];
+                const shell = new Shell(
+                    model, 
+                    `Membrane-R-${i}-${p}`, 
+                    shellNodes, 
+                    params.membraneThickness, 
+                    material
+                );
+                shell.create();
+                model.shells.push(shell);
+            }
+        }
+
+        // Side Walls
+        for (let i = 0; i < numBays; i++) {
+            const f1 = frameData[i];
+            const f2 = frameData[i+1];
+
+            // Wall Left
+            const shellL = new Shell(model, `Wall-L-${i}`, [f1.baseL, f2.baseL, f2.eaveL, f1.eaveL], params.membraneThickness, material);
+            shellL.create();
+            model.shells.push(shellL);
+
+            // Wall Right
+            const shellR = new Shell(model, `Wall-R-${i}`, [f1.baseR, f2.baseR, f2.eaveR, f1.eaveR], params.membraneThickness, material);
+            shellR.create();
+            model.shells.push(shellR);
+        }
+
+        // End Walls (Front & Back)
+        const endFrames = [0, numBays];
+        endFrames.forEach(i => {
+            const f = frameData[i];
+            // Simple gable end mesh: 1 rectangle + triangles (as quads)
+            // Bottom rectangle
+            const shellBottom = new Shell(model, `EndWall-Bottom-${i}`, [f.baseL, f.baseR, f.eaveR, f.eaveL], params.membraneThickness, material);
+            shellBottom.create();
+            model.shells.push(shellBottom);
+
+            // Top Gable (approximated as quads by repeating ridge)
+            const shellGable = new Shell(model, `EndWall-Gable-${i}`, [f.eaveL, f.eaveR, f.ridge, f.ridge], params.membraneThickness, material);
+            shellGable.create();
+            model.shells.push(shellGable);
+        });
+    }
+
+    // --- 5. LOADING ---
     const area = calculateArea(section);
     const weight = (area * 7850 * 9.81) / 1000; // kN/m
 
@@ -331,6 +412,16 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
               control={<Checkbox name="hasBracing" checked={params.hasBracing} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#4caf50' } }} />}
               label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Cross Bracing</Typography>}
             />
+          </Grid>
+
+          <Grid item xs={12}>
+            <FormControlLabel
+              control={<Checkbox name="addMembrane" checked={params.addMembrane} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }} />}
+              label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Membrane/Shell Roofing (Bạt)</Typography>}
+            />
+          </Grid>
+          <Grid item xs={12}>
+              <TextField label="Membrane Thickness (m)" name="membraneThickness" type="number" value={params.membraneThickness} onChange={handleChange} fullWidth size="small" placeholder="0.002" disabled={!params.addMembrane} />
           </Grid>
 
           <Grid item xs={12}>

@@ -54,11 +54,12 @@ export const exportModelJson = (model: Model) => {
         y: load.value.y,
         z: load.value.z
       },
-      // direction: {
-      //   x: load.direction.x,
-      //   y: load.direction.y,
-      //   z: load.direction.z
-      // }
+    })),
+    shells: model.shells.map(shell => ({
+      id: shell.id,
+      nodes: shell.nodes.map(node => node.id),
+      thickness: shell.thickness,
+      material: shell.material
     }))
   };
 
