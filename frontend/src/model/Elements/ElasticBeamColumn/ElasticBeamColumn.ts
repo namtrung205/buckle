@@ -212,10 +212,21 @@ class ElasticBeamColumn {
   }
 
   remove() {
-    // Clean up all meshes and 3D objects
+    // 1. Clean up linear loads attached to this member
+    const loadsToUpdate = this.model.loads.filter(l => l.type === 'linear' && l.targets.includes(this.id))
+    loadsToUpdate.forEach(l => {
+      if (l.targets.length === 1 && l.targets[0] === this.id) {
+        l.delete()
+      } else {
+        l.targets = l.targets.filter(t => t !== this.id)
+        l.createOrUpdate()
+      }
+    })
+
+    // 2. Clean up all meshes and 3D objects
     this.dispose()
     
-    // Remove member from model
+    // 3. Remove member from model
     const index = this.model.members.findIndex(member => member.id === this.id)
     if (index !== -1) {
       this.model.members.splice(index, 1)

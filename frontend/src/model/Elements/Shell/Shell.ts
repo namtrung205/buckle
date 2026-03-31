@@ -84,6 +84,17 @@ class Shell {
   };
 
   remove = () => {
+    // 1. Clean up pressure loads attached to this shell
+    const loadsToUpdate = this.model.loads.filter(l => l.type === 'pressure' && l.targets.includes(this.id))
+    loadsToUpdate.forEach(l => {
+      if (l.targets.length === 1 && l.targets[0] === this.id) {
+        l.delete()
+      } else {
+        l.targets = l.targets.filter(t => t !== this.id)
+        l.createOrUpdate()
+      }
+    })
+
     this.dispose();
     const index = this.model.shells.findIndex(s => s.id === this.id);
     if (index !== -1) {
