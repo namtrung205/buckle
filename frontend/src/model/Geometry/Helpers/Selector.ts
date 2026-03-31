@@ -6,6 +6,7 @@ import ElasticBeamColumn from '../../Elements/ElasticBeamColumn/ElasticBeamColum
 import { Level } from '../../../types';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import Line from '../Tools/Line';
+import { SelectionBox } from 'three/examples/jsm/interactive/SelectionBox.js';
 
 type Mesh = {
   object: THREE.Mesh
@@ -23,19 +24,31 @@ class Selector {
   colorOnHover: number
   isCtrlPressed: boolean
   selected: Mesh[]
+  selectionBox: SelectionBox | null = null;
+  selectionHtmlElement: HTMLDivElement | null = null;
+  pointerDownPoint: THREE.Vector2 = new THREE.Vector2();
+  isDragging: boolean = false;
+  isBoxActive: boolean = false;
   set setupEvent(enabled: boolean) {
     if (enabled) {
       this.onHover = this.onHover.bind(this);
       this.onClick = this.onClick.bind(this);
+      this.onPointerDown = this.onPointerDown.bind(this);
+      this.onPointerMove = this.onPointerMove.bind(this);
+      this.onPointerUp = this.onPointerUp.bind(this);
       this.onKeyDown = this.onKeyDown.bind(this);
       this.onKeyUp = this.onKeyUp.bind(this);
       window.addEventListener('pointermove', this.onHover);
-      window.addEventListener('click', this.onClick);
+      window.addEventListener('pointermove', this.onPointerMove);
+      window.addEventListener('pointerdown', this.onPointerDown);
+      window.addEventListener('pointerup', this.onPointerUp);
       window.addEventListener('keydown', this.onKeyDown);
       window.addEventListener('keyup', this.onKeyUp);
     } else {
       window.removeEventListener("pointermove", this.onHover);
-      window.removeEventListener("click", this.onClick);
+      window.removeEventListener("pointermove", this.onPointerMove);
+      window.removeEventListener("pointerdown", this.onPointerDown);
+      window.removeEventListener("pointerup", this.onPointerUp);
       window.removeEventListener("keydown", this.onKeyDown);
       window.removeEventListener("keyup", this.onKeyUp);
     }
@@ -140,38 +153,178 @@ class Selector {
         const objectOnClick = intersects[0].object as THREE.Mesh
         const point = intersects[0].point
         if (objectOnClick.type != "GridHelper") {
-          if (this.isCtrlPressed) {
-            const isSelected = this.isMeshSelected(objectOnClick)
-            if (isSelected) {
-              this.removeFromSelection(objectOnClick)
+            let userData = objectOnClick.userData
+            if (!userData?.originalColor && objectOnClick.parent instanceof THREE.Group) {
+              userData = objectOnClick.parent.userData
+            }
+            const meshOriginalColor = userData?.originalColor || this.originalColor
+
+            if (this.isCtrlPressed) {
+              const isSelected = this.isMeshSelected(objectOnClick)
+              if (isSelected) {
+                this.removeFromSelection(objectOnClick)
+              }
+              else {
+                const newSelection = {
+                  object: objectOnClick,
+                  originalColor: meshOriginalColor
+                }
+                this.selected = [...this.selected, newSelection]
+              }
             }
             else {
-              const newSelection = {
-                object: objectOnClick,
-                originalColor: this.originalColor
-              }
-              this.selected = [...this.selected, newSelection]
+              this.clear()
+              this.selected = []
+              this.selected.push(
+                {
+                  object: objectOnClick,
+                  originalColor: meshOriginalColor
+                }
+              )
             }
-          }
-          else {
-            this.clear()
-            this.selected = []
-            this.selected.push(
-              {
-                object: objectOnClick,
-                originalColor: this.originalColor
-              }
-            )
           }
         }
       }
     }
+
+  onPointerDown(event: PointerEvent) {
+    if (!this.enableClick) return;
+    if (event.target !== this.model.renderer.domElement) return;
+    if (event.button !== 0) return; // Only respond to left click
+
+    this.pointerDownPoint.set(event.clientX, event.clientY);
+    this.isDragging = false;
+
+    if (event.shiftKey) return;
+
+    if (!this.selectionBox) {
+      this.selectionBox = new SelectionBox(this.model.camera.cam, this.model.scene);
+    }
+    
+    if (!this.selectionHtmlElement && this.model.renderer.domElement.parentElement) {
+      this.selectionHtmlElement = document.createElement('div');
+      this.selectionHtmlElement.classList.add('selectBox');
+      this.selectionHtmlElement.style.pointerEvents = 'none';
+      this.selectionHtmlElement.style.display = 'none';
+      this.model.renderer.domElement.parentElement.appendChild(this.selectionHtmlElement);
+    }
+
+    if (this.selectionHtmlElement) {
+      this.selectionHtmlElement.style.display = 'none';
+      this.selectionHtmlElement.style.left = event.clientX + 'px';
+      this.selectionHtmlElement.style.top = event.clientY + 'px';
+      this.selectionHtmlElement.style.width = '0px';
+      this.selectionHtmlElement.style.height = '0px';
+    }
+
+    this.isDragging = false;
+    this.isBoxActive = true;
+
+    const canvas = this.model.renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+
+    this.selectionBox.startPoint.set(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      0.5
+    );
+  }
+
+  onPointerMove(event: PointerEvent) {
+    if (this.isBoxActive && this.selectionHtmlElement) {
+      this.isDragging = true;
+      this.selectionHtmlElement.style.display = 'block';
+      const left = Math.min(this.pointerDownPoint.x, event.clientX);
+      const top = Math.min(this.pointerDownPoint.y, event.clientY);
+      const width = Math.abs(event.clientX - this.pointerDownPoint.x);
+      const height = Math.abs(event.clientY - this.pointerDownPoint.y);
+      this.selectionHtmlElement.style.left = left + 'px';
+      this.selectionHtmlElement.style.top = top + 'px';
+      this.selectionHtmlElement.style.width = width + 'px';
+      this.selectionHtmlElement.style.height = height + 'px';
+    }
+  }
+
+  onPointerUp(event: PointerEvent) {
+    if (this.selectionHtmlElement) {
+      this.selectionHtmlElement.style.display = 'none';
+    }
+    this.isBoxActive = false;
+    
+    if (!this.enableClick) return;
+    if (event.target !== this.model.renderer.domElement && !this.isDragging) return;
+    if (event.button !== 0) return; // Only process left click
+
+    const distance = Math.hypot(event.clientX - this.pointerDownPoint.x, event.clientY - this.pointerDownPoint.y);
+
+    if (distance > 5) {
+      if (event.shiftKey && !this.isDragging) return; // Return early if they held shift and orbited
+      if (!this.selectionBox) return; // Prevent selection logic if box isn't initialized
+
+      this.isDragging = true;
+      const canvas = this.model.renderer.domElement;
+      const rect = canvas.getBoundingClientRect();
+
+      this.selectionBox.camera = this.model.camera.cam;
+      this.selectionBox.endPoint.set(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+        0.5
+      );
+
+      const allSelected = this.selectionBox.select();
+      
+      const meshesArray: THREE.Mesh[] = [];
+      this.model.scene.children.forEach(element => this.getMeshes(element, meshesArray));
+      
+      const validSelected = allSelected.filter(obj => meshesArray.includes(obj as THREE.Mesh));
+
+      if (!this.isCtrlPressed) {
+        this.clear();
+      }
+
+      validSelected.forEach((mesh) => {
+        const objectSelect = mesh as THREE.Mesh;
+        if (objectSelect.type !== "GridHelper") {
+          const isSelected = this.isMeshSelected(objectSelect);
+          if (!isSelected) {
+            let userData = objectSelect.userData;
+            if (!userData?.originalColor && objectSelect.parent instanceof THREE.Group) {
+              userData = objectSelect.parent.userData;
+            }
+            const meshOriginalColor = userData?.originalColor || this.originalColor;
+
+            this.selected = [...this.selected, {
+              object: objectSelect,
+              originalColor: meshOriginalColor
+            }];
+            
+            const material = objectSelect.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[];
+            if (Array.isArray(material)) {
+              material[0].color.setHex(this.colorOnHover);
+            } else {
+              material.color.setHex(this.colorOnHover);
+            }
+          }
+        }
+      });
+    } else if (event.target === this.model.renderer.domElement) {
+      // Standard click
+      this.onClick();
+    }
+    
+    this.isDragging = false;
   }
   dipose() {
     window.removeEventListener('pointermove', this.onHover);
-    window.removeEventListener('click', this.onClick);
+    window.removeEventListener('pointermove', this.onPointerMove);
+    window.removeEventListener('pointerdown', this.onPointerDown);
+    window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('keydown', this.onKeyDown);
-    window.removeEventListener('keyup', this.onKeyUp)
+    window.removeEventListener('keyup', this.onKeyUp);
+    if (this.selectionHtmlElement && this.selectionHtmlElement.parentElement) {
+      this.selectionHtmlElement.parentElement.removeChild(this.selectionHtmlElement);
+    }
   }
   getMeshes(object: THREE.Object3D, meshesArray: THREE.Mesh[] = []): THREE.Mesh[] {
 
@@ -222,6 +375,9 @@ class Selector {
     if (event.ctrlKey) {
       this.isCtrlPressed = true
     }
+    if (event.shiftKey && this.model.camera.controls) {
+      this.model.camera.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    }
   }
   onKeyUp(event: KeyboardEvent) {
     if (!event.ctrlKey) {
@@ -229,6 +385,9 @@ class Selector {
     }
     if (event.key === 'Escape') {
       this.clear()
+    }
+    if (!event.shiftKey && this.model.camera.controls) {
+      this.model.camera.controls.mouseButtons.LEFT = null as any;
     }
   }
   clear() {

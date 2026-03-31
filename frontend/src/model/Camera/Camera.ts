@@ -26,6 +26,11 @@ export class Camera {
     this.controls = new OrbitControls(this.cam, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.enableRotate = false;
+    this.controls.mouseButtons = {
+      LEFT: null as any,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.PAN
+    };
 
     // https://discourse.threejs.org/t/directionallight-parallel-to-the-camera-step-by-step/54225/5
     // const directionalLight = new THREE.DirectionalLight(0xffffff, 1)
@@ -67,6 +72,11 @@ export class Camera {
     this.cam.position.set(20, 30, 20);
     this.controls.enableDamping = true;
     this.controls.enableRotate = true;
+    this.controls.mouseButtons = {
+      LEFT: null as any,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.PAN
+    };
     this.cam.layers.enableAll()
   }
   handle2dView(){
