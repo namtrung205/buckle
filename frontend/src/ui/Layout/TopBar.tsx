@@ -23,6 +23,7 @@ import Node from '../../model/Elements/Node/Node';
 import ElasticBeamColumnClass from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
 import Load from '../../model/Load/Load';
+import Shell from '../../model/Elements/Shell/Shell';
 import * as THREE from 'three';
 import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
@@ -280,7 +281,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         x: load.value.x,
         y: load.value.y,
         z: load.value.z
-      }
+      },
+      magnitude: load.magnitude
     }));
 
     const boundaryConditions = model.boundaryConditions.map(boundaryCondition => {
@@ -290,6 +292,15 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
 
     const materials = model.materials;
     
+    // Save shell elements
+    const shells = model.shells.map(shell => ({
+      id: shell.id,
+      name: shell.label,
+      nodes: shell.nodes.map(n => n.id),
+      thickness: shell.thickness,
+      material: shell.material
+    }));
+    
     const modelData = {
       nodes,
       members,
@@ -297,6 +308,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       sections,
       loads,
       boundary_conditions: boundaryConditions,
+      shells,
       metadata: {
         exportDate: new Date().toISOString(),
         modelName: 'FEM Model',
@@ -434,6 +446,20 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         console.log(`Created ${jsonData.boundary_conditions.length} boundary conditions`);
       }
       
+      if (jsonData.shells) {
+        jsonData.shells.forEach((shellData: any) => {
+          const nodes = shellData.nodes.map((nodeId: number) => nodeMap.get(nodeId)).filter(Boolean);
+          if (nodes.length !== 4) {
+            console.warn(`Could not find all 4 nodes for shell ${shellData.id}`);
+            return;
+          }
+          const shell = new Shell(model, shellData.name || `Shell-${shellData.id}`, nodes, shellData.thickness || 0.005, shellData.material, shellData.id);
+          shell.create();
+          model.shells.push(shell);
+        });
+        console.log(`Created ${jsonData.shells.length} shells`);
+      }
+
       if (jsonData.loads) {
         jsonData.loads.forEach((loadData: any) => {
           // Handle both Vector3 object format and direct value format
@@ -446,7 +472,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             type: loadData.type,
             targets: loadData.targets,
             name: loadData.name,
-            value: value
+            value: value,
+            magnitude: loadData.magnitude
           } as any);
           load.createOrUpdate();
         });
