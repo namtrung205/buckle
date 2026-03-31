@@ -267,10 +267,14 @@ export class Model {
     this.postProcessing.dispose()
     
     // Clear labeler
-    this.labeler.deleteAll('load')
     this.labeler.deleteAll('effort')
     
     console.log('Model cleared successfully')
+  }
+
+  public invalidateResults = () => {
+    this.postProcessing.dispose()
+    this.output = null
   }
 
   updatePointerCoords = (event : MouseEvent) =>

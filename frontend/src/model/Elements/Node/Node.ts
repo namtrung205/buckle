@@ -64,6 +64,9 @@ class Node {
   delete(){
     if(!this.model) return 
 
+    // Invalidate results and clear post-processing as the model has changed
+    this.model.invalidateResults()
+
     // 1. Find and remove connected members
     const membersToDelete = this.model.members.filter(member => 
       member.nodes.some(node => node.id === this.id)

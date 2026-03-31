@@ -36,6 +36,7 @@ class Load {
     }
   }
   update(load : Load){
+    this.model.invalidateResults()
     this.value = load.value ? new THREE.Vector3(load.value.x, load.value.y, load.value.z) : new THREE.Vector3(0, 0, 0)
     this.targets = load.targets
     this.type = load.type
@@ -351,12 +352,7 @@ class Load {
   }
 
   removeAllLabels(){
-    let ids = this.model.members.map(member => `linear-load-${member.id}`)
-    ids = [...ids, ...this.model.nodes.map(node => `nodal-load-${node.id}-x`)]
-    ids = [...ids, ...this.model.nodes.map(node => `nodal-load-${node.id}-y`)]
-    ids = [...ids, ...this.model.nodes.map(node => `nodal-load-${node.id}-z`)]
-    ids = [...ids, ...this.model.shells.map(shell => `pressure-load-${shell.id}`)]
-    this.model.labeler.batchDelete(ids)
+    this.model.labeler.deleteAll('load');
   }
   removeLoadLabels(){
     let ids = this.targets.map(target => `linear-load-${target}`)
@@ -368,11 +364,17 @@ class Load {
     this.model.labeler.batchDelete(ids)
   }
   delete() {
+    this.model.invalidateResults()
     const index = this.model.loads.findIndex(l => l.id === this.id)
     if(index !== -1){
       this.model.loads.splice(index, 1)
-      this.removeLoadLabels()
       this.dispose()
+      
+      // Refresh all labels since multiple loads might share targets
+      this.model.labeler.deleteAll('load')
+      if (this.model.loads.length > 0) {
+        this.model.loads[0].createLabels()
+      }
     }
   }
   dispose() {
@@ -512,10 +514,6 @@ class Load {
         arrowLength = ARROW_LEN_MIN + normalizedLoad * (ARROW_LEN_MAX - ARROW_LEN_MIN)
       }
 
-      const angle = this.value.angleTo(loadDirection)
-      const directionSign = Math.cos(angle)
-      // FIX HERE
-      console.log('Load Direction', loadDirection, directionSign)
       const labelPosition = new THREE.Vector3(
         center.x,
         center.y,
@@ -580,7 +578,7 @@ class Load {
       ]
       for(const axis of axes){
         const value = loadVector.getComponent(axis.index)
-        if(value === 0) continue
+        if(Math.abs(value) < 0.001) continue
         
         const nodePosition = new THREE.Vector3(node.x, node.y, node.z)
         let arrowEnd : THREE.Vector3

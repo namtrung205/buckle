@@ -345,12 +345,7 @@ class PostProcessing {
     this.removeLabels()
   }
   removeLabels(){
-    const ids : string[] = []
-    this.model.members.forEach(member => {
-      ids.push(`min-effort-label-${member.id}`)
-      ids.push(`max-effort-label-${member.id}`)
-    })
-    this.model.labeler.batchDelete(ids)
+    this.model.labeler.deleteAll('effort')
   }
 }
 

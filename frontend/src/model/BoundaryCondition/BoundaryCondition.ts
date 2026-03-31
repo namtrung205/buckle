@@ -31,6 +31,7 @@ class BoundaryCondition {
   }
 
   createOrUpdate(){ 
+    this.model.invalidateResults()
     this.dispose()  
     switch(this.type){
       case 'fixed':

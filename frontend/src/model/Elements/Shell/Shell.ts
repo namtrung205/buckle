@@ -84,6 +84,7 @@ class Shell {
   };
 
   remove = () => {
+    this.model.invalidateResults()
     // 1. Clean up pressure loads attached to this shell
     const loadsToUpdate = this.model.loads.filter(l => l.type === 'pressure' && l.targets.includes(this.id))
     loadsToUpdate.forEach(l => {

@@ -212,6 +212,7 @@ class Labeler {
         label.removeFromParent();
       }
     })  
+    this.labelObjects = this.labelObjects.filter(label => label.userData.type !== type);
   }
 
   dispose() {

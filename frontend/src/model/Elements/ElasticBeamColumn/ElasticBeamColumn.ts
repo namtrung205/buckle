@@ -212,6 +212,7 @@ class ElasticBeamColumn {
   }
 
   remove() {
+    this.model.invalidateResults()
     // 1. Clean up linear loads attached to this member
     const loadsToUpdate = this.model.loads.filter(l => l.type === 'linear' && l.targets.includes(this.id))
     loadsToUpdate.forEach(l => {
