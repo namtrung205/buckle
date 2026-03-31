@@ -38,12 +38,14 @@ class Selector {
       this.onPointerUp = this.onPointerUp.bind(this);
       this.onKeyDown = this.onKeyDown.bind(this);
       this.onKeyUp = this.onKeyUp.bind(this);
+      this.onContextMenu = this.onContextMenu.bind(this);
       window.addEventListener('pointermove', this.onHover);
       window.addEventListener('pointermove', this.onPointerMove);
       window.addEventListener('pointerdown', this.onPointerDown);
       window.addEventListener('pointerup', this.onPointerUp);
       window.addEventListener('keydown', this.onKeyDown);
       window.addEventListener('keyup', this.onKeyUp);
+      window.addEventListener('contextmenu', this.onContextMenu, { passive: false });
     } else {
       window.removeEventListener("pointermove", this.onHover);
       window.removeEventListener("pointermove", this.onPointerMove);
@@ -51,6 +53,7 @@ class Selector {
       window.removeEventListener("pointerup", this.onPointerUp);
       window.removeEventListener("keydown", this.onKeyDown);
       window.removeEventListener("keyup", this.onKeyUp);
+      window.removeEventListener("contextmenu", this.onContextMenu);
     }
   }
   constructor(model: Model) {
@@ -190,9 +193,13 @@ class Selector {
   onPointerDown(event: PointerEvent) {
     if (!this.enableClick) return;
     if (event.target !== this.model.renderer.domElement) return;
-    if (event.button !== 0) return; // Only respond to left click
 
+    // Both Left & Right clicks register their start point to differentiate click vs drag
     this.pointerDownPoint.set(event.clientX, event.clientY);
+    
+    // Only process Left-Click for box drawing features
+    if (event.button !== 0) return; 
+
     this.isDragging = false;
 
     if (event.shiftKey) return;
@@ -253,75 +260,88 @@ class Selector {
     
     if (!this.enableClick) return;
     if (event.target !== this.model.renderer.domElement && !this.isDragging) return;
-    if (event.button !== 0) return; // Only process left click
 
     const distance = Math.hypot(event.clientX - this.pointerDownPoint.x, event.clientY - this.pointerDownPoint.y);
 
-    if (distance > 5) {
-      if (event.shiftKey && !this.isDragging) return; // Return early if they held shift and orbited
-      if (!this.selectionBox) return; // Prevent selection logic if box isn't initialized
-
-      this.isDragging = true;
-      const canvas = this.model.renderer.domElement;
-      const rect = canvas.getBoundingClientRect();
-
-      this.selectionBox.camera = this.model.camera.cam;
-      this.selectionBox.endPoint.set(
-        ((event.clientX - rect.left) / rect.width) * 2 - 1,
-        -((event.clientY - rect.top) / rect.height) * 2 + 1,
-        0.5
-      );
-
-      const allSelected = this.selectionBox.select();
-      
-      const meshesArray: THREE.Mesh[] = [];
-      this.model.scene.children.forEach(element => this.getMeshes(element, meshesArray));
-      
-      const validSelected = allSelected.filter(obj => meshesArray.includes(obj as THREE.Mesh));
-
-      if (!this.isCtrlPressed) {
-        this.clear();
+    if (distance <= 5) {
+      if (event.button === 2) {
+        if (this.selected.length > 0) {
+          this.model.openContextMenu(event.clientX, event.clientY);
+        }
+        return;
       }
+      
+      if (event.button === 0) {
+        this.model.closeContextMenu();
+        if (event.shiftKey && this.selected.length === 0) return;
+        this.onClick();
+      }
+    } else {
+      if (event.button === 0) {
+        if (event.shiftKey && !this.isDragging) return;
+        if (!this.selectionBox) return;
 
-      validSelected.forEach((mesh) => {
-        const objectSelect = mesh as THREE.Mesh;
-        if (objectSelect.type !== "GridHelper") {
-          const isSelected = this.isMeshSelected(objectSelect);
-          if (!isSelected) {
-            let userData = objectSelect.userData;
-            if (!userData?.originalColor && objectSelect.parent instanceof THREE.Group) {
-              userData = objectSelect.parent.userData;
-            }
-            const meshOriginalColor = userData?.originalColor || this.originalColor;
+        this.isDragging = true;
+        const canvas = this.model.renderer.domElement;
+        const rect = canvas.getBoundingClientRect();
 
-            this.selected = [...this.selected, {
-              object: objectSelect,
-              originalColor: meshOriginalColor
-            }];
-            
-            const material = objectSelect.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[];
-            if (Array.isArray(material)) {
-              material[0].color.setHex(this.colorOnHover);
-            } else {
-              material.color.setHex(this.colorOnHover);
+        this.selectionBox.camera = this.model.camera.cam;
+        this.selectionBox.endPoint.set(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1,
+          0.5
+        );
+
+        const allSelected = this.selectionBox.select();
+        const meshesArray: THREE.Mesh[] = [];
+        this.model.scene.children.forEach(element => this.getMeshes(element, meshesArray));
+        
+        const validSelected = allSelected.filter(obj => meshesArray.includes(obj as THREE.Mesh));
+
+        if (!this.isCtrlPressed) {
+          this.clear();
+        }
+
+        validSelected.forEach((mesh) => {
+          const objectSelect = mesh as THREE.Mesh;
+          if (objectSelect.type !== "GridHelper") {
+            const isSelected = this.isMeshSelected(objectSelect);
+            if (!isSelected) {
+              let userData = objectSelect.userData;
+              if (!userData?.originalColor && objectSelect.parent instanceof THREE.Group) {
+                userData = objectSelect.parent.userData;
+              }
+              const meshOriginalColor = userData?.originalColor || this.originalColor;
+
+              this.selected = [...this.selected, {
+                object: objectSelect,
+                originalColor: meshOriginalColor
+              }];
+              
+              const material = objectSelect.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[];
+              if (Array.isArray(material)) {
+                material[0].color.setHex(this.colorOnHover);
+              } else {
+                material.color.setHex(this.colorOnHover);
+              }
             }
           }
-        }
-      });
-    } else if (event.target === this.model.renderer.domElement) {
-      // Standard click
-      this.onClick();
+        });
+        
+        this.model.closeContextMenu();
+      }
     }
     
     this.isDragging = false;
   }
-  dipose() {
+  dispose() {
     window.removeEventListener('pointermove', this.onHover);
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerdown', this.onPointerDown);
     window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
+    window.removeEventListener('contextmenu', this.onContextMenu);
     if (this.selectionHtmlElement && this.selectionHtmlElement.parentElement) {
       this.selectionHtmlElement.parentElement.removeChild(this.selectionHtmlElement);
     }
@@ -395,6 +415,14 @@ class Selector {
       this.model.camera.controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
     }
   }
+  
+  onContextMenu(event: MouseEvent) {
+    if (event.target === this.model.renderer.domElement || this.model.contextMenu.visible) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
   clear() {
     this.selected.forEach(m => {
       if (Array.isArray(m.object.material)) {

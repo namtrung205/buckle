@@ -67,7 +67,20 @@ export class Model {
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
   visibility : Visibility
+  contextMenu = {
+    visible: false,
+    x: 0,
+    y: 0,
+  }
   ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
+
+  closeContextMenu = () => {
+    this.contextMenu.visible = false;
+  }
+
+  openContextMenu = (x: number, y: number) => {
+    this.contextMenu = { visible: true, x, y };
+  }
 
   static getInstance(): Model {
     if (Model.instance === null) {
@@ -147,6 +160,7 @@ export class Model {
       this.container = document.getElementById('app-container') as HTMLDivElement
       this.renderer.setSize( window.innerWidth, window.innerHeight );
       this.container?.appendChild( this.renderer.domElement )
+      this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
       this.scene.background = new THREE.Color('white');
       await this.ws.connect();
       if (this.ws.isConnected())  console.log('Connected!');
@@ -201,7 +215,7 @@ export class Model {
       removeObjWithChildren(obj)
     });
     this.container.removeChild(this.renderer.domElement)
-    this.selector.dipose()
+    this.selector.dispose()
     this.labeler.dispose()
     this.gizmo.dispose()
     this.removeListeners()

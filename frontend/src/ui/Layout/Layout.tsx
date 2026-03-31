@@ -3,6 +3,7 @@ import { Box } from '@mui/material';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
 import StatusBar from './StatusBar';
+import ContextMenu from './ContextMenu';
 
 interface LayoutProps {
   children: ReactNode;
@@ -55,6 +56,7 @@ const Layout = ({ children }: LayoutProps) => {
 
       {/* Bottom Status Bar */}
       <StatusBar />
+      <ContextMenu />
     </Box>
   );
 };
