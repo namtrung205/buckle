@@ -5,6 +5,20 @@ import { observer } from 'mobx-react-lite';
 
 const StatusBar = () => {
   const model = useModel();
+  
+  const selectedMeshes = model?.selector.selected || [];
+  let nodesCount = 0;
+  let membersCount = 0;
+
+  selectedMeshes.forEach(item => {
+    let type = item.object.userData?.type;
+    if (!type && item.object.parent) {
+      type = item.object.parent.userData?.type;
+    }
+    if (type === 'node') nodesCount++;
+    if (type === 'elasticBeamColumn') membersCount++;
+  });
+
   return (
     <Box
       sx={{
@@ -19,6 +33,26 @@ const StatusBar = () => {
         boxShadow: '0 -1px 3px rgba(0, 0, 0, 0.3)',
       }}
     >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+        {(nodesCount > 0 || membersCount > 0) && (
+          <>
+            <Typography sx={{ fontSize: '0.75rem', color: '#a0a0a0', fontWeight: 500 }}>
+              S E L E C T I O N :
+            </Typography>
+            {nodesCount > 0 && (
+              <Typography sx={{ fontSize: '0.75rem', color: '#ffb300', fontWeight: 500, fontFamily: '"Inter", sans-serif' }}>
+                {nodesCount} Node{nodesCount > 1 ? 's' : ''}
+              </Typography>
+            )}
+            {membersCount > 0 && (
+              <Typography sx={{ fontSize: '0.75rem', color: '#4fc3f7', fontWeight: 500, fontFamily: '"Inter", sans-serif' }}>
+                {membersCount} Member{membersCount > 1 ? 's' : ''}
+              </Typography>
+            )}
+          </>
+        )}
+      </Box>
+
       <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center' }}>
         <Typography
           sx={{

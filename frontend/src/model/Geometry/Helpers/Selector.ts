@@ -376,7 +376,11 @@ class Selector {
       this.isCtrlPressed = true
     }
     if (event.shiftKey && this.model.camera.controls) {
-      this.model.camera.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+      // OrbitControls inherently swaps ROTATE and PAN when Shift is held.
+      // To make Left+Shift = ROTATE, we must set LEFT to PAN.
+      // To make Right+Shift (optional) stay PAN, we must set RIGHT to ROTATE.
+      this.model.camera.controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+      this.model.camera.controls.mouseButtons.RIGHT = THREE.MOUSE.ROTATE;
     }
   }
   onKeyUp(event: KeyboardEvent) {
@@ -388,6 +392,7 @@ class Selector {
     }
     if (!event.shiftKey && this.model.camera.controls) {
       this.model.camera.controls.mouseButtons.LEFT = null as any;
+      this.model.camera.controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
     }
   }
   clear() {
