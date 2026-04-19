@@ -3,11 +3,9 @@ import { Menu, MenuItem, ListItemIcon, ListItemText, Divider } from '@mui/materi
 import { Delete as DeleteIcon, OpenWith as MoveIcon } from '@mui/icons-material';
 import { useModel } from '../../model/Context';
 import { observer } from 'mobx-react-lite';
-import { useActiveDialog } from './hooks';
 
 const ContextMenu = observer(() => {
   const model = useModel();
-  const { open } = useActiveDialog();
 
   if (!model || !model.contextMenu.visible) return null;
 
@@ -39,7 +37,7 @@ const ContextMenu = observer(() => {
   };
 
   const handleTransform = () => {
-    open('move');
+    model.openDialog('move');
     handleClose();
   };
 

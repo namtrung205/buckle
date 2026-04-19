@@ -57,6 +57,26 @@ const Move = ({
   
   const [selectedNodes, setSelectedNodes] = useState([])
 
+  // Auto-populate nodes từ viewport selection khi dialog mở
+  useEffect(() => {
+    if (!open) return;
+    const viewportSelected = model?.selector?.selected
+      .map(sel => {
+        let type = sel.object.userData?.type;
+        let id = sel.object.userData?.id;
+        if (!type && sel.object.parent) {
+          type = sel.object.parent.userData?.type;
+          id = sel.object.parent.userData?.id;
+        }
+        return type === 'node' ? id : null;
+      })
+      .filter(id => id != null) ?? [];
+    setSelectedNodes(viewportSelected);
+    // Reset translation vector khi mở dialog mới
+    setVector({ x: 0, y: 0, z: 0 });
+    setRepetitions(1);
+  }, [open]);
+
   const handleChange = (e) => {
     const {name, value} = e.target
     console.log('vector',value)

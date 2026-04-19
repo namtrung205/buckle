@@ -72,6 +72,7 @@ export class Model {
     x: 0,
     y: 0,
   }
+  activeDialog: string | null = null;
   ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
 
   closeContextMenu = () => {
@@ -80,6 +81,16 @@ export class Model {
 
   openContextMenu = (x: number, y: number) => {
     this.contextMenu = { visible: true, x, y };
+  }
+
+  openDialog = (dialog: string) => {
+    this.activeDialog = dialog;
+  }
+
+  closeDialog = () => {
+    const currentTool = this.toolsController.getCurrentTool();
+    currentTool?.stop();
+    this.activeDialog = null;
   }
 
   static getInstance(): Model {

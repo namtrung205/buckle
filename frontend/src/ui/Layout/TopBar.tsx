@@ -29,7 +29,7 @@ import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
 import WarehouseWizard from '../Model/Generator/WarehouseWizard';
 import AnalysisProgress from '../Results/AnalysisProgress';
-import { useActiveDialog } from './hooks';
+
 const { VITE_BACKEND_SERVER } = import.meta.env;
 const APP_VERSION = '0.0.2';
 
@@ -95,7 +95,25 @@ const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled }: Ribb
 
 const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   const model = useModel();
-  const { open, close, dialogs } = useActiveDialog();
+  
+  // Use model-level MobX state so ContextMenu and TopBar share the same dialog state
+  const open = (dialog: string) => model?.openDialog(dialog);
+  const close = () => model?.closeDialog();
+  const activeDialog = model?.activeDialog ?? null;
+  const dialogs = {
+    settings: activeDialog === 'settings',
+    results: activeDialog === 'results',
+    move: activeDialog === 'move',
+    draw: activeDialog === 'draw',
+    docs: activeDialog === 'docs',
+    sections: activeDialog === 'sections',
+    loads: activeDialog === 'loads',
+    supports: activeDialog === 'supports',
+    materials: activeDialog === 'materials',
+    copy: activeDialog === 'copy',
+    warehouseWizard: activeDialog === 'warehouseWizard',
+    analysisProgress: activeDialog === 'analysisProgress',
+  };
   const [tool, setTool] = useState('')
   const toolName = model?.toolsController.getCurrentToolName()
   
