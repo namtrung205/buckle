@@ -25,6 +25,15 @@ export type StationPoint = {
   values: Record<string, number> // all quantities at this station (N..Mz, dX, dY, dZ)
 }
 
+type SolidSave = {
+  mesh: THREE.Mesh
+  material: THREE.MeshLambertMaterial
+  color: number
+  hadVertexColors: boolean
+  hadOriginalColor: boolean
+  originalColor: any
+}
+
 export type MemberDiagramData = {
   memberId: number | string
   label: string
@@ -63,6 +72,7 @@ class PostProcessing {
   private membersData: MemberDiagramData[] = []
   private hoverMeshes: THREE.Mesh[] = []
   private labels: any[] = []
+  private coloredSolids: Map<string, SolidSave[]> = new Map()
   private currentMin = 0
   private currentMax = 1
   private modelSize = 10
@@ -257,17 +267,16 @@ class PostProcessing {
       }
       if (type === DEFLECTION_TYPE) {
         this.buildOutline(data)
-        if (this.showContour) this.buildContourTube(data)
         if (this.showRefLine) this.buildRefLine(data)
       } else {
         if (this.showRibbon) {
           this.buildRibbon(data)
           if (this.showHatch) this.buildHatch(data)
         }
-        if (this.showContour) this.buildContourTube(data)
         this.buildBaseline(data)
         this.buildOutline(data)
       }
+      if (this.showContour) this.colorMemberSolids(data)
       if (this.showLabels) this.collectExtremes(data, type)
     }
 
@@ -399,63 +408,103 @@ class PostProcessing {
     this.meshes.push(line)
   }
 
-  /** Contour tube around the member axis, vertex-coloured by the active value. */
-  private buildContourTube(data: MemberDiagramData) {
-    const stations = data.stations
-    const segments = 8
-    const positions: number[] = []
-    const colors: number[] = []
-    const indices: number[] = []
-    const color = new THREE.Color()
+  /** Colour the member solid meshes with the per-station colormap (replaces the contour tube). */
+  private colorMemberSolids(data: MemberDiagramData) {
+    const element = (this.model.members as any[]).find(
+      (m: any) => String(m?.id) === String(data.memberId)
+    )
+    const group = element?.mesh
+    if (!group?.traverse) return
+    const key = String(data.memberId)
+    const saves: SolidSave[] = this.coloredSolids.get(key) ?? []
 
-    // Orthonormal basis perpendicular to the member axis
-    const u = new THREE.Vector3().crossVectors(data.axis, new THREE.Vector3(0, 1, 0))
-    if (u.lengthSq() < 1e-8) u.crossVectors(data.axis, new THREE.Vector3(1, 0, 0))
-    if (u.lengthSq() < 1e-8) u.set(0, 0, 1)
-    u.normalize()
-    const v = new THREE.Vector3().crossVectors(data.axis, u).normalize()
+    group.traverse((child: any) => {
+      if (!child.isMesh || !child.geometry?.attributes?.position) return
+      const solid = child as THREE.Mesh
+      const material = solid.material as THREE.MeshLambertMaterial
+      if (!material) return
 
-    const radius = this.modelSize * 0.012
-    for (const station of stations) {
-      for (let j = 0; j < segments; j++) {
-        const angle = (j / segments) * Math.PI * 2
-        const point = station.base.clone()
-          .addScaledVector(u, Math.cos(angle) * radius)
-          .addScaledVector(v, Math.sin(angle) * radius)
-        positions.push(point.x, point.y, point.z)
-        color.copy(this.stationColor(station.value))
-        colors.push(color.r, color.g, color.b)
+      if (!saves.some(save => save.mesh === solid)) {
+        saves.push({
+          mesh: solid,
+          material,
+          color: material.color.getHex(),
+          hadVertexColors: material.vertexColors,
+          hadOriginalColor: 'originalColor' in solid.userData,
+          originalColor: solid.userData.originalColor
+        })
       }
-    }
-    const ringCount = stations.length
-    for (let i = 0; i < ringCount - 1; i++) {
-      for (let j = 0; j < segments; j++) {
-        const j2 = (j + 1) % segments
-        const a = i * segments + j
-        const b = i * segments + j2
-        const c = (i + 1) * segments + j
-        const d = (i + 1) * segments + j2
-        indices.push(a, c, b, b, c, d)
+
+      // Map the local z extent to the station arc position (works for centred or 0-based extrusions)
+      const geometry = solid.geometry as THREE.BufferGeometry
+      geometry.computeBoundingBox()
+      const box = geometry.boundingBox!
+      const zSpan = Math.max(box.max.z - box.min.z, 1e-9)
+      const length = data.length || 1
+
+      const positions = geometry.attributes.position as THREE.BufferAttribute
+      const count = positions.count
+      let colors = geometry.attributes.color as THREE.BufferAttribute | undefined
+      if (!colors || colors.count !== count) {
+        colors = new THREE.Float32BufferAttribute(new Float32Array(count * 3), 3)
+        geometry.setAttribute('color', colors)
       }
-    }
+      const color = new THREE.Color()
+      for (let i = 0; i < count; i++) {
+        const s = ((positions.getZ(i) - box.min.z) / zSpan) * length
+        const value = this.interpolateStationValue(data.stations, s)
+        color.copy(this.stationColor(value))
+        colors.setXYZ(i, color.r, color.g, color.b)
+      }
+      colors.needsUpdate = true
 
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-    geometry.setIndex(indices)
-    geometry.computeVertexNormals()
-
-    const material = new THREE.MeshBasicMaterial({
-      vertexColors: true,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.9
+      // White base lets the vertex colours show at full intensity
+      material.vertexColors = true
+      material.color.setHex(0xffffff)
+      material.needsUpdate = true
+      // Selector restores this colour on hover-out (keeps the colormap correct while active)
+      solid.userData.originalColor = 0xffffff
+      solid.userData.memberId = data.memberId
+      solid.userData.hoverable = true
     })
-    const mesh = new THREE.Mesh(geometry, material)
-    mesh.renderOrder = 20
-    this.addHoverable(mesh, data.memberId)
-    this.model.scene.add(mesh)
-    this.meshes.push(mesh)
+
+    this.coloredSolids.set(key, saves)
+  }
+
+  /** Restore the member solid materials/geometry changed by colorMemberSolids. */
+  private restoreMemberSolids() {
+    if (this.coloredSolids.size === 0) return
+    for (const saves of this.coloredSolids.values()) {
+      for (const save of saves) {
+        save.material.vertexColors = save.hadVertexColors
+        save.material.color.setHex(save.color)
+        save.material.needsUpdate = true
+        if (save.hadOriginalColor) save.mesh.userData.originalColor = save.originalColor
+        else delete save.mesh.userData.originalColor
+        delete save.mesh.userData.hoverable
+        delete save.mesh.userData.memberId
+      }
+    }
+    this.coloredSolids.clear()
+  }
+
+  /** Linear interpolation of the active value at an arc position along the member. */
+  private interpolateStationValue(stations: StationPoint[], s: number): number {
+    const n = stations.length
+    if (n === 0) return 0
+    if (s <= stations[0].s) return stations[0].value
+    if (s >= stations[n - 1].s) return stations[n - 1].value
+    let lo = 0
+    let hi = n - 1
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1
+      if (stations[mid].s <= s) lo = mid
+      else hi = mid
+    }
+    const a = stations[lo]
+    const b = stations[hi]
+    const t = (s - a.s) / (b.s - a.s || 1)
+    return a.value + (b.value - a.value) * t
   }
 
   /** Create max/min effort labels for a member (kept from the previous behaviour). */
@@ -491,9 +540,18 @@ class PostProcessing {
 
   /** Expose ribbon/contour meshes + station data to the hover tooltip controller. */
   private updateHoverTargets() {
-    this.hoverMeshes = this.meshes.filter(
-      (mesh: any) => mesh.isMesh && mesh.userData?.hoverable
-    ) as THREE.Mesh[]
+    // Solid meshes currently coloured by the contour mode are hoverable too
+    const solidTargets: THREE.Mesh[] = []
+    for (const element of this.model.members as any[]) {
+      if (!this.coloredSolids.has(String(element?.id))) continue
+      element.mesh?.traverse?.((child: any) => {
+        if (child.isMesh) solidTargets.push(child as THREE.Mesh)
+      })
+    }
+    this.hoverMeshes = [
+      ...this.meshes.filter((mesh: any) => mesh.isMesh && mesh.userData?.hoverable),
+      ...solidTargets
+    ] as THREE.Mesh[]
     const hoverMembers: HoverMember[] = this.membersData.map(data => ({
       memberId: data.memberId,
       label: data.label,
@@ -522,6 +580,7 @@ class PostProcessing {
     this.meshes = []
     this.membersData = []
     this.hoverMeshes = []
+    this.restoreMemberSolids()
     this.labels = []
     this.hover.clearTargets()
     this.activeType = null

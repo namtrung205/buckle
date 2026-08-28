@@ -49,9 +49,9 @@ const Diagrams = observer(() => {
       post.scaleMultiplier = scale;
       post.showDiagram(post.activeType, selectedMembers);
     }
-    // Auto-hide loads and sections to see the diagram clearly
+    // Auto-hide loads; keep the section solids visible when the contour mode is on
     model.visibility.showOrHideLoads(false);
-    model.visibility.showOrHideSections(false);
+    model.visibility.showOrHideSections(post.showContour);
   };
 
   const handleModeChange = (_event: any, value: string | null) => {
@@ -69,7 +69,7 @@ const Diagrams = observer(() => {
       post.showDiagram(value, selectedMembers);
     }
     model.visibility.showOrHideLoads(false);
-    model.visibility.showOrHideSections(false);
+    model.visibility.showOrHideSections(post.showContour);
   };
 
   const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine') =>
@@ -179,7 +179,7 @@ const Diagrams = observer(() => {
               <FormControlLabel control={<Switch size="small" checked={post.showHatch} onChange={handleToggle('showHatch')} />} label={<Typography variant="body2">Hatch lines</Typography>} sx={{ margin: 0 }} />
             </>
           )}
-          <FormControlLabel control={<Switch size="small" checked={post.showContour} onChange={handleToggle('showContour')} />} label={<Typography variant="body2">Contour tube</Typography>} sx={{ margin: 0 }} />
+          <FormControlLabel control={<Switch size="small" checked={post.showContour} onChange={handleToggle('showContour')} />} label={<Typography variant="body2">Contour trên thanh</Typography>} sx={{ margin: 0 }} />
           <FormControlLabel control={<Switch size="small" checked={post.showLabels} onChange={handleToggle('showLabels')} />} label={<Typography variant="body2">Max / Min labels</Typography>} sx={{ margin: 0 }} />
           {isDefl && (
             <FormControlLabel control={<Switch size="small" checked={post.showRefLine} onChange={handleToggle('showRefLine')} />} label={<Typography variant="body2">Reference line (dashed)</Typography>} sx={{ margin: 0 }} />
