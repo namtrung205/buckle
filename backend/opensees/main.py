@@ -761,8 +761,10 @@ def extract_results(log_callback=None):
     nodes = mesh['nodes']
     child_members = mesh['members']
     node_efforts_dict = {}
+    stations_dict = {}
 
     forces = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz']
+    nep_stations = 11  # evaluation points per child element -> smooth diagrams + hover readouts
     for child_member in child_members:
       child_id = child_member['id']
       
@@ -799,9 +801,10 @@ def extract_results(log_callback=None):
       # Process each force type
       for force in forces:
         try:
-          data = extract_section_force_data(child_id, force, sfac=1E-5, nep=2, dir_plt=0)
+          data = extract_section_force_data(child_id, force, sfac=1E-5, nep=nep_stations, dir_plt=0)
           force_values = data['force_values']
           displaced_positions = data['displaced_positions']
+          base_positions = data.get('base_positions')
           
           # Determine unit based on force type
           if force in ['N']:
@@ -840,12 +843,32 @@ def extract_results(log_callback=None):
             current_value = node_efforts_dict[node_j]["efforts"][force]["value"]
             mean_value = (current_value + force_values[1]) / 2
             node_efforts_dict[node_j]["efforts"][force]["value"] = np.round(mean_value, 2)
-            
+
+          # Collect intermediate stations for smooth diagram rendering & hover readouts
+          if base_positions is not None:
+            for k in range(len(force_values)):
+              key = tuple(np.round(base_positions[k], 6))
+              value = float(np.round(force_values[k], 2))
+              if key not in stations_dict:
+                stations_dict[key] = {
+                  "coord": np.round(base_positions[k], 6).tolist(),
+                  "displaced": displaced_positions[k],
+                  "values": {force: value},
+                }
+              else:
+                entry = stations_dict[key]
+                if force in entry["values"]:
+                  entry["values"][force] = float(np.round((entry["values"][force] + value) / 2, 2))
+                else:
+                  entry["values"][force] = value
+
         except Exception as e:
           print(f"Warning: Could not extract {force} data for element {child_id}: {e}")
           continue
     
     member['node_efforts'] = list(node_efforts_dict.values())
+    if stations_dict:
+      member['stations'] = list(stations_dict.values())
     # member['plot_2d'] = plot_2d(member, forces)
 
   
@@ -1334,7 +1357,7 @@ def extract_section_force_data(ele_tag, sf_type, sfac=1/500, nep=2, dir_plt=0,):
     # print('s_p: ', s_p)
     # Save the data for the current element
     force_data = {
-        # "base_positions": s_0,
+        "base_positions": s_0.tolist(),
         "displaced_positions": s_p.tolist(),
         # "evaluation_points": xl,
         "force_values": (ss / 1E3).tolist(),
