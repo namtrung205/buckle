@@ -395,7 +395,9 @@ class Selector {
     if (event.ctrlKey) {
       this.isCtrlPressed = true
     }
-    if (event.shiftKey && this.model.camera.controls) {
+    // Left+Shift rotate only makes sense while the Selector owns the left button.
+    // In pan/orbit/zoom modes OrbitControls already has its own bindings applied.
+    if (event.shiftKey && this.model.camera.controls && this.model.navTool === 'select') {
       // OrbitControls inherently swaps ROTATE and PAN when Shift is held.
       // To make Left+Shift = ROTATE, we must set LEFT to PAN.
       // To make Right+Shift (optional) stay PAN, we must set RIGHT to ROTATE.
@@ -410,7 +412,7 @@ class Selector {
     if (event.key === 'Escape') {
       this.clear()
     }
-    if (!event.shiftKey && this.model.camera.controls) {
+    if (!event.shiftKey && this.model.camera.controls && this.model.navTool === 'select') {
       this.model.camera.controls.mouseButtons.LEFT = null as any;
       this.model.camera.controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
     }

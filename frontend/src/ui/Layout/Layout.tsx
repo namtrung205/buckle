@@ -2,6 +2,7 @@ import { ReactNode, useState } from 'react';
 import { Box } from '@mui/material';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
+import BottomBar from '../BottomBar';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
 
@@ -41,16 +42,19 @@ const Layout = ({ children }: LayoutProps) => {
         {/* Left Bar */}
         <LeftBar isCollapsed={isLeftBarCollapsed} />
 
-        {/* Content area - White background for viewer */}
+        {/* Content area - AutoCAD-style dark blue-black background for the viewer */}
         <Box
           sx={{
             flex: 1,
             position: 'relative',
             overflow: 'hidden',
-            backgroundColor: '#ffffff',
+            backgroundColor: '#212830',
           }}
         >
           {children}
+
+          {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
+          <BottomBar />
         </Box>
       </Box>
 

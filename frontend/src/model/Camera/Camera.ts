@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import Model from '../Model';
 import { ViewportGizmo } from 'three-viewport-gizmo';
+import { NavTool } from '../../types';
 export class Camera {
   cam: THREE.OrthographicCamera | THREE.PerspectiveCamera;
   controls: OrbitControls;
@@ -24,7 +25,7 @@ export class Camera {
     this.cam = this.orthoCam;
     this.cam.position.set(0, -10, 0);
     this.controls = new OrbitControls(this.cam, this.renderer.domElement);
-    this.controls.enableDamping = true;
+    this.controls.enableDamping = false;
     this.controls.enableRotate = false;
     this.controls.mouseButtons = {
       LEFT: null as any,
@@ -67,10 +68,150 @@ export class Camera {
     this.cam.updateProjectionMatrix();
   }
 
+  /** Bounding box of the model geometry (nodes when available, else the whole scene). */
+  private getModelBox(): THREE.Box3 {
+    const box = new THREE.Box3();
+    const v = new THREE.Vector3();
+    // model.nodes is undefined while the Camera is constructed inside the Model constructor
+    const nodes = this.model.nodes as unknown as { x: number; y: number; z: number }[] | undefined;
+    if (nodes && nodes.length > 0) {
+      for (const node of nodes) box.expandByPoint(v.set(node.x, node.y, node.z));
+    } else {
+      box.setFromObject(this.model.scene);
+    }
+    return box;
+  }
+
+  /**
+   * Fit the frustum + camera to the model size — fixes culling on large models
+   * (far plane) and clipping on tiny ones (near plane), and centres the orbit target.
+   */
+  fitModelToView() {
+    const box = this.getModelBox();
+    if (box.isEmpty()) return;
+
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z, 1);
+    const radius = maxDim / 2;
+
+    // Depth range scales with the model so nothing is culled by the near/far planes
+    const near = Math.max(0.01, radius / 500);
+    const far = Math.max(2000, radius * 100);
+    this.orthoCam.near = near;
+    this.orthoCam.far = far;
+    this.perspectiveCam.near = near;
+    this.perspectiveCam.far = far;
+
+    // Orthographic frustum covers the whole model with a margin
+    this.frustumSize = maxDim * 1.4;
+    if (this.cam instanceof THREE.OrthographicCamera) this.cam.zoom = 1;
+
+    // Orbit around the model centre
+    this.controls.target.copy(center);
+
+    if (this.viewMode === '2d') {
+      // Top view: sit above the model centre, far enough for the far plane
+      this.cam.position.set(center.x, center.y + Math.max(50, radius * 3), center.z);
+    } else {
+      // Iso direction at a distance that fits the model
+      const dir = new THREE.Vector3(0.65, 1, 0.65).normalize();
+      this.cam.position.copy(center).addScaledVector(dir, radius * 3 + 1);
+    }
+    this.cam.lookAt(center);
+
+    this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
+    this.controls.update();
+  }
+
+  private lastNodeCount = -1;
+  private frameCounter = 0;
+
+  /**
+   * Keep the near/far planes in sync with the model size (no repositioning).
+   * Runs from the render loop, so drawing/generating/copying large models is never
+   * culled by the default far plane (100 on the orthographic camera).
+   */
+  updateDepthRange() {
+    this.frameCounter++;
+    const nodes = this.model.nodes as unknown as { x: number; y: number; z: number }[] | undefined;
+    const count = nodes?.length ?? 0;
+    // Recompute when the node count changes, or periodically (covers node moves)
+    if (count !== this.lastNodeCount || this.frameCounter % 30 === 0) {
+      this.lastNodeCount = count;
+      const box = this.getModelBox();
+      if (box.isEmpty()) return;
+      const size = box.getSize(new THREE.Vector3());
+      const radius = Math.max(size.x, size.y, size.z, 1) / 2;
+      const near = Math.max(0.01, radius / 500);
+      const far = Math.max(2000, radius * 100);
+      if (this.orthoCam.near !== near || this.orthoCam.far !== far) {
+        this.orthoCam.near = near;
+        this.orthoCam.far = far;
+        this.perspectiveCam.near = near;
+        this.perspectiveCam.far = far;
+        this.cam.updateProjectionMatrix();
+      }
+    }
+  }
+
+  /**
+   * Configure OrbitControls mouse bindings + rotation per the active bottom-bar
+   * navigation tool:
+   * - select: left click reserved for picking / rubber-band selection
+   * - pan   : left drag pans
+   * - orbit : left drag rotates (switches the view to 3D beforehand in Model)
+   * - zoom  : left drag is handled by the ZoomTool, wheel / middle still zoom
+   */
+  applyNavTool(tool: NavTool) {
+    const controls = this.controls;
+    controls.enableDamping = false;
+    switch (tool) {
+      case 'select':
+        controls.mouseButtons = {
+          LEFT: null,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        controls.enableRotate = this.viewMode === '3d';
+        break;
+      case 'pan':
+        controls.mouseButtons = {
+          LEFT: THREE.MOUSE.PAN,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        controls.enableRotate = false;
+        break;
+      case 'orbit':
+        controls.mouseButtons = {
+          LEFT: THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        controls.enableRotate = true;
+        break;
+      case 'zoom':
+        controls.mouseButtons = {
+          LEFT: null,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        controls.enableRotate = this.viewMode === '3d';
+        break;
+    }
+    controls.update();
+  }
+
   handle3dView(){
     this.viewMode = '3d'
-    this.cam.position.set(20, 30, 20);
-    this.controls.enableDamping = true;
+    // Fit to the model when one exists (prevents far-plane culling on large models)
+    if (!this.getModelBox().isEmpty()) {
+      this.fitModelToView();
+    } else {
+      this.cam.position.set(20, 30, 20);
+    }
+    this.controls.enableDamping = false;
     this.controls.enableRotate = true;
     this.controls.mouseButtons = {
       LEFT: null as any,
@@ -78,15 +219,23 @@ export class Camera {
       RIGHT: THREE.MOUSE.PAN
     };
     this.cam.layers.enableAll()
+    this.applyNavTool(this.model.navTool)
   }
   handle2dView(){
     this.viewMode = '2d'
     this.model.snapper.enable()
     this.controls.enableRotate = false;
+    // Fit to the model when one exists (prevents far-plane culling on large models)
+    if (!this.getModelBox().isEmpty()) {
+      this.fitModelToView();
+      this.applyNavTool(this.model.navTool)
+      return;
+    }
     this.cam.position.set(0, 50, 0) 
     this.cam.lookAt(0, 0, 0);       
     this.controls.target.set(0, 0, 0);
     this.controls.update();
+    this.applyNavTool(this.model.navTool)
   }
 }
 

@@ -92,6 +92,11 @@ export type Member = ElasticBeamColumn
 
 export type ElementType = 'elasticBeamColumn' | '3dLine' | 'node' | 'shell' | 'colUp' | 'colDown'
 
+// Navigation / viewport tools (driven by the bottom bar)
+export type NavTool = 'select' | 'zoom' | 'pan' | 'orbit'
+// Zoom sub-modes available from the zoom split button
+export type ZoomMode = 'fit' | 'window' | 'drag'
+
 // Levels 
 export interface Level {
   value: number

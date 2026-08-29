@@ -52,7 +52,7 @@ class Labeler {
       p.textContent = label.text;
       const modernFont = '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif';
       
-      p.style.color = 'black';
+      p.style.color = '#e0e0e0'; // Light text so labels read on the dark viewport
       p.style.fontWeight = 'bold';
       p.style.textAlign = 'center';
       p.style.margin = '0';
@@ -65,18 +65,30 @@ class Labeler {
       wrapper.appendChild(pContainer)
 
       if (type === 'effort') {
-        // Effort styling - blue with rounded corners
-        pContainer.style.backgroundColor = label.backgroundColor || '#42a5f5';
-        pContainer.style.height = '30px';
-        pContainer.style.width = '50px';
-        pContainer.style.borderRadius = '5px';
-      } 
+        // Effort styling — compact solid pill: no border, accent background, white mono value
+        const accent = label.backgroundColor || '#2f6fed';
+        pContainer.style.backgroundColor = accent;
+        pContainer.style.border = 'none';
+        pContainer.style.borderRadius = '999px';
+        pContainer.style.padding = '1px 7px';
+        pContainer.style.height = 'auto';
+        pContainer.style.width = 'auto';
+        pContainer.style.minWidth = '0';
+        pContainer.style.boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
+        p.style.color = '#ffffff';
+        p.style.fontFamily = '"JetBrains Mono", ui-monospace, "SF Mono", monospace';
+        p.style.fontSize = '10.5px';
+        p.style.fontWeight = '700';
+        p.style.lineHeight = '1.5';
+        p.style.whiteSpace = 'nowrap';
+      }
       else if (type === 'length') {
         pContainer.style.backgroundColor = 'white';
         pContainer.style.height = '30px';
         pContainer.style.width = '50px';
         pContainer.style.border = '1px solid black';
         pContainer.style.color = 'black';
+        p.style.color = 'black'; // Dark text on the white pill
       }
       else if (type === 'gridSnap') {
         pContainer.style.backgroundColor = 'transparent';
@@ -180,7 +192,7 @@ class Labeler {
         pContainer.style.height = '20px';
         pContainer.style.width = '100px';
         pContainer.style.position = 'relative';
-        pContainer.style.color = 'black';
+        pContainer.style.color = '#e0e0e0';
       }
       
       // if (type !== 'gridSnap') {

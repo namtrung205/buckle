@@ -181,6 +181,9 @@ export const buildModelOnjson = async (model: Model , path : string) => {
       console.log(`Created ${jsonData.loads.length} loads`)
     }
     
+    // Fit the camera to the model so large models are not culled by the far plane
+    model.camera.fitModelToView()
+
     console.log('Model loaded successfully from JSON!')
     // alert('Model loaded successfully!')
     

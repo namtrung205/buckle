@@ -431,7 +431,7 @@ class PostProcessing {
     }
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    const material = new THREE.LineBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.5 })
+    const material = new THREE.LineBasicMaterial({ color: 0xaeb9c4, transparent: true, opacity: 0.5 })
     const lines = new THREE.LineSegments(geometry, material)
     lines.userData.type = 'diagram'
     this.model.scene.add(lines)
@@ -442,7 +442,7 @@ class PostProcessing {
   private buildBaseline(data: MemberDiagramData) {
     const points = data.stations.map(s => s.base)
     const geometry = new THREE.BufferGeometry().setFromPoints(points)
-    const material = new THREE.LineBasicMaterial({ color: 0x333333 })
+    const material = new THREE.LineBasicMaterial({ color: 0xd5dde3 })
     const line = new THREE.Line(geometry, material)
     line.userData.type = 'diagram'
     this.model.scene.add(line)
@@ -455,7 +455,7 @@ class PostProcessing {
     const geometry = new THREE.BufferGeometry().setFromPoints(points)
     const dashSize = this.modelSize * 0.02
     const material = new THREE.LineDashedMaterial({
-      color: 0x888888,
+      color: 0x8a99a8,
       dashSize,
       gapSize: dashSize * 0.6
     })
@@ -466,7 +466,7 @@ class PostProcessing {
     this.meshes.push(line)
   }
 
-  /** Black diagram curve on top of the filled area (smoothed like the sample). */
+  /** Light diagram curve on top of the filled area (smoothed like the sample). */
   private buildOutline(data: MemberDiagramData) {
     const stations = data.stations
     const curve = new THREE.CatmullRomCurve3(stations.map(s => s.offset))
@@ -474,7 +474,7 @@ class PostProcessing {
     const points = curvePoints.flatMap(p => [p.x, p.y, p.z])
     const lineGeometry = new LineGeometry().setPositions(points)
     const lineMaterial = new LineMaterial({
-      color: 0x000000,
+      color: 0xf0f4f8,
       linewidth: 2,
       resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
     })
@@ -584,7 +584,7 @@ class PostProcessing {
     return a.value + (b.value - a.value) * t
   }
 
-  /** Create max/min effort labels for a member (kept from the previous behaviour). */
+  /** Max/min tags for a member — pill labels coloured to match the diverging colormap. */
   private collectExtremes(data: MemberDiagramData, type: string) {
     let max = { value: -Infinity, station: null as StationPoint | null }
     let min = { value: Infinity, station: null as StationPoint | null }
@@ -592,6 +592,9 @@ class PostProcessing {
       if (station.value > max.value) max = { value: station.value, station }
       if (station.value < min.value) min = { value: station.value, station }
     }
+    // Colours follow the diagram colormap: blue = positive lobe, red = negative lobe
+    const POS = '#2f6fed'
+    const NEG = '#e5484d'
     const suffix = type === DEFLECTION_TYPE ? 'defl' : type
     if (max.station) {
       const isDefl = type === DEFLECTION_TYPE
@@ -601,7 +604,7 @@ class PostProcessing {
         position: max.station.offset.clone(),
         text,
         type: 'effort',
-        backgroundColor: isDefl ? '#90EE90' : (max.value >= 0 ? '#90EE90' : '#FFB6C1')
+        backgroundColor: isDefl ? POS : (max.value >= 0 ? POS : NEG)
       })
     }
     if (min.station && min.station !== max.station && type !== DEFLECTION_TYPE) {
@@ -610,7 +613,7 @@ class PostProcessing {
         position: min.station.offset.clone(),
         text: `${fmt(min.value)} ${this.unit}`,
         type: 'effort',
-        backgroundColor: min.value >= 0 ? '#90EE90' : '#FFB6C1'
+        backgroundColor: min.value >= 0 ? POS : NEG
       })
     }
   }

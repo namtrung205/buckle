@@ -110,7 +110,7 @@ class BoundaryCondition {
     if(this.type != 'roller') return 
 
     const sphereGeometry = new THREE.SphereGeometry( 0.12, 16, 16 )
-    const sphereMaterial = new THREE.MeshBasicMaterial( { color: 'black' } )
+    const sphereMaterial = new THREE.MeshBasicMaterial( { color: '#cfd6dc' } ) // Light gray — visible on the dark background
     
     const sphere1 = new THREE.Mesh( sphereGeometry, sphereMaterial )
     sphere1.position.set(node.x - 0.1, node.y -0.4, node.z)

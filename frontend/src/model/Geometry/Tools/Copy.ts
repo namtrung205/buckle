@@ -55,6 +55,7 @@ class CopyTool implements Tool {
     this.selector = this.model.selector
   }
   start(){
+    if (this.model.isLocked) return;
     this.model.snapper.enable()
     this.onMouseDown = this.onMouseDown.bind(this);
     this.onMouseMove = this.onMouseMove.bind(this);

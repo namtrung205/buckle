@@ -8,12 +8,15 @@ import { makeAutoObservable } from 'mobx';
 class ToolsController {
   private tools: Map<string, Tool> = new Map();
   private currentTool: Tool | null = null;
+  /** External gate (wired by Model): return false to block tool activation (e.g. results locked). */
+  canActivate: () => boolean = () => true;
  
   constructor() {
     makeAutoObservable(this);
   }
  
   activate(toolId: string) {
+    if (!this.canActivate()) return;
     if (this.currentTool) this.deactivate();
 
     let tool = this.tools.get(toolId);
