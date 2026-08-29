@@ -6,8 +6,6 @@ import {
   Divider,
   Menu,
   MenuItem,
-  ListItemIcon,
-  ListItemText,
 } from '@mui/material';
 import {
   ZoomIn,
@@ -119,6 +117,14 @@ const BottomBar = observer(() => {
           boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
         }}
       >
+        <Tooltip title="Select — click to pick objects, drag to window-select">
+          <IconButton onClick={() => selectNavTool('select')} sx={activeStyle(isActive('select'))}>
+            <Mouse sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+
+        <Divider orientation="vertical" flexItem sx={{ bgcolor: '#1e1e1e', mx: 0.5 }} />
+
         {/* Zoom split button */}
         <Tooltip title={`Zoom — ${zoom.title}`}>
           <IconButton onClick={handleZoomClick} sx={activeStyle(isActive('zoom'))}>
@@ -154,7 +160,7 @@ const BottomBar = observer(() => {
                 backgroundColor: '#2d2d2d',
                 color: '#ffffff',
                 boxShadow: '0 4px 6px rgba(0, 0, 0, 0.5)',
-                minWidth: '180px',
+                minWidth: '64px',
               },
             },
           }}
@@ -164,13 +170,16 @@ const BottomBar = observer(() => {
               key={option.mode}
               selected={zoomMode === option.mode}
               onClick={() => handleZoomModeSelect(option.mode)}
-              sx={{ '&:hover': { backgroundColor: '#3f3f3f' } }}
+              sx={{
+                '&:hover': { backgroundColor: '#3f3f3f' },
+                justifyContent: 'space-between',
+                gap: 1,
+              }}
             >
-              <ListItemIcon sx={{ color: '#e0e0e0', minWidth: '32px' }}>
-                <option.Icon sx={{ fontSize: 18 }} />
-              </ListItemIcon>
-              <ListItemText primary={option.label} primaryTypographyProps={{ fontSize: '0.8rem' }} />
-              {zoomMode === option.mode && <Check sx={{ color: '#4a90e2', fontSize: 16, ml: 1 }} />}
+              <Tooltip title={option.title}>
+                <option.Icon sx={{ fontSize: 18, color: '#e0e0e0' }} />
+              </Tooltip>
+              {zoomMode === option.mode && <Check sx={{ color: '#4a90e2', fontSize: 16 }} />}
             </MenuItem>
           ))}
         </Menu>
@@ -183,14 +192,6 @@ const BottomBar = observer(() => {
         <Tooltip title="Orbit — rotate the view in 3D">
           <IconButton onClick={() => selectNavTool('orbit')} sx={activeStyle(isActive('orbit'))}>
             <ThreeDRotation sx={{ fontSize: 18 }} />
-          </IconButton>
-        </Tooltip>
-
-        <Divider orientation="vertical" flexItem sx={{ bgcolor: '#1e1e1e', mx: 0.5 }} />
-
-        <Tooltip title="Select — click to pick objects, drag to window-select">
-          <IconButton onClick={() => selectNavTool('select')} sx={activeStyle(isActive('select'))}>
-            <Mouse sx={{ fontSize: 18 }} />
           </IconButton>
         </Tooltip>
       </Box>
