@@ -584,7 +584,7 @@ class PostProcessing {
     return a.value + (b.value - a.value) * t
   }
 
-  /** Create max/min effort labels for a member (kept from the previous behaviour). */
+  /** Max/min tags for a member — pill labels coloured to match the diverging colormap. */
   private collectExtremes(data: MemberDiagramData, type: string) {
     let max = { value: -Infinity, station: null as StationPoint | null }
     let min = { value: Infinity, station: null as StationPoint | null }
@@ -592,6 +592,9 @@ class PostProcessing {
       if (station.value > max.value) max = { value: station.value, station }
       if (station.value < min.value) min = { value: station.value, station }
     }
+    // Colours follow the diagram colormap: blue = positive lobe, red = negative lobe
+    const POS = '#2f6fed'
+    const NEG = '#e5484d'
     const suffix = type === DEFLECTION_TYPE ? 'defl' : type
     if (max.station) {
       const isDefl = type === DEFLECTION_TYPE
@@ -601,7 +604,7 @@ class PostProcessing {
         position: max.station.offset.clone(),
         text,
         type: 'effort',
-        backgroundColor: isDefl ? '#90EE90' : (max.value >= 0 ? '#90EE90' : '#FFB6C1')
+        backgroundColor: isDefl ? POS : (max.value >= 0 ? POS : NEG)
       })
     }
     if (min.station && min.station !== max.station && type !== DEFLECTION_TYPE) {
@@ -610,7 +613,7 @@ class PostProcessing {
         position: min.station.offset.clone(),
         text: `${fmt(min.value)} ${this.unit}`,
         type: 'effort',
-        backgroundColor: min.value >= 0 ? '#90EE90' : '#FFB6C1'
+        backgroundColor: min.value >= 0 ? POS : NEG
       })
     }
   }

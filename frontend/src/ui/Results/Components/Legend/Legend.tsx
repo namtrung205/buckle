@@ -4,6 +4,7 @@ import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../../model/Context';
 import { lerpStops, colorToCss } from '../../../../model/PostProcessing/Colormap';
 import { DEFLECTION_TYPE } from '../../../../model/PostProcessing/PostProcessing';
+import { UI, fmtValue } from '../ui';
 
 const TYPE_TITLES: Record<string, string> = {
   N: 'Axial force N',
@@ -13,14 +14,6 @@ const TYPE_TITLES: Record<string, string> = {
   My: 'Bending moment My',
   Mz: 'Bending moment Mz',
   defl: 'Deflection |Δ|',
-};
-
-const fmt = (v: number) => {
-  const a = Math.abs(v);
-  if (a >= 100) return v.toFixed(0);
-  if (a >= 1) return v.toFixed(2);
-  if (a >= 0.001) return v.toFixed(3);
-  return v.toFixed(4);
 };
 
 const Legend = observer(() => {
@@ -52,24 +45,31 @@ const Legend = observer(() => {
   const maxValue = isDefl ? post.max * 1000 : post.max;
 
   return (
-    <Box sx={{ mt: 1.5, p: 1, border: '1px solid #d0d0d0', borderRadius: 1, backgroundColor: '#fafafa' }}>
-      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-        {TYPE_TITLES[activeType] ?? activeType} {unit ? `[${unit}]` : ''}
+    <Box sx={{ mt: 1.5, p: 1.25, border: `1px solid ${UI.border}`, borderRadius: 1.5, backgroundColor: UI.panel2 }}>
+      <Typography sx={{ fontFamily: UI.mono, fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em', color: UI.text }}>
+        {TYPE_TITLES[activeType] ?? activeType}
       </Typography>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-        <Typography variant="caption">{fmt(minValue)}</Typography>
-        <canvas
-          ref={canvasRef}
-          width={220}
-          height={12}
-          style={{ borderRadius: 3, border: '1px solid #bbbbbb', flex: 1 }}
-        />
-        <Typography variant="caption">{fmt(maxValue)}</Typography>
+      <canvas
+        ref={canvasRef}
+        width={220}
+        height={14}
+        style={{
+          width: '100%',
+          height: 14,
+          borderRadius: 4,
+          border: `1px solid ${UI.borderDark}`,
+          display: 'block',
+          marginTop: 6,
+        }}
+      />
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', fontFamily: UI.mono, fontSize: '10.5px', color: UI.dim, mt: 0.5 }}>
+        <span>{fmtValue(minValue)}</span>
+        <span>{fmtValue(maxValue)}</span>
       </Box>
-      {!isDefl && (
-        <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-          <Typography variant="caption" sx={{ color: '#666' }}>0</Typography>
-        </Box>
+      {unit && (
+        <Typography sx={{ textAlign: 'center', fontFamily: UI.mono, fontSize: '10px', color: UI.dim, mt: 0.25 }}>
+          {unit}
+        </Typography>
       )}
     </Box>
   );

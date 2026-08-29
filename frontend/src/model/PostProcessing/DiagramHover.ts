@@ -93,20 +93,33 @@ class DiagramHover {
     if (!this.tooltip) {
       const el = document.createElement('div')
       el.id = 'diagram-hover-tooltip'
-      el.style.position = 'absolute'
+      el.style.position = 'fixed'
       el.style.display = 'none'
       el.style.pointerEvents = 'none'
       el.style.zIndex = '5000'
-      el.style.backgroundColor = 'rgba(255, 255, 255, 0.96)'
-      el.style.border = '1px solid #333'
+      el.style.backgroundColor = 'rgba(15, 19, 26, 0.96)'
+      el.style.border = '1px solid #3b4654'
+      el.style.borderLeft = '3px solid #4a90e2'
       el.style.borderRadius = '6px'
-      el.style.padding = '6px 10px'
-      el.style.fontFamily = '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-      el.style.fontSize = '11px'
-      el.style.lineHeight = '1.5'
-      el.style.color = '#111'
-      el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.25)'
-      el.style.whiteSpace = 'pre'
+      el.style.padding = '8px 12px'
+      el.style.fontFamily = '"JetBrains Mono", ui-monospace, "SF Mono", monospace'
+      el.style.fontSize = '11.5px'
+      el.style.lineHeight = '1.7'
+      el.style.color = '#e8edf4'
+      el.style.boxShadow = '0 8px 24px rgba(0,0,0,0.5)'
+      el.style.whiteSpace = 'nowrap'
+      if (!document.getElementById('diagram-hover-tooltip-style')) {
+        const style = document.createElement('style')
+        style.id = 'diagram-hover-tooltip-style'
+        style.textContent = [
+          '#diagram-hover-tooltip .row{display:flex;justify-content:space-between;gap:16px;}',
+          '#diagram-hover-tooltip .row .lbl{color:#9aa7b8;}',
+          '#diagram-hover-tooltip .row.on{color:#7fb3ff;font-weight:700;}',
+          '#diagram-hover-tooltip .row.on .lbl{color:#7fb3ff;}',
+          '#diagram-hover-tooltip .hd{color:#7fb3ff;font-weight:700;margin-bottom:3px;border-bottom:1px solid #3b4654;padding-bottom:3px;}',
+        ].join('\n')
+        document.head.appendChild(style)
+      }
       this.model.container?.appendChild(el)
       this.tooltip = el
     }
@@ -151,30 +164,38 @@ class DiagramHover {
       this.marker.visible = true
     }
 
-    // Build tooltip content: active type first, then the remaining quantities
-    const rows: string[] = []
+    // Build tooltip content: .hd title + .row label/value pairs (like the sample)
     const title = `${member.label}  •  s = ${fmt(nearest.s)}`
     const entries = FORCE_LABELS.filter(item => nearest.values[item.key] !== undefined)
     const ordered = [
       ...entries.filter(item => item.key === this.activeType),
       ...entries.filter(item => item.key !== this.activeType)
     ]
+    let html = `<div class="hd">${title}</div>`
     for (const item of ordered) {
       const raw = nearest.values[item.key]
       const value = raw * (item.scale ?? 1)
-      rows.push(`${item.key === this.activeType ? '▸ ' : ''}${item.label} [${item.unit ?? ''}]: ${fmt(value)}`)
+      const active = item.key === this.activeType
+      html += `<div class="row${active ? ' on' : ''}">`
+      html += `<span class="lbl">${active ? '▸ ' : ''}${item.label} [${item.unit ?? ''}]</span>`
+      html += `<span>${fmt(value)}</span></div>`
     }
     const tooltip = this.ensureTooltip()
-    tooltip.innerHTML = `<b>${title}</b>\n${rows.join('\n')}`
+    tooltip.innerHTML = html
     tooltip.style.display = 'block'
 
-    // Position the tooltip next to the station projected on screen
-    const projected = nearest.offset.clone().project(this.model.camera.cam)
-    const containerRect = this.model.container?.getBoundingClientRect()
-    const x = (projected.x * 0.5 + 0.5) * rect.width + (containerRect?.left ?? 0)
-    const y = (-projected.y * 0.5 + 0.5) * rect.height + (containerRect?.top ?? 0)
-    tooltip.style.left = `${x + 14}px`
-    tooltip.style.top = `${y + 14}px`
+    // Position the tooltip anchored to the cursor (like the sample), flipping
+    // near the right/bottom edges so it never leaves the viewport
+    const tw = tooltip.offsetWidth || 200
+    const th = tooltip.offsetHeight || 140
+    let x = event.clientX + 16
+    let y = event.clientY + 16
+    if (x + tw > window.innerWidth - 8) x = event.clientX - tw - 16
+    if (y + th > window.innerHeight - 8) y = event.clientY - th - 16
+    x = Math.max(8, x)
+    y = Math.max(8, y)
+    tooltip.style.left = `${x}px`
+    tooltip.style.top = `${y}px`
   }
 
   private onPointerLeave = () => {
@@ -198,6 +219,7 @@ class DiagramHover {
     }
     this.tooltip?.remove()
     this.tooltip = null
+    document.getElementById('diagram-hover-tooltip-style')?.remove()
   }
 }
 

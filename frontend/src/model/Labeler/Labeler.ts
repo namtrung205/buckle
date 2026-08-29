@@ -65,12 +65,21 @@ class Labeler {
       wrapper.appendChild(pContainer)
 
       if (type === 'effort') {
-        // Effort styling - blue with rounded corners
-        pContainer.style.backgroundColor = label.backgroundColor || '#42a5f5';
-        pContainer.style.height = '30px';
-        pContainer.style.width = '50px';
-        pContainer.style.borderRadius = '5px';
-      } 
+        // Effort styling — pill tag with mono value, accent colour passed via backgroundColor
+        const accent = label.backgroundColor || '#2f6fed';
+        pContainer.style.backgroundColor = '#ffffff';
+        pContainer.style.border = `1.5px solid ${accent}`;
+        pContainer.style.borderRadius = '999px';
+        pContainer.style.padding = '2px 10px';
+        pContainer.style.height = 'auto';
+        pContainer.style.width = 'auto';
+        pContainer.style.minWidth = '64px';
+        pContainer.style.boxShadow = '0 1px 4px rgba(0,0,0,0.25)';
+        p.style.color = accent;
+        p.style.fontFamily = '"JetBrains Mono", ui-monospace, "SF Mono", monospace';
+        p.style.fontSize = '11px';
+        p.style.whiteSpace = 'nowrap';
+      }
       else if (type === 'length') {
         pContainer.style.backgroundColor = 'white';
         pContainer.style.height = '30px';
