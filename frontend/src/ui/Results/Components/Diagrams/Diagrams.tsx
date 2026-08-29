@@ -116,7 +116,34 @@ const Diagrams = observer(() => {
         onChange={handleModeChange}
         size="small"
         fullWidth
-        sx={{ mt: 0.5, flexWrap: 'wrap', gap: 0.5 }}
+        sx={{
+          mt: 0.5,
+          flexWrap: 'wrap',
+          gap: 0.5,
+          // MUI joins buttons by hiding the left border of every :not(:first-of-type)
+          // button — this breaks once the group wraps. Restore a complete edge
+          // on every button so no cell loses its border.
+          '& .MuiToggleButtonGroup-grouped': {
+            '&:not(:first-of-type)': {
+              marginLeft: 0,
+              borderLeft: `1px solid ${UI.borderDark}`,
+              borderTopLeftRadius: '6px',
+              borderBottomLeftRadius: '6px',
+            },
+            '&:not(:last-of-type)': {
+              borderTopRightRadius: '6px',
+              borderBottomRightRadius: '6px',
+            },
+            '&:first-of-type': {
+              borderTopLeftRadius: '6px',
+              borderBottomLeftRadius: '6px',
+            },
+            '&:last-of-type': {
+              borderTopRightRadius: '6px',
+              borderBottomRightRadius: '6px',
+            },
+          },
+        }}
       >
         {[...DIAGRAM_TYPES, DEFLECTION_TYPE].map((type) => (
           <ToggleButton
