@@ -25,6 +25,7 @@ import Load from "./Load/Load";
 import { buildModelOnjson } from "../helpers";
 import ToolsController from "./Geometry/Tools/Controller";
 import ZoomTool from "./Geometry/Tools/Zoom";
+import { preloadToolCursors, toolCursor } from "./Utils/CursorIcons";
 export type PointerCoords = {
   x: number;
   y: number;
@@ -159,6 +160,40 @@ export class Model {
       this.zoomTool.stop();
       this.selector.disable();
     }
+
+    this.applyCursor();
+  }
+
+  /**
+   * Reflect the active navigation tool on the canvas cursor:
+   * - select : default arrow (used for picking)
+   * - pan    : the toolbar's PanTool icon (grab while the cursor rasterises)
+   * - orbit  : the toolbar's ThreeDRotation icon (grab while it rasterises)
+   * - zoom   : depends on the zoom sub-mode (window = crosshair, drag = ns-resize)
+   */
+  applyCursor = () => {
+    const tool = this.navTool;
+    const domElement = this.renderer?.domElement;
+    if (!domElement) return;
+
+    let cursor = 'default';
+    switch (tool) {
+      case 'select':
+        cursor = 'default';
+        break;
+      case 'pan':
+        cursor = toolCursor('pan', 'grab');
+        break;
+      case 'orbit':
+        cursor = toolCursor('orbit', 'grab');
+        break;
+      case 'zoom':
+        if (this.zoomTool?.mode === 'window') cursor = 'crosshair';
+        else if (this.zoomTool?.mode === 'drag') cursor = 'ns-resize';
+        else cursor = 'default';
+        break;
+    }
+    domElement.style.cursor = cursor;
   }
 
   static getInstance(): Model {
@@ -226,6 +261,10 @@ export class Model {
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
     makeAutoObservable(this)
+
+    // Rasterise the pan / orbit toolbar icons into custom PNG cursors up front,
+    // then re-apply so an already-active tool picks them up as soon as ready.
+    void preloadToolCursors().then(() => this.applyCursor());
     
   }
 
