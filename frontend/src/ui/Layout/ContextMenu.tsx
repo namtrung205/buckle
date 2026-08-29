@@ -7,7 +7,7 @@ import { observer } from 'mobx-react-lite';
 const ContextMenu = observer(() => {
   const model = useModel();
 
-  if (!model || !model.contextMenu.visible) return null;
+  if (!model || !model.contextMenu.visible || model.isLocked) return null;
 
   const { visible, x, y } = model.contextMenu;
 

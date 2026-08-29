@@ -147,6 +147,7 @@ export default class Line implements Tool {
   };
 
   start = () => {
+    if (this.model.isLocked) return;
     if(this.state === 0) {
       this.state = 1
       // this.type = type

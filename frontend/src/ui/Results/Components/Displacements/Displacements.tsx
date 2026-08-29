@@ -41,7 +41,7 @@ const Displacements = () => {
     rx: item.displacements.rx,
     ry: item.displacements.ry,
     rz: item.displacements.rz,
-  }));
+  })) ?? [];
 
   const columns: GridColDef[] = [
     {

@@ -5,6 +5,9 @@ import {
   FolderOpen as OpenIcon,
   Help as HelpIcon,
   OpenWith as MoveIcon,
+  Lock as LockIcon,
+  LockOpen as LockOpenIcon,
+  WarningAmber as WarningAmberIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
@@ -29,6 +32,7 @@ import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
 import WarehouseWizard from '../Model/Generator/WarehouseWizard';
 import AnalysisProgress from '../Results/AnalysisProgress';
+import Dialog from '../../components/Dialog/Dialog';
 
 const { VITE_BACKEND_SERVER } = import.meta.env;
 const APP_VERSION = '0.0.2';
@@ -43,6 +47,7 @@ interface RibbonButtonProps {
   onClick: () => void;
   icon?: React.ReactElement;
   disabled?: boolean;
+  active?: boolean;
   iconImage?: {
     src: string;
     alt: string;
@@ -50,7 +55,7 @@ interface RibbonButtonProps {
   };
 }
 
-const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled }: RibbonButtonProps) => {
+const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled, active }: RibbonButtonProps) => {
   return (
     <Tooltip title={title}>
       <Button
@@ -65,8 +70,9 @@ const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled }: Ribb
           px: 1,
           color: '#e0e0e0',
           textTransform: 'none',
+          backgroundColor: active ? '#4a90e2' : 'transparent',
           '&:hover': {
-            bgcolor: '#3f3f3f',
+            bgcolor: active ? '#3a7bc8' : '#3f3f3f',
           },
         }}
       >
@@ -96,8 +102,16 @@ const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled }: Ribb
 const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   const model = useModel();
   
+  // model is null on the first render (Viewer provides it only after Model.getInstance() resolves)
+  const isLocked = model?.isLocked ?? false;
+  const hasResults = !!model?.output;
   // Use model-level MobX state so ContextMenu and TopBar share the same dialog state
-  const open = (dialog: string) => model?.openDialog(dialog);
+  const open = (dialog: string) => {
+    const ok = model?.openDialog(dialog) ?? false;
+    if (!ok) {
+      toast.warning('Model is locked — unlock to edit', { position: 'bottom-right', autoClose: 2500 });
+    }
+  };
   const close = () => model?.closeDialog();
   const activeDialog = model?.activeDialog ?? null;
   const dialogs = {
@@ -115,6 +129,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     analysisProgress: activeDialog === 'analysisProgress',
   };
   const [tool, setTool] = useState('')
+  const [confirmUnlock, setConfirmUnlock] = useState(false)
   const toolName = model?.toolsController.getCurrentToolName()
   
   const handleToolChange = (newTool: string) => {
@@ -229,6 +244,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);
       console.log('RES', res);
       model.output = res.data.output;
+      model.lockResults();
       
       model.console.setFinished(true);
       
@@ -380,6 +396,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   };
 
   const buildOnJson = (jsonData: any) => {
+    model.isLocked = false; // loading a new model returns to editing mode
     try {
       console.log('Loading model from JSON...', jsonData);
       
@@ -630,6 +647,14 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             Analysis
           </Typography>
           <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <RibbonButton
+              title={isLocked ? 'Unlock — clear results and edit the model' : 'Model unlocked'}
+              label={isLocked ? 'Locked' : 'Unlocked'}
+              onClick={() => { if (model && isLocked) setConfirmUnlock(true); }}
+              icon={isLocked ? <LockIcon sx={{ fontSize: 18 }} /> : <LockOpenIcon sx={{ fontSize: 18 }} />}
+              active={isLocked}
+              disabled={!isLocked && !hasResults}
+            />
             {analysisButtons.map((button, index) => (
               <RibbonButton
                 key={index}
@@ -674,6 +699,41 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         onClose={close} 
         onViewResults={() => open('results')} 
       />
+
+      {/* Confirm dialog: unlock wipes all analysis results */}
+      <Dialog
+        open={confirmUnlock}
+        onClose={() => setConfirmUnlock(false)}
+        title="Unlock model"
+        maxWidth="xs"
+        actions={
+          <>
+            <Button onClick={() => setConfirmUnlock(false)} sx={{ color: '#b0b0b0' }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirmUnlock(false);
+                model?.unlockResults();
+                toast.info('Results cleared — model unlocked', { position: 'bottom-right', autoClose: 3000 });
+              }}
+              variant="contained"
+              disableElevation
+              sx={{ backgroundColor: '#e5484d', '&:hover': { backgroundColor: '#c73a3f' } }}
+            >
+              Unlock &amp; Delete Results
+            </Button>
+          </>
+        }
+      >
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+          <WarningAmberIcon sx={{ color: '#f5a623', mt: 0.3 }} />
+          <Typography sx={{ color: '#e0e0e0', fontSize: '0.85rem', lineHeight: 1.55 }}>
+            Unlocking will delete all analysis results — diagrams, contour colours, min/max tags,
+            legend, summary and station data. You will need to re-run the analysis to view results again.
+          </Typography>
+        </Box>
+      </Dialog>
     </Box>
   );
 });

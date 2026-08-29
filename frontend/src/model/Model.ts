@@ -73,6 +73,9 @@ export class Model {
     y: 0,
   }
   activeDialog: string | null = null;
+  // Results lock: true after a successful analysis — model editing is disabled until unlocked
+  isLocked: boolean = false;
+  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard'];
   ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
 
   closeContextMenu = () => {
@@ -83,8 +86,27 @@ export class Model {
     this.contextMenu = { visible: true, x, y };
   }
 
-  openDialog = (dialog: string) => {
+  openDialog = (dialog: string): boolean => {
+    // While results are locked, editing dialogs are blocked (view dialogs stay available)
+    if (this.isLocked && this.editingDialogs.includes(dialog)) {
+      return false;
+    }
     this.activeDialog = dialog;
+    return true;
+  }
+
+  /** Lock the model after a successful analysis: results become active, editing is disabled. */
+  lockResults = () => {
+    this.isLocked = true;
+  }
+
+  /** Unlock: wipe all computed results and return to model editing mode. */
+  unlockResults = () => {
+    this.isLocked = false;
+    this.invalidateResults();
+    this.selector.clear();
+    this.toolsController.deactivate();
+    if (this.activeDialog === 'results') this.closeDialog();
   }
 
   closeDialog = () => {
@@ -127,6 +149,7 @@ export class Model {
     this.setupEvent = true;
     
     this.selector = new Selector(this); 
+    this.toolsController.canActivate = () => !this.isLocked;
     
     // this.axes = new Axes(this)  
     this.canvas = document.querySelector('canvas') as HTMLCanvasElement
