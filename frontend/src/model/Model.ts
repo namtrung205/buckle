@@ -161,19 +161,13 @@ export class Model {
       this.camera.cam, 
       this.renderer, 
       { 
-        // Position options: "top-left" | "top-right" | "bottom-left" | "bottom-right"
-        placement: "bottom-left", 
-        size: 100, // Size of the gizmo in pixels
+        type: "cube", // Autodesk ViewCube style — clickable faces / edges / corners
+        placement: "bottom-right", 
+        size: 100,
         offset :{
-          left:300,
-          bottom:50,
+          right: 60,
+          bottom: 80,
         },
-        y: {
-          label: 'Z',
-        },
-        z: {
-          label: 'Y',
-        }
       }
     )
     this.gizmo.attachControls(this.camera.controls);
