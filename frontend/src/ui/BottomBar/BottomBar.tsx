@@ -1,7 +1,6 @@
 import { useState, MouseEvent } from 'react';
 import {
   Box,
-  Typography,
   IconButton,
   Tooltip,
   Divider,
@@ -40,19 +39,10 @@ const ZOOM_OPTIONS: ZoomOption[] = [
 const zoomOption = (mode: ZoomMode): ZoomOption =>
   ZOOM_OPTIONS.find(option => option.mode === mode) ?? ZOOM_OPTIONS[0];
 
-const groupLabel = {
-  fontSize: '0.6rem',
-  color: '#a0a0a0',
-  fontWeight: 600,
-  textTransform: 'uppercase',
-  letterSpacing: '0.5px',
-  mb: 0.3,
-};
-
 const activeStyle = (active: boolean) => ({
   color: active ? '#ffffff' : '#e0e0e0',
-  width: 36,
-  height: 36,
+  width: 30,
+  height: 30,
   borderRadius: 1.5,
   backgroundColor: active ? '#4a90e2' : 'transparent',
   '&:hover': {

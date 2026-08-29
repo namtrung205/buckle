@@ -52,11 +52,11 @@ const Layout = ({ children }: LayoutProps) => {
           }}
         >
           {children}
+
+          {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
+          <BottomBar />
         </Box>
       </Box>
-
-      {/* Bottom navigation bar (Zoom / Pan / Orbit / Select) */}
-      <BottomBar />
 
       {/* Bottom Status Bar */}
       <StatusBar />
