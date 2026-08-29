@@ -289,7 +289,7 @@ class ElasticBeamColumn {
     // with quadraticCurveTo/absarc segments. Omitted here for brevity.
 
     // Extrude along z (Three.js default). We’ll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
@@ -318,7 +318,7 @@ class ElasticBeamColumn {
     shape.holes.push(holePath);
 
     // Extrude along z (Three.js default). We'll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
@@ -344,7 +344,7 @@ class ElasticBeamColumn {
     shape.lineTo(-W, -H); // close the shape
 
     // Extrude along z (Three.js default). We'll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
