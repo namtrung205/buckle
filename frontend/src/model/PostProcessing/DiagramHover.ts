@@ -79,7 +79,7 @@ class DiagramHover {
   private ensureMarker(markerRadius: number) {
     if (!this.marker) {
       const geometry = new THREE.SphereGeometry(1, 12, 12)
-      const material = new THREE.MeshBasicMaterial({ color: 0x111111, depthTest: false, transparent: true })
+      const material = new THREE.MeshBasicMaterial({ color: 0xf0f4f8, depthTest: false, transparent: true })
       this.marker = new THREE.Mesh(geometry, material)
       this.marker.renderOrder = 2000
       this.marker.visible = false

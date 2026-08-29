@@ -22,7 +22,8 @@ class GridHelper{
     this.size = 50
     this.divisions = 50
     this.spacing = 1
-    this.grid = new THREE.GridHelper( this.size, this.divisions, new THREE.Color(0x424242), new THREE.Color(0xD7D7D7) );
+    // Blue-gray grid tuned for the dark AutoCAD-style background (#212830)
+    this.grid = new THREE.GridHelper( this.size, this.divisions, new THREE.Color(0x4a5765), new THREE.Color(0x36404a) );
     this.scene = scene
     this.setupEvent = true;
     makeAutoObservable(this)
@@ -50,7 +51,7 @@ class GridHelper{
   }
 
   create(size : number, divisions : number){
-    this.grid = new THREE.GridHelper(size, divisions, new THREE.Color(0x424242), new THREE.Color(0xD7D7D7))
+    this.grid = new THREE.GridHelper(size, divisions, new THREE.Color(0x4a5765), new THREE.Color(0x36404a))
     this.grid.position.y = -0.005
     this.scene.add(this.grid)
     this.size = size

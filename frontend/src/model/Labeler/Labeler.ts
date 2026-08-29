@@ -52,7 +52,7 @@ class Labeler {
       p.textContent = label.text;
       const modernFont = '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif';
       
-      p.style.color = 'black';
+      p.style.color = '#e0e0e0'; // Light text so labels read on the dark viewport
       p.style.fontWeight = 'bold';
       p.style.textAlign = 'center';
       p.style.margin = '0';
@@ -88,6 +88,7 @@ class Labeler {
         pContainer.style.width = '50px';
         pContainer.style.border = '1px solid black';
         pContainer.style.color = 'black';
+        p.style.color = 'black'; // Dark text on the white pill
       }
       else if (type === 'gridSnap') {
         pContainer.style.backgroundColor = 'transparent';
@@ -191,7 +192,7 @@ class Labeler {
         pContainer.style.height = '20px';
         pContainer.style.width = '100px';
         pContainer.style.position = 'relative';
-        pContainer.style.color = 'black';
+        pContainer.style.color = '#e0e0e0';
       }
       
       // if (type !== 'gridSnap') {

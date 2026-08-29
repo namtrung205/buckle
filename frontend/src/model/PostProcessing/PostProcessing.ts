@@ -431,7 +431,7 @@ class PostProcessing {
     }
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    const material = new THREE.LineBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.5 })
+    const material = new THREE.LineBasicMaterial({ color: 0xaeb9c4, transparent: true, opacity: 0.5 })
     const lines = new THREE.LineSegments(geometry, material)
     lines.userData.type = 'diagram'
     this.model.scene.add(lines)
@@ -442,7 +442,7 @@ class PostProcessing {
   private buildBaseline(data: MemberDiagramData) {
     const points = data.stations.map(s => s.base)
     const geometry = new THREE.BufferGeometry().setFromPoints(points)
-    const material = new THREE.LineBasicMaterial({ color: 0x333333 })
+    const material = new THREE.LineBasicMaterial({ color: 0xd5dde3 })
     const line = new THREE.Line(geometry, material)
     line.userData.type = 'diagram'
     this.model.scene.add(line)
@@ -455,7 +455,7 @@ class PostProcessing {
     const geometry = new THREE.BufferGeometry().setFromPoints(points)
     const dashSize = this.modelSize * 0.02
     const material = new THREE.LineDashedMaterial({
-      color: 0x888888,
+      color: 0x8a99a8,
       dashSize,
       gapSize: dashSize * 0.6
     })
@@ -466,7 +466,7 @@ class PostProcessing {
     this.meshes.push(line)
   }
 
-  /** Black diagram curve on top of the filled area (smoothed like the sample). */
+  /** Light diagram curve on top of the filled area (smoothed like the sample). */
   private buildOutline(data: MemberDiagramData) {
     const stations = data.stations
     const curve = new THREE.CatmullRomCurve3(stations.map(s => s.offset))
@@ -474,7 +474,7 @@ class PostProcessing {
     const points = curvePoints.flatMap(p => [p.x, p.y, p.z])
     const lineGeometry = new LineGeometry().setPositions(points)
     const lineMaterial = new LineMaterial({
-      color: 0x000000,
+      color: 0xf0f4f8,
       linewidth: 2,
       resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
     })

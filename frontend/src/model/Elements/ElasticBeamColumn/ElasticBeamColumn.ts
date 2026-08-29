@@ -83,8 +83,9 @@ class ElasticBeamColumn {
       polygonOffsetUnits: 1
     });
 
+    // Dark blue-gray edges: read against both the light member body and the dark background
     const edgeMaterial = new THREE.LineBasicMaterial({
-      color: 0x000000,
+      color: 0x2e3944,
       linewidth: 1.5
     });
 

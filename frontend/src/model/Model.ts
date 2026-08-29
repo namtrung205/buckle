@@ -275,7 +275,8 @@ export class Model {
       this.renderer.setSize( window.innerWidth, window.innerHeight );
       this.container?.appendChild( this.renderer.domElement )
       this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
-      this.scene.background = new THREE.Color('white');
+      // AutoCAD-style dark blue-black viewport background
+      this.scene.background = new THREE.Color('#212830');
       await this.ws.connect();
       if (this.ws.isConnected())  console.log('Connected!');
       

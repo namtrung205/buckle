@@ -42,13 +42,13 @@ const Layout = ({ children }: LayoutProps) => {
         {/* Left Bar */}
         <LeftBar isCollapsed={isLeftBarCollapsed} />
 
-        {/* Content area - White background for viewer */}
+        {/* Content area - AutoCAD-style dark blue-black background for the viewer */}
         <Box
           sx={{
             flex: 1,
             position: 'relative',
             overflow: 'hidden',
-            backgroundColor: '#ffffff',
+            backgroundColor: '#212830',
           }}
         >
           {children}
