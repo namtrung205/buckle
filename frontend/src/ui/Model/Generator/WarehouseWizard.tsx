@@ -385,6 +385,9 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         } as any).createOrUpdate();
     }
 
+    // Frame the generated warehouse so long spans are fully visible
+    model.camera.fitModelToView();
+
     onClose();
   };
 

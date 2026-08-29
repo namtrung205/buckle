@@ -515,6 +515,9 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         console.log(`Created ${jsonData.loads.length} loads`);
       }
       
+      // Fit the camera to the model so large models are not culled by the far plane
+      model.camera.fitModelToView();
+
       console.log('Model loaded successfully from JSON!');
       toast.success('Model loaded successfully!', {
         position: "bottom-right",
