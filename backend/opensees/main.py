@@ -849,18 +849,25 @@ def extract_results(log_callback=None):
             for k in range(len(force_values)):
               key = tuple(np.round(base_positions[k], 6))
               value = float(np.round(force_values[k], 2))
+              # Full-precision plot point: coord + value * SFAC * localAxis (per-force plane)
+              plot_point = [float(c) for c in displaced_positions[k]]
               if key not in stations_dict:
                 stations_dict[key] = {
                   "coord": np.round(base_positions[k], 6).tolist(),
                   "displaced": displaced_positions[k],
                   "values": {force: value},
+                  "plot_points": {force: plot_point},
                 }
               else:
                 entry = stations_dict[key]
                 if force in entry["values"]:
                   entry["values"][force] = float(np.round((entry["values"][force] + value) / 2, 2))
+                  previous = entry["plot_points"].get(force)
+                  if previous is not None:
+                    entry["plot_points"][force] = [(previous[i] + plot_point[i]) / 2 for i in range(3)]
                 else:
                   entry["values"][force] = value
+                  entry["plot_points"][force] = plot_point
 
         except Exception as e:
           print(f"Warning: Could not extract {force} data for element {child_id}: {e}")

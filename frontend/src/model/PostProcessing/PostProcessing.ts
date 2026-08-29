@@ -13,16 +13,17 @@ export const DIAGRAM_TYPES = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz'] as const
 export type DiagramType = (typeof DIAGRAM_TYPES)[number]
 export const DEFLECTION_TYPE = 'defl'
 
-const SFAC = 1E-5 // displacement scale applied on the backend (s_p = s_0 + SFAC * disp)
+const SFAC = 1E-5 // displacement scale the backend applies to SI forces: plot_offset = value_SI * SFAC * localAxis
 const FORCE_UNITS: Record<string, string> = { N: 'kN', Vy: 'kN', Vz: 'kN', T: 'kN', My: 'kNm', Mz: 'kNm' }
 
 export type StationPoint = {
   s: number // arc position along the member
   base: THREE.Vector3 // undeformed axis point (three.js coords)
-  displaced: THREE.Vector3 // displaced axis point from the backend (already scaled by SFAC)
   value: number // scalar used for the active diagram/colouring
   offset: THREE.Vector3 // rendered diagram point
   values: Record<string, number> // all quantities at this station (N..Mz, dX, dY, dZ)
+  offsetsByType?: Record<string, THREE.Vector3> // per-force unscaled diagram offset (value * local axis), from the backend
+  dispVec?: THREE.Vector3 // real interpolated displacement (three.js axes), for the deflected shape
 }
 
 type SolidSave = {
@@ -39,7 +40,8 @@ export type MemberDiagramData = {
   label: string
   axis: THREE.Vector3
   length: number
-  offsetDir: THREE.Vector3 // direction perpendicular to the member used to draw force diagrams
+  localY: THREE.Vector3 // section local Y axis (three.js coords) -> N/Vy/T/Mz diagram plane
+  localZ: THREE.Vector3 // section local Z axis (three.js coords) -> Vz/My diagram plane
   stations: StationPoint[]
 }
 
@@ -90,7 +92,11 @@ class PostProcessing {
     } as any)
   }
 
-  /** Backend coords are [x, y, z] with y vertical; the three.js scene maps them to (x, z, y). */
+  /**
+   * The backend stores coordinates in OpenSees axes: OS (X, Y, Z) = model (x, z, y)
+   * (the vertical model y is OpenSees z). The three.js scene uses the model axes
+   * directly -> swap the Y/Z components back here.
+   */
   private toThreeCoord(c: number[]) {
     return new THREE.Vector3(c[0], c[2], c[1])
   }
@@ -101,30 +107,28 @@ class PostProcessing {
    * to the legacy end-node `node_efforts` (2 points) for older payloads.
    */
   private buildMemberData(member: any): MemberDiagramData | null {
-    let points: { coord: number[]; displaced: number[]; values: Record<string, number> }[] = []
+    let points: {
+      coord: number[]
+      plotPoints: Record<string, number[]>
+      values: Record<string, number>
+    }[] = []
     if (member.stations?.length) {
       points = member.stations
         .filter((s: any) => s.values && Object.keys(s.values).length > 0)
-        .map((s: any) => ({ coord: s.coord, displaced: s.displaced ?? s.coord, values: { ...s.values } }))
+        .map((s: any) => ({ coord: s.coord, plotPoints: s.plot_points ?? {}, values: { ...s.values } }))
     } else if (member.node_efforts?.length) {
       points = member.node_efforts.map((node: any) => {
         const values: Record<string, number> = {}
-        let displaced = node.coord
+        const plotPoints: Record<string, number[]> = {}
         for (const [key, effort] of Object.entries(node.efforts ?? {})) {
           values[key] = (effort as any).value
-          if ((effort as any).displaced_positions) displaced = (effort as any).displaced_positions
+          // displaced_positions = coord + value * SFAC * localAxis (the backend plot point)
+          if ((effort as any).displaced_positions) plotPoints[key] = (effort as any).displaced_positions
         }
-        return { coord: node.coord, displaced, values }
+        return { coord: node.coord, plotPoints, values }
       })
     }
     if (points.length < 2) return null
-
-    // Unscaled displacement components (used by hover tooltips & the deflected shape)
-    for (const p of points) {
-      p.values['dX'] = (p.displaced[0] - p.coord[0]) / SFAC
-      p.values['dY'] = (p.displaced[1] - p.coord[1]) / SFAC
-      p.values['dZ'] = (p.displaced[2] - p.coord[2]) / SFAC
-    }
 
     // Sort the stations along the member axis
     const first = this.toThreeCoord(points[0].coord)
@@ -135,37 +139,105 @@ class PostProcessing {
     points.sort((a, b) => this.toThreeCoord(a.coord).dot(axis) - this.toThreeCoord(b.coord).dot(axis))
 
     const p0 = this.toThreeCoord(points[0].coord)
+
+    // Section local axes in three.js coords, following the OpenSees element orientation:
+    // ylocal = vecxz orthogonalised against the member axis, zlocal = ylocal x xlocal.
+    // Used when the backend payload has no per-force plot points (older runs).
+    const element = (this.model.members as any[]).find((m: any) => String(m?.id) === String(member.id))
+    const vecxz = element?.vecxz as THREE.Vector3 | undefined
+    let vPerp: THREE.Vector3 | null = null
+    if (vecxz) {
+      vPerp = vecxz.clone().addScaledVector(axis, -vecxz.dot(axis))
+      if (vPerp.lengthSq() < 1e-8) vPerp = null
+      else vPerp.normalize()
+    }
+    let localY: THREE.Vector3
+    let localZ: THREE.Vector3
+    if (vPerp) {
+      localY = vPerp
+      localZ = new THREE.Vector3().crossVectors(vPerp, axis).normalize()
+    } else {
+      // Fallback: a horizontal perpendicular + the vertical it defines
+      localY = new THREE.Vector3().crossVectors(axis, new THREE.Vector3(0, 1, 0))
+      if (localY.lengthSq() < 1e-8) localY = new THREE.Vector3().crossVectors(axis, new THREE.Vector3(1, 0, 0))
+      if (localY.lengthSq() < 1e-8) localY.set(0, 0, 1)
+      localY.normalize()
+      localZ = new THREE.Vector3().crossVectors(localY, axis).normalize()
+    }
+
+    const endDisp = this.getMemberEndDisplacements(member)
+    const length = this.toThreeCoord(points[points.length - 1].coord).sub(p0).dot(axis)
+    // Diagnostic: which offset source is in use (helps detect stale backend/frontend at runtime)
+    const hasPlotPoints = points.some(p => Object.keys(p.plotPoints).length > 0)
+    console.info(
+      `[Diagrams] member ${member.id}: offset source = ${hasPlotPoints ? 'backend plot_points' : vecxz ? 'vecxz fallback' : 'generic fallback'}, localZ(three) = (${localZ.x.toFixed(2)}, ${localZ.y.toFixed(2)}, ${localZ.z.toFixed(2)})`
+    )
+
     const stations: StationPoint[] = points.map(p => {
       const base = this.toThreeCoord(p.coord)
-      const displaced = this.toThreeCoord(p.displaced)
+      // Per-force diagram offsets exactly as the backend computes them:
+      // plot_offset = value_SI * SFAC * localAxis, while `values` are stored in kN (value_SI / 1E3)
+      // -> normalize to value_kN * localAxis by dividing by (SFAC * 1E3)
+      const offsetsByType: Record<string, THREE.Vector3> = {}
+      for (const [key, point] of Object.entries(p.plotPoints)) {
+        offsetsByType[key] = this.toThreeCoord(point).sub(base).multiplyScalar(1 / (SFAC * 1E3))
+      }
+      // Real displacement interpolated between the two end nodes (deflected-shape mode)
+      let dispVec: THREE.Vector3 | undefined
+      if (endDisp) {
+        const t = length > 0 ? base.clone().sub(p0).dot(axis) / length : 0
+        dispVec = endDisp[0].clone().lerp(endDisp[1], t)
+        p.values['dX'] = dispVec.x
+        p.values['dY'] = dispVec.y
+        p.values['dZ'] = dispVec.z
+      } else {
+        p.values['dX'] = 0
+        p.values['dY'] = 0
+        p.values['dZ'] = 0
+      }
       return {
         s: base.clone().sub(p0).dot(axis),
         base,
-        displaced,
         value: 0,
         offset: base.clone(),
-        values: p.values
+        values: p.values,
+        offsetsByType,
+        dispVec
       }
     })
 
-    // Force diagrams are drawn perpendicular to the member axis
-    const up = new THREE.Vector3(0, 1, 0)
-    let offsetDir = new THREE.Vector3().crossVectors(axis, up)
-    if (offsetDir.lengthSq() < 1e-8) {
-      offsetDir = new THREE.Vector3().crossVectors(axis, new THREE.Vector3(1, 0, 0))
-    }
-    if (offsetDir.lengthSq() < 1e-8) offsetDir.set(0, 0, 1)
-    offsetDir.normalize()
-
-    const length = stations[stations.length - 1].s
     return {
       memberId: member.id,
       label: member.label || `Member ${member.id}`,
       axis,
       length,
-      offsetDir,
+      localY,
+      localZ,
       stations
     }
+  }
+
+  /** Real end-node displacements (three.js axes) of the member, for the deflected-shape mode. */
+  private getMemberEndDisplacements(member: any): [THREE.Vector3, THREE.Vector3] | null {
+    const element = (this.model.members as any[]).find((m: any) => String(m?.id) === String(member.id))
+    const nodes = element?.nodes
+    if (!nodes || nodes.length < 2) return null
+    const outputNodes = this.model.output?.nodes ?? []
+    const result: (THREE.Vector3 | null)[] = []
+    for (const node of nodes.slice(0, 2)) {
+      const outputNode = outputNodes.find((n: any) => n.id === node.id)
+      const d = outputNode?.displacements
+      if (!d) {
+        result.push(null)
+        continue
+      }
+      // The backend swaps the vertical axis when creating the OpenSees model:
+      // OpenSees (X, Y, Z) = model (x, z, y) while three.js = model (x, y, z)
+      // -> undo the swap: three disp = (OS ux, OS uz, OS uy)
+      result.push(new THREE.Vector3(d.ux ?? 0, d.uz ?? 0, d.uy ?? 0))
+    }
+    if (!result[0] || !result[1]) return null
+    return [result[0] as THREE.Vector3, result[1] as THREE.Vector3]
   }
 
   /** Largest extent of the analysed model, used for auto-scaling diagrams. */
@@ -198,13 +270,18 @@ class PostProcessing {
   /** Position of a station in the rendered diagram. */
   private stationOffset(type: string, data: MemberDiagramData, station: StationPoint, scale: number): THREE.Vector3 {
     if (type === DEFLECTION_TYPE) {
-      // Exaggerate the real displacement: displaced = base + SFAC * disp
-      return station.base.clone().addScaledVector(
-        station.displaced.clone().sub(station.base),
-        this.deflectionMultiplier / SFAC
-      )
+      // Real interpolated displacement, exaggerated by the UI factor
+      return station.base.clone().addScaledVector(station.dispVec ?? new THREE.Vector3(), this.deflectionMultiplier)
     }
-    return station.base.clone().addScaledVector(data.offsetDir, station.value * scale)
+    // Preferred: the backend plot point per force type (coord + value_SI * SFAC * localAxis)
+    const plotOffset = station.offsetsByType?.[type]
+    if (plotOffset) {
+      return station.base.clone().addScaledVector(plotOffset, scale)
+    }
+    // Fallback for older payloads: reconstruct value * localAxis from the section axes.
+    // Same convention as the backend default_dir: N/Vy/T/Mz act along local Y, Vz/My along local Z.
+    const dir = type === 'Vz' || type === 'My' ? data.localZ : data.localY
+    return station.base.clone().addScaledVector(dir, station.value * scale)
   }
 
   /** Render a force/torsion/moment diagram (N, Vy, Vz, T, My, Mz). */

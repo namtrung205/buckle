@@ -51,30 +51,14 @@ const SummaryTable = observer(() => {
     if (found) rows.push({ label: TYPE_TITLES[type], max: fmt(max), min: fmt(min) });
   }
 
-  // Peak displacement magnitude
+  // Peak displacement magnitude (real nodal displacements of the analysis)
   let maxDefl = 0;
-  for (const member of members) {
-    const stations = member.stations?.length
-      ? member.stations
-      : (member.node_efforts ?? []).map((node: any) => ({
-        values: Object.fromEntries(
-          Object.entries(node.efforts ?? {}).map(([k, e]: [string, any]) => [
-            k,
-            e.value,
-          ])
-        ),
-        coord: node.coord,
-        displaced: node.efforts?.[Object.keys(node.efforts ?? {})[0]]?.displaced_positions,
-      }));
-    for (const s of stations) {
-      if (!s.coord || !s.displaced) continue;
-      const mag = Math.sqrt(
-        (s.displaced[0] - s.coord[0]) ** 2 +
-        (s.displaced[1] - s.coord[1]) ** 2 +
-        (s.displaced[2] - s.coord[2]) ** 2
-      ) / 1e-5;
-      if (mag > maxDefl) maxDefl = mag;
-    }
+  for (const node of model.output?.nodes ?? []) {
+    const d = node.displacements;
+    if (!d) continue;
+    // OpenSees axes (X, Y, Z) = model (x, z, y)
+    const mag = Math.sqrt((d.ux ?? 0) ** 2 + (d.uz ?? 0) ** 2 + (d.uy ?? 0) ** 2);
+    if (mag > maxDefl) maxDefl = mag;
   }
   if (maxDefl > 0) {
     rows.push({ label: 'Deflection max [mm]', max: fmt(maxDefl * 1000), min: '—' });

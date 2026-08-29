@@ -112,7 +112,6 @@ const StationTable = ({ memberIds }: StationTableProps) => {
                   <TableCell align="right" sx={{ py: 0.25 }}>T</TableCell>
                   <TableCell align="right" sx={{ py: 0.25 }}>My</TableCell>
                   <TableCell align="right" sx={{ py: 0.25 }}>Mz</TableCell>
-                  <TableCell align="right" sx={{ py: 0.25 }}>Δy [mm]</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -125,9 +124,6 @@ const StationTable = ({ memberIds }: StationTableProps) => {
                     <TableCell align="right" sx={{ py: 0.25 }}>{fmt(s.values?.T)}</TableCell>
                     <TableCell align="right" sx={{ py: 0.25 }}>{fmt(s.values?.My)}</TableCell>
                     <TableCell align="right" sx={{ py: 0.25 }}>{fmt(s.values?.Mz)}</TableCell>
-                    <TableCell align="right" sx={{ py: 0.25 }}>
-                      {s.coord && s.displaced ? fmt(((s.displaced[1] - s.coord[1]) / 1e-5) * 1000) : '—'}
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
