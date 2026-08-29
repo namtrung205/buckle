@@ -2,6 +2,7 @@ import { ReactNode, useState } from 'react';
 import { Box } from '@mui/material';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
+import BottomBar from '../BottomBar';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
 
@@ -53,6 +54,9 @@ const Layout = ({ children }: LayoutProps) => {
           {children}
         </Box>
       </Box>
+
+      {/* Bottom navigation bar (Zoom / Pan / Orbit / Select) */}
+      <BottomBar />
 
       {/* Bottom Status Bar */}
       <StatusBar />

@@ -19,6 +19,7 @@ import BoundaryCondition from './BoundaryCondition/BoundaryCondition'
 import Load from './Load/Load'
 import WebSocketHandler  from './WebSocket/WebSocket'
 import CopyTool from './Geometry/Tools/Copy'
+import ZoomTool from './Geometry/Tools/Zoom'
 export {
   Node,
   Camera,
@@ -39,5 +40,6 @@ export {
   BoundaryCondition,
   WebSocketHandler,
   CopyTool,
+  ZoomTool,
   Shell
 }

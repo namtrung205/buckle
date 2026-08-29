@@ -17,13 +17,14 @@ import {
   Shell
 } from "./index";
 import { makeAutoObservable } from "mobx";
-import { Material, mockMaterials, mockSections, Section } from "../types";
+import { Material, mockMaterials, mockSections, Section, NavTool } from "../types";
 import { GUI } from "lil-gui";
 import { Line3D, Member, Level, mockLevels } from "../types";
 import BoundaryCondition from "./BoundaryCondition/BoundaryCondition";
 import Load from "./Load/Load";
 import { buildModelOnjson } from "../helpers";
 import ToolsController from "./Geometry/Tools/Controller";
+import ZoomTool from "./Geometry/Tools/Zoom";
 export type PointerCoords = {
   x: number;
   y: number;
@@ -75,6 +76,10 @@ export class Model {
   activeDialog: string | null = null;
   // Results lock: true after a successful analysis — model editing is disabled until unlocked
   isLocked: boolean = false;
+  // Active bottom-bar navigation tool (select / zoom / pan / orbit)
+  navTool: NavTool = 'select';
+  // Zoom navigation tool handling fit / window / drag modes
+  zoomTool: ZoomTool;
   private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard'];
   ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
 
@@ -115,6 +120,47 @@ export class Model {
     this.activeDialog = null;
   }
 
+  /**
+   * Switch the active bottom-bar navigation tool. Applying the tool configuration
+   * is delegated to applyNavTool so the constructor can share the same path.
+   */
+  setNavTool = (tool: NavTool) => {
+    if (this.navTool === tool) return;
+    this.navTool = tool;
+    this.applyNavTool();
+  }
+
+  /**
+   * Sync OrbitControls bindings + the Selector with the active nav tool:
+   * - select: picking + rubber-band selection (Selector enabled)
+   * - pan / orbit: camera owns the left button (Selector disabled)
+   * - zoom  : left drag is handled by the ZoomTool (Selector disabled)
+   */
+  applyNavTool = () => {
+    const tool = this.navTool;
+    const camera = this.camera;
+
+    // Stop any active drawing/copy tool so it does not fight the camera gesture
+    this.toolsController.deactivate();
+
+    if (tool === 'orbit' && camera.viewMode === '2d') {
+      camera.handle3dView();
+    }
+    camera.applyNavTool(tool);
+
+    if (tool === 'select') {
+      this.zoomTool.stop();
+      this.selector.enable();
+    } else if (tool === 'zoom') {
+      this.selector.disable();
+      this.zoomTool.start();
+    } else {
+      // pan / orbit
+      this.zoomTool.stop();
+      this.selector.disable();
+    }
+  }
+
   static getInstance(): Model {
     if (Model.instance === null) {
       Model.instance = new Model();
@@ -150,6 +196,7 @@ export class Model {
     
     this.selector = new Selector(this); 
     this.toolsController.canActivate = () => !this.isLocked;
+    this.zoomTool = new ZoomTool(this);
     
     // this.axes = new Axes(this)  
     this.canvas = document.querySelector('canvas') as HTMLCanvasElement
@@ -248,6 +295,7 @@ export class Model {
     this.labeler.dispose()
     this.gizmo.dispose()
     this.removeListeners()
+    this.zoomTool.stop()
     this.toolsController.dispose()
     // Disconnect when done
     this.ws.disconnect();

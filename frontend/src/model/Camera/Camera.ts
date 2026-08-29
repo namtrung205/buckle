@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import Model from '../Model';
 import { ViewportGizmo } from 'three-viewport-gizmo';
+import { NavTool } from '../../types';
 export class Camera {
   cam: THREE.OrthographicCamera | THREE.PerspectiveCamera;
   controls: OrbitControls;
@@ -154,6 +155,54 @@ export class Camera {
     }
   }
 
+  /**
+   * Configure OrbitControls mouse bindings + rotation per the active bottom-bar
+   * navigation tool:
+   * - select: left click reserved for picking / rubber-band selection
+   * - pan   : left drag pans
+   * - orbit : left drag rotates (switches the view to 3D beforehand in Model)
+   * - zoom  : left drag is handled by the ZoomTool, wheel / middle still zoom
+   */
+  applyNavTool(tool: NavTool) {
+    const controls = this.controls;
+    controls.enableDamping = false;
+    switch (tool) {
+      case 'select':
+        controls.mouseButtons = {
+          LEFT: null,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        controls.enableRotate = this.viewMode === '3d';
+        break;
+      case 'pan':
+        controls.mouseButtons = {
+          LEFT: THREE.MOUSE.PAN,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        controls.enableRotate = false;
+        break;
+      case 'orbit':
+        controls.mouseButtons = {
+          LEFT: THREE.MOUSE.ROTATE,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        controls.enableRotate = true;
+        break;
+      case 'zoom':
+        controls.mouseButtons = {
+          LEFT: null,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        };
+        controls.enableRotate = this.viewMode === '3d';
+        break;
+    }
+    controls.update();
+  }
+
   handle3dView(){
     this.viewMode = '3d'
     // Fit to the model when one exists (prevents far-plane culling on large models)
@@ -170,6 +219,7 @@ export class Camera {
       RIGHT: THREE.MOUSE.PAN
     };
     this.cam.layers.enableAll()
+    this.applyNavTool(this.model.navTool)
   }
   handle2dView(){
     this.viewMode = '2d'
@@ -178,12 +228,14 @@ export class Camera {
     // Fit to the model when one exists (prevents far-plane culling on large models)
     if (!this.getModelBox().isEmpty()) {
       this.fitModelToView();
+      this.applyNavTool(this.model.navTool)
       return;
     }
     this.cam.position.set(0, 50, 0) 
     this.cam.lookAt(0, 0, 0);       
     this.controls.target.set(0, 0, 0);
     this.controls.update();
+    this.applyNavTool(this.model.navTool)
   }
 }
 
