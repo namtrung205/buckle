@@ -24,7 +24,7 @@ export class Camera {
     this.cam = this.orthoCam;
     this.cam.position.set(0, -10, 0);
     this.controls = new OrbitControls(this.cam, this.renderer.domElement);
-    this.controls.enableDamping = true;
+    this.controls.enableDamping = false;
     this.controls.enableRotate = false;
     this.controls.mouseButtons = {
       LEFT: null as any,
@@ -162,7 +162,7 @@ export class Camera {
     } else {
       this.cam.position.set(20, 30, 20);
     }
-    this.controls.enableDamping = true;
+    this.controls.enableDamping = false;
     this.controls.enableRotate = true;
     this.controls.mouseButtons = {
       LEFT: null as any,
