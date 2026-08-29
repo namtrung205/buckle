@@ -5,6 +5,7 @@ import {
   GridRowsProp,
 } from '@mui/x-data-grid';
 import { useModel } from '../../../../model/Context';
+import { UI } from '../ui';
 
 interface DisplacementData {
   id: number;
@@ -112,7 +113,7 @@ const Displacements = () => {
   ];
 
   return (
-    <Box sx={{ height: '420px', width: '100%', backgroundColor: '#e8e8e8' }}>
+    <Box sx={{ height: '420px', width: '100%' }}>
       <DataGrid
         rows={rows}
         columns={columns}
@@ -138,8 +139,9 @@ const Displacements = () => {
         sx={{
           height: '420px',
           width: '100%',
-          backgroundColor: '#ffffff',
-          border: '2px solid #b0b0b0',
+          backgroundColor: UI.panel,
+          border: `1px solid ${UI.border}`,
+          color: UI.text,
           '& .MuiDataGrid-virtualScroller': {
             overflowX: 'hidden !important',
           },
@@ -147,40 +149,45 @@ const Displacements = () => {
             overflowX: 'hidden !important',
           },
           '& .MuiDataGrid-main': {
-            backgroundColor: '#ffffff',
+            backgroundColor: UI.panel,
           },
           '& .MuiDataGrid-columnHeaders': {
-            backgroundColor: '#e8e8e8 !important',
-            borderBottom: '2px solid #b0b0b0',
-            color: '#000000',
-            fontSize: '0.75rem',
+            backgroundColor: `${UI.panel2} !important`,
+            borderBottom: `1px solid ${UI.border}`,
+            color: UI.text,
+            fontSize: '0.7rem',
             fontWeight: 700,
-            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            fontFamily: UI.sans,
           },
           '& .MuiDataGrid-columnHeader': {
-            backgroundColor: '#e8e8e8 !important',
-            borderRight: '1px solid #b0b0b0',
-            color: '#000000 !important',
+            backgroundColor: `${UI.panel2} !important`,
+            borderRight: `1px solid ${UI.border}`,
+            color: `${UI.text} !important`,
             '&:last-child': {
               borderRight: 'none',
             },
             '&:focus': {
-              backgroundColor: '#e8e8e8 !important',
+              backgroundColor: `${UI.panel2} !important`,
             },
             '&:focus-within': {
-              backgroundColor: '#e8e8e8 !important',
+              backgroundColor: `${UI.panel2} !important`,
             },
           },
+          '& .MuiDataGrid-columnSeparator': {
+            color: UI.border,
+          },
           '& .MuiDataGrid-columnHeaderTitle': {
-            color: '#000000 !important',
+            color: `${UI.text} !important`,
             fontWeight: 700,
           },
           '& .MuiDataGrid-cell': {
-            color: '#000000',
-            fontSize: '0.75rem',
-            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            borderBottom: '1px solid #c0c0c0',
-            borderRight: '1px solid #e0e0e0',
+            color: UI.text,
+            fontSize: '0.72rem',
+            fontFamily: UI.mono,
+            borderBottom: `1px solid ${UI.border}`,
+            borderRight: `1px solid ${UI.border}`,
             '&:focus': {
               outline: 'none',
             },
@@ -189,61 +196,61 @@ const Displacements = () => {
             },
           },
           '& .MuiDataGrid-row': {
-            backgroundColor: '#ffffff',
+            backgroundColor: UI.panel,
             '&:nth-of-type(even)': {
-              backgroundColor: '#f5f5f5',
+              backgroundColor: 'rgba(255, 255, 255, 0.02)',
             },
             '&:hover': {
-              backgroundColor: '#e0e0e0 !important',
+              backgroundColor: 'rgba(74, 144, 226, 0.10) !important',
             },
             '&.Mui-selected': {
-              backgroundColor: '#d0d0d0 !important',
+              backgroundColor: 'rgba(74, 144, 226, 0.18) !important',
               '&:hover': {
-                backgroundColor: '#d0d0d0 !important',
+                backgroundColor: 'rgba(74, 144, 226, 0.18) !important',
               },
             },
           },
           '& .MuiDataGrid-footerContainer': {
-            borderTop: '2px solid #b0b0b0',
-            backgroundColor: '#e8e8e8',
-            color: '#000000',
+            borderTop: `1px solid ${UI.border}`,
+            backgroundColor: UI.panel2,
+            color: UI.text,
             overflow: 'hidden',
             overflowX: 'hidden',
           },
           '& .MuiTablePagination-root': {
-            color: '#000000',
-            fontSize: '0.75rem',
+            color: UI.text,
+            fontSize: '0.72rem',
             fontWeight: 500,
-            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontFamily: UI.sans,
             overflow: 'hidden',
             overflowX: 'hidden',
             width: '100%',
           },
           '& .MuiIconButton-root': {
-            color: '#333333',
+            color: UI.dim,
             '&:hover': {
-              backgroundColor: 'rgba(0, 0, 0, 0.12)',
-              color: '#000000',
+              backgroundColor: 'rgba(74, 144, 226, 0.15)',
+              color: UI.text,
             },
           },
           '& .MuiDataGrid-selectedRowCount': {
-            color: '#000000',
+            color: UI.text,
             fontWeight: 500,
           },
           '& .MuiDataGrid-scrollbar': {
             '& .MuiDataGrid-scrollbar--vertical': {
               '& .MuiDataGrid-scrollbar--thumb': {
-                backgroundColor: '#c0c0c0',
+                backgroundColor: UI.borderDark,
                 '&:hover': {
-                  backgroundColor: '#999999',
+                  backgroundColor: UI.dim,
                 },
               },
             },
             '& .MuiDataGrid-scrollbar--horizontal': {
               '& .MuiDataGrid-scrollbar--thumb': {
-                backgroundColor: '#c0c0c0',
+                backgroundColor: UI.borderDark,
                 '&:hover': {
-                  backgroundColor: '#999999',
+                  backgroundColor: UI.dim,
                 },
               },
             },
@@ -253,13 +260,13 @@ const Displacements = () => {
             height: '12px',
           },
           '& ::-webkit-scrollbar-track': {
-            backgroundColor: '#e8e8e8',
+            backgroundColor: UI.panel2,
           },
           '& ::-webkit-scrollbar-thumb': {
-            backgroundColor: '#c0c0c0',
+            backgroundColor: UI.borderDark,
             borderRadius: '6px',
             '&:hover': {
-              backgroundColor: '#999999',
+              backgroundColor: UI.dim,
             },
           },
         }}

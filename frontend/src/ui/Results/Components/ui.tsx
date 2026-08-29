@@ -2,17 +2,17 @@ import { Box } from '@mui/material';
 import type { ReactNode } from 'react';
 
 /**
- * Shared UI tokens for the Results panels — adapted from the visual language of
- * "Sample Visualize result.html" (mono values, uppercase section titles, accent divider)
- * but kept on the app's light theme.
+ * Shared UI tokens for the Results panels — dark variant matching the Results dialog
+ * chrome (#2d2d2d), with the accent language of "Sample Visualize result.html"
+ * (mono values, uppercase section titles, accent divider).
  */
 export const UI = {
-  panel: '#f5f7fa',
-  panel2: '#eceff4',
-  border: '#d7dee7',
-  borderDark: '#c3ccd8',
-  text: '#1c2733',
-  dim: '#64748b',
+  panel: '#343b45',
+  panel2: '#3d4552',
+  border: '#4a5462',
+  borderDark: '#5a6472',
+  text: '#e8edf3',
+  dim: '#9aa7b5',
   accent: '#4a90e2',
   accentDark: '#3a7bc8',
   red: '#e5484d',

@@ -65,19 +65,21 @@ class Labeler {
       wrapper.appendChild(pContainer)
 
       if (type === 'effort') {
-        // Effort styling — pill tag with mono value, accent colour passed via backgroundColor
+        // Effort styling — compact solid pill: no border, accent background, white mono value
         const accent = label.backgroundColor || '#2f6fed';
-        pContainer.style.backgroundColor = '#ffffff';
-        pContainer.style.border = `1.5px solid ${accent}`;
+        pContainer.style.backgroundColor = accent;
+        pContainer.style.border = 'none';
         pContainer.style.borderRadius = '999px';
-        pContainer.style.padding = '2px 10px';
+        pContainer.style.padding = '1px 7px';
         pContainer.style.height = 'auto';
         pContainer.style.width = 'auto';
-        pContainer.style.minWidth = '64px';
-        pContainer.style.boxShadow = '0 1px 4px rgba(0,0,0,0.25)';
-        p.style.color = accent;
+        pContainer.style.minWidth = '0';
+        pContainer.style.boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
+        p.style.color = '#ffffff';
         p.style.fontFamily = '"JetBrains Mono", ui-monospace, "SF Mono", monospace';
-        p.style.fontSize = '11px';
+        p.style.fontSize = '10.5px';
+        p.style.fontWeight = '700';
+        p.style.lineHeight = '1.5';
         p.style.whiteSpace = 'nowrap';
       }
       else if (type === 'length') {

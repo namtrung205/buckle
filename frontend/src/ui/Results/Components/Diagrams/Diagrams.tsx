@@ -95,7 +95,7 @@ const Diagrams = observer(() => {
                 backgroundColor: UI.panel,
                 border: `1px solid ${UI.border}`,
                 maxHeight: 300,
-                '& .MuiMenuItem-root': { fontFamily: UI.mono, fontSize: '0.8rem' },
+                '& .MuiMenuItem-root': { fontFamily: UI.mono, fontSize: '0.8rem', color: UI.text },
               },
             },
           }}
