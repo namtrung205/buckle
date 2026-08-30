@@ -32,7 +32,11 @@
         "z": 0
       },
       "section": 2,
-      "vecxz": [0, 0, 1]
+      "vecxz": [
+        0,
+        1,
+        0
+      ]
     }
   ],
   "materials": [
@@ -62,12 +66,14 @@
     {
       "id": 1,
       "type": "linear",
-      "targets": [1],
+      "targets": [
+        1
+      ],
       "name": "UDL 10kN/m",
       "value": {
         "x": 0,
-        "y": -10,
-        "z": 0
+        "y": 0,
+        "z": -10
       }
     }
   ],
@@ -75,7 +81,9 @@
     {
       "id": 1,
       "type": "pinned",
-      "targets": [1],
+      "targets": [
+        1
+      ],
       "name": "Pinned Support",
       "dx": 1,
       "dy": 1,
@@ -87,7 +95,9 @@
     {
       "id": 2,
       "type": "roller",
-      "targets": [2],
+      "targets": [
+        2
+      ],
       "name": "Roller Support",
       "dx": 0,
       "dy": 1,

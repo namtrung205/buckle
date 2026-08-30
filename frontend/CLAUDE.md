@@ -85,7 +85,21 @@ The `src/types.ts` file defines all structural types:
 
 ## Coordinate System
 
-The application uses a right-handed coordinate system with Three.js conventions, but the viewport gizmo swaps Y and Z labels to match typical structural engineering conventions (Z-up). The `worldPlane` normal is `(0, 1, 0)` in Three.js space.
+Two coordinate frames are used, with a single conversion layer at the UI/JSON boundary:
+
+- **JSON / backend (OpenSees)**: right-handed, **Z-up** — X horizontal, Y horizontal,
+  Z vertical (Midas/SAP/ETABS convention). The backend maps these straight into
+  OpenSees with **no axis swap**.
+- **Three.js scene**: right-handed, **Y-up** (WebGL convention). The viewport
+  gizmo uses the standard Three.js axes.
+
+The conversion (`src/utils/axis.ts`) is a pure permutation without sign flip:
+
+- `jsonToThree(x, y, z) = (x, z, y)`
+- `threeToJson(v) = (v.x, v.z, v.y)`
+
+`src/helpers.ts` is the only place that converts on import/export. The `worldPlane`
+normal is `(0, 1, 0)` in Three.js space.
 
 ## State Management
 

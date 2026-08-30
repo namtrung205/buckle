@@ -7,55 +7,68 @@ import ElasticBeamColumnClass from './model/Elements/ElasticBeamColumn/ElasticBe
 import BoundaryCondition from './model/BoundaryCondition/BoundaryCondition';
 import Load from './model/Load/Load';
 import Model from './model/Model';
+import { threeToJson, jsonToThree } from './utils/axis';
 
 export const exportModelJson = (model: Model) => {
-  // Create JSON structure from the current model
+  // Create JSON structure from the current model.
+  // Node coordinates, member vecxz and load values live in the Three.js scene
+  // (Y-up), while the JSON/backend uses the Z-up engineering frame. Convert
+  // at this boundary only.
   const jsonData = {
-    nodes: model.nodes.map(node => ({
-      id: node.id,
-      name: node.name,
-      x: node.x,
-      y: node.y,
-      z: node.z
-    })),
+    nodes: model.nodes.map(node => {
+      const p = threeToJson(new THREE.Vector3(node.x, node.y, node.z));
+      return {
+        id: node.id,
+        name: node.name,
+        x: p[0],
+        y: p[1],
+        z: p[2]
+      };
+    }),
     materials: model.materials,
     sections: model.sections,
-    members: model.members.map(member => ({
-      id: member.id,
-      label: member.label,
-      nodei: {
-        id: member.nodes[0].id
-      },
-      nodej: {
-        id: member.nodes[1].id
-      },
-      section: member.section.id,
-      vecxz: [member.vecxz.x, member.vecxz.y, member.vecxz.z]
-    })),
+    members: model.members.map(member => {
+      const vecxz = threeToJson(member.vecxz);
+      return {
+        id: member.id,
+        label: member.label,
+        nodei: {
+          id: member.nodes[0].id
+        },
+        nodej: {
+          id: member.nodes[1].id
+        },
+        section: member.section.id,
+        vecxz: [vecxz[0], vecxz[1], vecxz[2]]
+      };
+    }),
     boundary_conditions: model.boundaryConditions.map(bc => ({
       id: bc.id,
       type: bc.type,
       targets: bc.targets,
       name: bc.name,
       dx: bc.dx,
-      dy: bc.dy,
-      dz: bc.dz,
+      dy: bc.dz,
+      dz: bc.dy,
       rx: bc.rx,
-      ry: bc.ry,
-      rz: bc.rz
+      ry: bc.rz,
+      rz: bc.ry
     })),
-    loads: model.loads.map(load => ({
-      id: load.id,
-      type: load.type,
-      targets: load.targets,
-      name: load.name,
-      value: {
-        x: load.value.x,
-        y: load.value.y,
-        z: load.value.z
-      },
-      magnitude: load.magnitude,
-    })),
+    loads: model.loads.map(load => {
+      const v = threeToJson(load.value);
+      return {
+        id: load.id,
+        type: load.type,
+        targets: load.targets,
+        name: load.name,
+        value: {
+          x: v[0],
+          y: v[1],
+          z: v[2]
+        },
+        magnitude: load.magnitude,
+      };
+    }),
     shells: model.shells.map(shell => ({
       id: shell.id,
       nodes: shell.nodes.map(node => node.id),
@@ -86,8 +99,9 @@ export const buildModelOnjson = async (model: Model , path : string) => {
     // 1. Create nodes first
     if (jsonData.nodes) {
       jsonData.nodes.forEach((nodeData: any) => {
+        const p = jsonToThree(nodeData.x, nodeData.y, nodeData.z)
         const node = new Node(
-          new THREE.Vector3(nodeData.x, nodeData.y, nodeData.z),
+          p,
           nodeData.name
         )
         // Use the original ID from the JSON
@@ -126,7 +140,7 @@ export const buildModelOnjson = async (model: Model , path : string) => {
           return
         }
         
-        const vecxz = new THREE.Vector3(
+        const vecxz = jsonToThree(
           memberData.vecxz[0],
           memberData.vecxz[1],
           memberData.vecxz[2]
@@ -141,6 +155,7 @@ export const buildModelOnjson = async (model: Model , path : string) => {
         member.id = memberData.id
         member.create()
         member.release = memberData.release || ""
+        member.vecxz = vecxz
         model.members.push(member)
       })
       console.log(`Created ${jsonData.members.length} members`)
@@ -155,11 +170,11 @@ export const buildModelOnjson = async (model: Model , path : string) => {
           targets: bcData.targets,
           name: bcData.name,
           dx: bcData.dx,
-          dy: bcData.dy,
-          dz: bcData.dz,
+          dy: bcData.dz,
+          dz: bcData.dy,
           rx: bcData.rx,
-          ry: bcData.ry,
-          rz: bcData.rz
+          ry: bcData.rz,
+          rz: bcData.ry
         } as any)
         boundaryCondition.createOrUpdate()
       })
@@ -174,7 +189,7 @@ export const buildModelOnjson = async (model: Model , path : string) => {
           type: loadData.type,
           targets: loadData.targets,
           name: loadData.name,
-          value: new THREE.Vector3(loadData.value.x, loadData.value.y, loadData.value.z),
+          value: jsonToThree(loadData.value.x, loadData.value.y, loadData.value.z),
         } as any)
         load.createOrUpdate()
       })

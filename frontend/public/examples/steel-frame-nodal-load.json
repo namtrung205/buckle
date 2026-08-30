@@ -17,22 +17,22 @@
     {
       "id": 3,
       "x": -3.5,
-      "y": 5.0,
-      "z": 0.0,
+      "y": 0.0,
+      "z": 5.0,
       "name": "Left Column Top"
     },
     {
       "id": 4,
       "x": 3.5,
-      "y": 5.0,
-      "z": 0.0,
+      "y": 0.0,
+      "z": 5.0,
       "name": "Right Column Top"
     },
     {
       "id": 5,
       "x": 0.0,
-      "y": 5.0,
-      "z": 0.0,
+      "y": 0.0,
+      "z": 5.0,
       "name": "Apex"
     }
   ],
@@ -49,8 +49,8 @@
       "nodej": {
         "id": 3,
         "x": -3.5,
-        "y": 5.0,
-        "z": 0.0
+        "y": 0.0,
+        "z": 5.0
       },
       "section": 1,
       "vecxz": [
@@ -71,8 +71,8 @@
       "nodej": {
         "id": 4,
         "x": 3.5,
-        "y": 5.0,
-        "z": 0.0
+        "y": 0.0,
+        "z": 5.0
       },
       "section": 1,
       "vecxz": [
@@ -83,46 +83,46 @@
     },
     {
       "id": 12,
-      "label": "Left Rafter (0\u00b0)",
+      "label": "Left Rafter (0°)",
       "nodei": {
         "id": 3,
         "x": -3.5,
-        "y": 5.0,
-        "z": 0.0
+        "y": 0.0,
+        "z": 5.0
       },
       "nodej": {
         "id": 5,
         "x": 0.0,
-        "y": 5.0,
-        "z": 0.0
+        "y": 0.0,
+        "z": 5.0
       },
       "section": 1,
       "vecxz": [
         0,
-        0,
-        1
+        1,
+        0
       ]
     },
     {
       "id": 13,
-      "label": "Right Rafter (0\u00b0)",
+      "label": "Right Rafter (0°)",
       "nodei": {
         "id": 4,
         "x": 3.5,
-        "y": 5.0,
-        "z": 0.0
+        "y": 0.0,
+        "z": 5.0
       },
       "nodej": {
         "id": 5,
         "x": 0.0,
-        "y": 5.0,
-        "z": 0.0
+        "y": 0.0,
+        "z": 5.0
       },
       "section": 1,
       "vecxz": [
         0,
-        0,
-        1
+        1,
+        0
       ]
     }
   ],
@@ -137,7 +137,12 @@
   "sections": [
     {
       "id": 1,
-      "name": "IPE330", "depth": 330, "width": 160, "tw": 7.5,  "tf": 11.5, "r": 18 ,
+      "name": "IPE330",
+      "depth": 330,
+      "width": 160,
+      "tw": 7.5,
+      "tf": 11.5,
+      "r": 18,
       "type": "I",
       "material": {
         "id": 1,
@@ -148,7 +153,12 @@
     },
     {
       "id": 2,
-      "name": "IPE450", "depth": 450, "width": 190, "tw": 9.4,  "tf": 14.6, "r": 21,
+      "name": "IPE450",
+      "depth": 450,
+      "width": 190,
+      "tw": 9.4,
+      "tf": 14.6,
+      "r": 21,
       "type": "I",
       "material": {
         "id": 1,
@@ -168,13 +178,13 @@
       "name": "Vertical load on apex node",
       "value": {
         "x": 0.0,
-        "y": -10.0,
-        "z": 0.0
+        "y": 0.0,
+        "z": -10.0
       },
       "direction": {
         "x": 0.0,
-        "y": 1.0,
-        "z": 0.0
+        "y": 0.0,
+        "z": 1.0
       }
     }
   ],
@@ -196,9 +206,9 @@
     }
   ],
   "metadata": {
-    "modelName": "V Frame with Columns (0\u00b0 Rafters)",
+    "modelName": "V Frame with Columns (0° Rafters)",
     "version": "1.1",
     "exportDate": "2025-08-30T07:41:05.233121Z",
-    "notes": "Apex y = 5.0 m (0\u00b0 rafters); span = 7 m; column height = 5 m. | Added horizontal 5 kN/m load on left column."
+    "notes": "Apex y = 5.0 m (0° rafters); span = 7 m; column height = 5 m. | Added horizontal 5 kN/m load on left column."
   }
 }

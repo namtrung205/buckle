@@ -381,7 +381,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             targets: roofShells.map(s => s.id),
             type: 'pressure',
             magnitude: 0,               // explicitly 0 → route via vector path in backend
-            value: new THREE.Vector3(0, -s, 0) // Downward in global Y (JSON Y = vertical)
+            value: new THREE.Vector3(0, -s, 0) // Downward in global -Y (Three.js Y-up = gravity)
         } as any).createOrUpdate();
     }
 

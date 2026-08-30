@@ -162,10 +162,10 @@ class BoundaryCondition {
     const hasXSpring = (this.dx !== 0 && this.dx !== 1) || (this.rx !== 0 && this.rx !== 1)
     if (hasXSpring) this.createSpring(node, new THREE.Vector3(1, 0, 0), 'x')
     
-    const hasYSpring = (this.dz !== 0 && this.dz !== 1) || (this.rz !== 0 && this.rz !== 1)
+    const hasYSpring = (this.dy !== 0 && this.dy !== 1) || (this.ry !== 0 && this.ry !== 1)
     if (hasYSpring) this.createSpring(node, new THREE.Vector3(0, 1, 0), 'y')
     
-    const hasZSpring = (this.dy !== 0 && this.dy !== 1) || (this.ry !== 0 && this.ry !== 1)
+    const hasZSpring = (this.dz !== 0 && this.dz !== 1) || (this.rz !== 0 && this.rz !== 1)
     if (hasZSpring) this.createSpring(node, new THREE.Vector3(0, 0, 1), 'z')
     
   }
