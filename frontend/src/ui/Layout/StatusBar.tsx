@@ -2,6 +2,18 @@ import { Box, Typography } from '@mui/material';
 import { useModel } from '../../model/Context';
 import { observer } from 'mobx-react-lite';
 
+/**
+ * Global unit system — the single place units are referenced.
+ * Every value displayed elsewhere (tags, legend, tables) is a plain number.
+ */
+const UNIT_ITEMS: { label: string; unit: string; diagramTypes?: string[] }[] = [
+  { label: 'Length', unit: 'm' },
+  { label: 'Force', unit: 'kN', diagramTypes: ['N', 'Vy', 'Vz', 'T'] },
+  { label: 'Moment', unit: 'kNm', diagramTypes: ['My', 'Mz'] },
+  { label: 'Displacement', unit: 'mm', diagramTypes: ['defl'] },
+  { label: 'Rotation', unit: 'rad' },
+];
+
 const StatusBar = () => {
   const model = useModel();
   
@@ -18,6 +30,9 @@ const StatusBar = () => {
     if (type === 'elasticBeamColumn') membersCount++;
   });
 
+  // Highlight the unit matching the active results diagram (if any)
+  const activeType: string | null = model?.postProcessing?.activeType ?? null;
+
   return (
     <Box
       sx={{
@@ -32,6 +47,24 @@ const StatusBar = () => {
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          <Typography sx={{ fontSize: '0.7rem', color: '#a0a0a0', fontWeight: 500 }}>
+            U N I T S :
+          </Typography>
+          {UNIT_ITEMS.map(item => {
+            const isActive = activeType != null && !!item.diagramTypes?.includes(activeType);
+            const color = isActive ? '#4fc3f7' : '#a0a0a0';
+            return (
+              <Typography
+                key={item.label}
+                sx={{ fontSize: '0.7rem', color, fontWeight: isActive ? 700 : 500, fontFamily: '"Inter", sans-serif' }}
+              >
+                {item.label}: <Box component="span" sx={{ color: isActive ? '#4fc3f7' : '#e0e0e0' }}>{item.unit}</Box>
+              </Typography>
+            );
+          })}
+        </Box>
+
         {(nodesCount > 0 || membersCount > 0) && (
           <>
             <Typography sx={{ fontSize: '0.7rem', color: '#a0a0a0', fontWeight: 500 }}>
