@@ -1,4 +1,5 @@
 import ElasticBeamColumn  from './Elements/ElasticBeamColumn'
+import Shell from './Elements/Shell/Shell'
 import Node from './Elements/Node/Node'
 import Camera from './Camera/Camera'
 import Selector from './Geometry/Helpers/Selector'
@@ -18,6 +19,7 @@ import BoundaryCondition from './BoundaryCondition/BoundaryCondition'
 import Load from './Load/Load'
 import WebSocketHandler  from './WebSocket/WebSocket'
 import CopyTool from './Geometry/Tools/Copy'
+import ZoomTool from './Geometry/Tools/Zoom'
 export {
   Node,
   Camera,
@@ -37,5 +39,7 @@ export {
   Load,
   BoundaryCondition,
   WebSocketHandler,
-  CopyTool
+  CopyTool,
+  ZoomTool,
+  Shell
 }

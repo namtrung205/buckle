@@ -4,7 +4,8 @@
   position: relative;
   overflow: hidden;
   margin: 0px;
-  background-color: white;
+  /* Matches the dark viewer background to avoid a white flash before the canvas mounts */
+  background-color: #212830;
 }
 
 .logo {

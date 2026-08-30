@@ -63,25 +63,53 @@ class Node {
   
   delete(){
     if(!this.model) return 
-    const index = this.model.nodes.findIndex(node => node.id === this.id)
 
+    // Invalidate results and clear post-processing as the model has changed
+    this.model.invalidateResults()
+
+    // 1. Find and remove connected members
+    const membersToDelete = this.model.members.filter(member => 
+      member.nodes.some(node => node.id === this.id)
+    )
+    membersToDelete.forEach(member => {
+      member.remove()
+    })
+
+    // 1.5. Find and remove connected shells
+    const shellsToDelete = this.model.shells.filter(shell => 
+      shell.nodes.some(node => node.id === this.id)
+    )
+    shellsToDelete.forEach(shell => {
+      shell.remove()
+    })
+
+    // 2. Remove boundary conditions attached to this node
+    const bcsToUpdate = this.model.boundaryConditions.filter(bc => bc.targets.includes(this.id))
+    bcsToUpdate.forEach(bc => {
+      if (bc.targets.length === 1 && bc.targets[0] === this.id) {
+        bc.delete()
+      } else {
+        bc.targets = bc.targets.filter(t => t !== this.id)
+        bc.createOrUpdate()
+      }
+    })
+
+    // 3. Remove nodal loads attached to this node
+    const loadsToUpdate = this.model.loads.filter(l => l.type === 'nodal' && l.targets.includes(this.id))
+    loadsToUpdate.forEach(l => {
+      if (l.targets.length === 1 && l.targets[0] === this.id) {
+        l.delete()
+      } else {
+        l.targets = l.targets.filter(t => t !== this.id)
+        l.createOrUpdate()
+      }
+    })
+
+    // 4. Finally delete this node
+    const index = this.model.nodes.findIndex(node => node.id === this.id)
     if(index !== -1 ) this.model.nodes.splice(index, 1)
 
     this.dispose()
-
-    const membersIdToDelete : number[]= []
-    this.model?.members.forEach(member => {
-      const index = member.nodes.findIndex(node => node.id === this.id )
-      if(index !== -1 ) membersIdToDelete.push(member.id)
-    })
-
-    if(membersIdToDelete.length > 1 ){
-      const membersToDelete = this.model.members.filter((member) => membersIdToDelete.includes(member.id))
-
-      membersToDelete.forEach(member => {
-        member.remove()
-      })
-    }
   }
 
   dispose(){

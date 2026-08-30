@@ -1,0 +1,62 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: buckle-backend
+    restart: always
+    environment:
+      - PORT=8000
+      - ENVIRONMENT=production
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=buckle_db
+    depends_on:
+      - mongodb
+    ports:
+      - "${BACKEND_PORT:-8001}:8000"
+    networks:
+      - buckle-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_BACKEND_SERVER=${VITE_BACKEND_SERVER}
+    container_name: buckle-frontend
+    restart: always
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    networks:
+      - buckle-network
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: buckle-tunnel
+    restart: always
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - buckle-network
+
+  mongodb:
+    image: mongo:latest
+    container_name: buckle-mongodb
+    restart: always
+    volumes:
+      - buckle-db-data:/data/db
+    networks:
+      - buckle-network
+
+networks:
+  buckle-network:
+    driver: bridge
+
+volumes:
+  buckle-db-data:

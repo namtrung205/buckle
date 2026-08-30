@@ -83,8 +83,9 @@ class ElasticBeamColumn {
       polygonOffsetUnits: 1
     });
 
+    // Dark blue-gray edges: read against both the light member body and the dark background
     const edgeMaterial = new THREE.LineBasicMaterial({
-      color: 0x000000,
+      color: 0x2e3944,
       linewidth: 1.5
     });
 
@@ -212,10 +213,22 @@ class ElasticBeamColumn {
   }
 
   remove() {
-    // Clean up all meshes and 3D objects
+    this.model.invalidateResults()
+    // 1. Clean up linear loads attached to this member
+    const loadsToUpdate = this.model.loads.filter(l => l.type === 'linear' && l.targets.includes(this.id))
+    loadsToUpdate.forEach(l => {
+      if (l.targets.length === 1 && l.targets[0] === this.id) {
+        l.delete()
+      } else {
+        l.targets = l.targets.filter(t => t !== this.id)
+        l.createOrUpdate()
+      }
+    })
+
+    // 2. Clean up all meshes and 3D objects
     this.dispose()
     
-    // Remove member from model
+    // 3. Remove member from model
     const index = this.model.members.findIndex(member => member.id === this.id)
     if (index !== -1) {
       this.model.members.splice(index, 1)
@@ -277,7 +290,7 @@ class ElasticBeamColumn {
     // with quadraticCurveTo/absarc segments. Omitted here for brevity.
 
     // Extrude along z (Three.js default). We’ll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
@@ -306,7 +319,7 @@ class ElasticBeamColumn {
     shape.holes.push(holePath);
 
     // Extrude along z (Three.js default). We'll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
@@ -332,7 +345,7 @@ class ElasticBeamColumn {
     shape.lineTo(-W, -H); // close the shape
 
     // Extrude along z (Three.js default). We'll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);

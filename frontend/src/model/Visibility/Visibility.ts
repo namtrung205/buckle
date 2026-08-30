@@ -11,6 +11,7 @@ class Visibility {
   members : boolean = true
   memberLabels : boolean = false
   sections : boolean = true
+  loads : boolean = true
   
   constructor(model : Model) {
     this.model = model
@@ -93,6 +94,18 @@ class Visibility {
     this.model.members.forEach((member) => {
       member.mesh.visible = visible
       member.edges.visible = visible
+    })
+  }
+
+  showOrHideLoads(visible : boolean){
+    this.loads = visible
+    this.model.loads.forEach((load) => {
+      load.mesh.forEach(m => m.visible = visible)
+      if (visible) {
+        load.createLabels()
+      } else {
+        load.removeAllLabels()
+      }
     })
   }
 

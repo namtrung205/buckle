@@ -1,0 +1,105 @@
+{
+  "nodes": [
+    {
+      "id": 1,
+      "x": 0,
+      "y": 0,
+      "z": 0,
+      "name": "Node 1 (Pinned)"
+    },
+    {
+      "id": 2,
+      "x": 6,
+      "y": 0,
+      "z": 0,
+      "name": "Node 2 (Roller)"
+    }
+  ],
+  "members": [
+    {
+      "id": 1,
+      "label": "Beam",
+      "nodei": {
+        "id": 1,
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "nodej": {
+        "id": 2,
+        "x": 6,
+        "y": 0,
+        "z": 0
+      },
+      "section": 2,
+      "vecxz": [0, 0, 1]
+    }
+  ],
+  "materials": [
+    {
+      "id": 1,
+      "name": "Steel",
+      "E": 210000000000,
+      "nu": 0.3
+    }
+  ],
+  "sections": [
+    {
+      "id": 2,
+      "name": "Rect 20x50cm",
+      "type": "Rectangular",
+      "width": 200,
+      "height": 500,
+      "material": {
+        "id": 1,
+        "name": "Steel",
+        "E": 210000000000,
+        "nu": 0.3
+      }
+    }
+  ],
+  "loads": [
+    {
+      "id": 1,
+      "type": "linear",
+      "targets": [1],
+      "name": "UDL 10kN/m",
+      "value": {
+        "x": 0,
+        "y": -10,
+        "z": 0
+      }
+    }
+  ],
+  "boundary_conditions": [
+    {
+      "id": 1,
+      "type": "pinned",
+      "targets": [1],
+      "name": "Pinned Support",
+      "dx": 1,
+      "dy": 1,
+      "dz": 1,
+      "rx": 1,
+      "ry": 0,
+      "rz": 0
+    },
+    {
+      "id": 2,
+      "type": "roller",
+      "targets": [2],
+      "name": "Roller Support",
+      "dx": 0,
+      "dy": 1,
+      "dz": 1,
+      "rx": 0,
+      "ry": 0,
+      "rz": 0
+    }
+  ],
+  "metadata": {
+    "exportDate": "2026-03-28T12:00:00.000Z",
+    "modelName": "Simply Supported Beam Sample",
+    "version": "1.0"
+  }
+}

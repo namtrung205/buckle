@@ -5,6 +5,9 @@ import {
   FolderOpen as OpenIcon,
   Help as HelpIcon,
   OpenWith as MoveIcon,
+  Lock as LockIcon,
+  LockOpen as LockOpenIcon,
+  WarningAmber as WarningAmberIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
@@ -23,10 +26,14 @@ import Node from '../../model/Elements/Node/Node';
 import ElasticBeamColumnClass from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
 import Load from '../../model/Load/Load';
+import Shell from '../../model/Elements/Shell/Shell';
 import * as THREE from 'three';
 import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
-import { useActiveDialog } from './hooks';
+import WarehouseWizard from '../Model/Generator/WarehouseWizard';
+import AnalysisProgress from '../Results/AnalysisProgress';
+import Dialog from '../../components/Dialog/Dialog';
+
 const { VITE_BACKEND_SERVER } = import.meta.env;
 const APP_VERSION = '0.0.2';
 
@@ -40,6 +47,7 @@ interface RibbonButtonProps {
   onClick: () => void;
   icon?: React.ReactElement;
   disabled?: boolean;
+  active?: boolean;
   iconImage?: {
     src: string;
     alt: string;
@@ -47,7 +55,7 @@ interface RibbonButtonProps {
   };
 }
 
-const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled }: RibbonButtonProps) => {
+const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled, active }: RibbonButtonProps) => {
   return (
     <Tooltip title={title}>
       <Button
@@ -62,8 +70,9 @@ const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled }: Ribb
           px: 1,
           color: '#e0e0e0',
           textTransform: 'none',
+          backgroundColor: active ? '#4a90e2' : 'transparent',
           '&:hover': {
-            bgcolor: '#3f3f3f',
+            bgcolor: active ? '#3a7bc8' : '#3f3f3f',
           },
         }}
       >
@@ -92,8 +101,35 @@ const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled }: Ribb
 
 const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   const model = useModel();
-  const { open, close, dialogs } = useActiveDialog();
+  
+  // model is null on the first render (Viewer provides it only after Model.getInstance() resolves)
+  const isLocked = model?.isLocked ?? false;
+  const hasResults = !!model?.output;
+  // Use model-level MobX state so ContextMenu and TopBar share the same dialog state
+  const open = (dialog: string) => {
+    const ok = model?.openDialog(dialog) ?? false;
+    if (!ok) {
+      toast.warning('Model is locked — unlock to edit', { position: 'bottom-right', autoClose: 2500 });
+    }
+  };
+  const close = () => model?.closeDialog();
+  const activeDialog = model?.activeDialog ?? null;
+  const dialogs = {
+    settings: activeDialog === 'settings',
+    results: activeDialog === 'results',
+    move: activeDialog === 'move',
+    draw: activeDialog === 'draw',
+    docs: activeDialog === 'docs',
+    sections: activeDialog === 'sections',
+    loads: activeDialog === 'loads',
+    supports: activeDialog === 'supports',
+    materials: activeDialog === 'materials',
+    copy: activeDialog === 'copy',
+    warehouseWizard: activeDialog === 'warehouseWizard',
+    analysisProgress: activeDialog === 'analysisProgress',
+  };
   const [tool, setTool] = useState('')
+  const [confirmUnlock, setConfirmUnlock] = useState(false)
   const toolName = model?.toolsController.getCurrentToolName()
   
   const handleToolChange = (newTool: string) => {
@@ -144,6 +180,10 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         return;
       }
       
+      model.console.clear();
+      model.console.setFinished(false);
+      open('analysisProgress');
+      
       const nodes = model.nodes.map(node => ({
         id: node.id,
         x: node.x,
@@ -172,7 +212,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
           x: load.value.x,
           y: load.value.y,
           z: load.value.z
-        }
+        },
+        magnitude: load.magnitude  // ✅ Required for wind (scalar) vs snow (vector) distinction
       }));
 
       const boundaryConditions = model.boundaryConditions.map(boundaryCondition => {
@@ -181,6 +222,15 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       });
 
       const materials = model.materials;
+
+      // ✅ Include shells so OpenSees can create shell elements and apply pressure loads
+      const shells = model.shells.map(shell => ({
+        id: shell.id,
+        nodes: shell.nodes.map(n => n.id),
+        thickness: shell.thickness,
+        material: shell.material
+      }));
+
       const data = {
         nodes,
         members,
@@ -188,11 +238,15 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         sections,
         loads,
         boundary_conditions: boundaryConditions,
+        shells,  // ✅ Shell elements for pressure load distribution
       };
       
       const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);
       console.log('RES', res);
       model.output = res.data.output;
+      model.lockResults();
+      
+      model.console.setFinished(true);
       
       // Show success toast
       toast.success('Analysis completed successfully!', {
@@ -205,6 +259,15 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       });
     } catch (error) {
       console.error('Analysis error:', error);
+      
+      model.console.create({
+        id: Date.now().toString(),
+        message: 'ERROR: Analysis failed',
+        timestamp: new Date(),
+        type: 'ERROR'
+      });
+      model.console.setFinished(true);
+      
       
       // Show error toast
       const errorMessage = axios.isAxiosError(error) && error.response?.data?.message 
@@ -252,7 +315,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         x: load.value.x,
         y: load.value.y,
         z: load.value.z
-      }
+      },
+      magnitude: load.magnitude
     }));
 
     const boundaryConditions = model.boundaryConditions.map(boundaryCondition => {
@@ -262,6 +326,15 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
 
     const materials = model.materials;
     
+    // Save shell elements
+    const shells = model.shells.map(shell => ({
+      id: shell.id,
+      name: shell.label,
+      nodes: shell.nodes.map(n => n.id),
+      thickness: shell.thickness,
+      material: shell.material
+    }));
+    
     const modelData = {
       nodes,
       members,
@@ -269,6 +342,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       sections,
       loads,
       boundary_conditions: boundaryConditions,
+      shells,
       metadata: {
         exportDate: new Date().toISOString(),
         modelName: 'FEM Model',
@@ -322,6 +396,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   };
 
   const buildOnJson = (jsonData: any) => {
+    model.isLocked = false; // loading a new model returns to editing mode
     try {
       console.log('Loading model from JSON...', jsonData);
       
@@ -406,6 +481,20 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         console.log(`Created ${jsonData.boundary_conditions.length} boundary conditions`);
       }
       
+      if (jsonData.shells) {
+        jsonData.shells.forEach((shellData: any) => {
+          const nodes = shellData.nodes.map((nodeId: number) => nodeMap.get(nodeId)).filter(Boolean);
+          if (nodes.length !== 4) {
+            console.warn(`Could not find all 4 nodes for shell ${shellData.id}`);
+            return;
+          }
+          const shell = new Shell(model, shellData.name || `Shell-${shellData.id}`, nodes, shellData.thickness || 0.005, shellData.material, shellData.id);
+          shell.create();
+          model.shells.push(shell);
+        });
+        console.log(`Created ${jsonData.shells.length} shells`);
+      }
+
       if (jsonData.loads) {
         jsonData.loads.forEach((loadData: any) => {
           // Handle both Vector3 object format and direct value format
@@ -418,13 +507,17 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             type: loadData.type,
             targets: loadData.targets,
             name: loadData.name,
-            value: value
+            value: value,
+            magnitude: loadData.magnitude
           } as any);
           load.createOrUpdate();
         });
         console.log(`Created ${jsonData.loads.length} loads`);
       }
       
+      // Fit the camera to the model so large models are not culled by the far plane
+      model.camera.fitModelToView();
+
       console.log('Model loaded successfully from JSON!');
       toast.success('Model loaded successfully!', {
         position: "bottom-right",
@@ -456,6 +549,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     // { title: 'Column', label: 'Column', iconImage: { src: '/column.png', alt: 'Column', size: 18 }, onClick: () => handleToolChange('column')},
     { title: 'Loads', label: 'Loads', iconImage: { src: '/loads.png', alt: 'Loads', size: 22 }, onClick: () => open('loads') },
     { title: 'Supports', label: 'Supports', iconImage: { src: '/supports.png', alt: 'Supports', size: 22 }, onClick: () => open('supports') },
+    { title: 'Warehouse', label: 'Warehouse', iconImage: { src: '/warehouse.png', alt: 'Generator', size: 18 }, onClick: () => open('warehouseWizard') },
     { title: 'Move', label: 'Move', icon: <MoveIcon sx={{ fontSize: 18 }} />, onClick: () => open('move') },
     // { title: 'Copy', label: 'Copy', iconImage: { src: '/copy.png', alt: 'Copy', size: 18 }, onClick: () => open('copy'), disabled : model?.selector.selected.length === 0 },
   ];
@@ -556,6 +650,14 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             Analysis
           </Typography>
           <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <RibbonButton
+              title={isLocked ? 'Unlock — clear results and edit the model' : 'Model unlocked'}
+              label={isLocked ? 'Locked' : 'Unlocked'}
+              onClick={() => { if (model && isLocked) setConfirmUnlock(true); }}
+              icon={isLocked ? <LockIcon sx={{ fontSize: 18 }} /> : <LockOpenIcon sx={{ fontSize: 18 }} />}
+              active={isLocked}
+              disabled={!isLocked && !hasResults}
+            />
             {analysisButtons.map((button, index) => (
               <RibbonButton
                 key={index}
@@ -594,6 +696,47 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       <AddOrEditLoad open={dialogs.loads} onClose={close} selectedLoad={null} />
       <AddOrEditBoundaryCondition open={dialogs.supports} onClose={close} selectedBoundaryCondition={null} />
       <Copy open={dialogs.copy} onClose={close} />
+      <WarehouseWizard open={dialogs.warehouseWizard} onClose={close} />
+      <AnalysisProgress 
+        open={dialogs.analysisProgress} 
+        onClose={close} 
+        onViewResults={() => open('results')} 
+      />
+
+      {/* Confirm dialog: unlock wipes all analysis results */}
+      <Dialog
+        open={confirmUnlock}
+        onClose={() => setConfirmUnlock(false)}
+        title="Unlock model"
+        maxWidth="xs"
+        actions={
+          <>
+            <Button onClick={() => setConfirmUnlock(false)} sx={{ color: '#b0b0b0' }}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirmUnlock(false);
+                model?.unlockResults();
+                toast.info('Results cleared — model unlocked', { position: 'bottom-right', autoClose: 3000 });
+              }}
+              variant="contained"
+              disableElevation
+              sx={{ backgroundColor: '#e5484d', '&:hover': { backgroundColor: '#c73a3f' } }}
+            >
+              Unlock &amp; Delete Results
+            </Button>
+          </>
+        }
+      >
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+          <WarningAmberIcon sx={{ color: '#f5a623', mt: 0.3 }} />
+          <Typography sx={{ color: '#e0e0e0', fontSize: '0.85rem', lineHeight: 1.55 }}>
+            Unlocking will delete all analysis results — diagrams, contour colours, min/max tags,
+            legend, summary and station data. You will need to re-run the analysis to view results again.
+          </Typography>
+        </Box>
+      </Dialog>
     </Box>
   );
 });

@@ -64,6 +64,8 @@ class RectangularSection:
         # Get torsion constant
         Jxx = self.section.get_j()
         
+        print(f"[SECTION] Rectangular {self.width}x{self.height}: A={A:.6e}, Iz={Iz:.6e}, Iy={Iy:.6e}, Jxx={Jxx:.6e}")
+        
         return A, Iz, Iy, Jxx
     
     def section_modulus(self):

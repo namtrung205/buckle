@@ -1,311 +1,245 @@
 import { useState } from 'react';
 import {
   Box,
-  Typography,
-  FormControlLabel,
   Button,
   Select,
   MenuItem,
   FormControl,
   Checkbox,
+  Slider,
+  Switch,
+  ToggleButton,
+  ToggleButtonGroup,
+  FormControlLabel,
+  Typography,
 } from '@mui/material';
+import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../../model/Context';
-import TextField from '../../../../components/TextField/TextField';
-interface DiagramsProps {
-  onApply: (option: string | null, scale: number, members: number[]) => void;
-}
+import Legend from '../Legend/Legend';
+import SummaryTable from '../SummaryTable/SummaryTable';
+import StationTable from '../StationTable/StationTable';
+import { DIAGRAM_TYPES, DEFLECTION_TYPE } from '../../../../model/PostProcessing/PostProcessing';
+import { UI, SecTitle } from '../ui';
 
-const Diagrams = () => {
+const TYPE_LABELS: Record<string, string> = {
+  N: 'N', Vy: 'Vy', Vz: 'Vz', T: 'T', My: 'My', Mz: 'Mz', defl: 'Chuyển vị',
+};
+
+const Diagrams = observer(() => {
   const model = useModel();
-  const [selectedOption, setSelectedOption] = useState<string | null>(null);
-  const [scale, setScale] = useState<string>("1");
+  const post = model.postProcessing;
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
+  const [scale, setScale] = useState<number>(1);
+  const [deflScale, setDeflScale] = useState<number>(100);
 
-  const handleChangeSelectedOption = (value: string) => {
-    setSelectedOption(selectedOption === value ? null : value);
-  };
+  const isDefl = post.activeType === DEFLECTION_TYPE;
 
-  const handleApply = () => {
-    if (!selectedOption)  {
-      model.postProcessing.dispose()
-      return
+  const applyView = (type: string | null) => {
+    if (!type) {
+      post.dispose();
+      return;
     }
-    model.postProcessing.showDiagram(selectedOption, Number(scale), selectedMembers)
+    if (type === DEFLECTION_TYPE) {
+      post.deflectionMultiplier = deflScale;
+      post.showContour = true;
+      post.showRibbon = true;
+      post.showDeflectedShape(selectedMembers);
+    } else {
+      post.scaleMultiplier = scale;
+      post.showDiagram(type, selectedMembers);
+    }
+    model.visibility.showOrHideLoads(false);
+    model.visibility.showOrHideSections(post.showContour);
   };
+
+  const renderActive = () => applyView(post.activeType);
+
+  const handleModeChange = (_event: any, value: string | null) => {
+    setSelectedMembers(selectedMembers); // keep selection across mode switches
+    applyView(value);
+  };
+
+  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine') =>
+    (event: any) => {
+      post[key] = event.target.checked;
+      if (key === 'showContour') model.visibility.showOrHideSections(post.showContour);
+      renderActive();
+    };
+
+  const switchSx = {
+    '& .MuiSwitch-switchBase': { color: UI.dim },
+    '& .MuiSwitch-switchBase.Mui-checked': { color: UI.accent },
+  } as const;
 
   return (
-    <>
-      <Box sx={{ mt: 2, mb: 2, width:'300px ' }}>
-        <Typography
-          variant="subtitle2"
-        >
-          Select members
-        </Typography>
-        <FormControl fullWidth size="small">
-          <Select
-            multiple
-            value={selectedMembers}
-            onChange={(e) => setSelectedMembers(e.target.value as number[])}
-            renderValue={(selected) => (selected as number[]).map(id => model.members.find(m => m.id === id)?.label || id).join(', ')}
-            sx={{
-              backgroundColor: '#ffffff',
-              fontSize: '0.875rem',
-              '& .MuiOutlinedInput-notchedOutline': {
-                borderColor: '#b0b0b0',
-              },
-              '&:hover .MuiOutlinedInput-notchedOutline': {
-                borderColor: '#999999',
-              },
-              '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                borderColor: '#666666',
-              },
-              '& .MuiSelect-select': {
-                py: 1,
-                fontSize: '0.875rem',
-                color: '#333',
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }
-            }}
-            MenuProps={{
-              PaperProps: {
-                sx: {
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #b0b0b0',
-                  maxHeight: 300,
-                  '& .MuiMenuItem-root': {
-                    backgroundColor: '#ffffff',
-                    color: '#333',
-                    fontSize: '0.875rem',
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                    '&:hover': {
-                      backgroundColor: 'rgba(0, 0, 0, 0.08)'
-                    },
-                    '&.Mui-selected': {
-                      backgroundColor: 'rgba(0, 0, 0, 0.12)',
-                      '&:hover': {
-                        backgroundColor: 'rgba(0, 0, 0, 0.12)'
-                      }
-                    }
-                  },
-                  '&::-webkit-scrollbar': {
-                    width: '12px',
-                  },
-                  '&::-webkit-scrollbar-track': {
-                    backgroundColor: '#e8e8e8',
-                  },
-                  '&::-webkit-scrollbar-thumb': {
-                    backgroundColor: '#c0c0c0',
-                    borderRadius: '6px',
-                    '&:hover': {
-                      backgroundColor: '#999999',
-                    },
-                  },
-                  scrollbarWidth: 'thin',
-                  scrollbarColor: '#c0c0c0 #e8e8e8',
-                }
-              }
-            }}
-          >
-            {model.members?.map((member) => (
-              <MenuItem key={member.id} value={member.id}>
-                <Checkbox checked={selectedMembers.indexOf(member.id) > -1} sx={{ color: '#e0e0e0', '&.Mui-checked': { color: '#4a90e2' } }} />
-                {member.label || `Member ${member.id}`}
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-      </Box>
-      <Box sx={{ display: 'flex', flexDirection: 'row', gap: 2, justifyContent:'space-between', marginTop:'1rem' }}>
-        <Box>
-          <Typography
-            variant="subtitle2"
-          >
-            Forces
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={selectedOption === 'N'}
-                  onChange={() => handleChangeSelectedOption('N')}
-                  size="small"
-                  sx={{
-                    color: '#e0e0e0',
-                    '&.Mui-checked': {
-                      color: '#4a90e2'
-                    }
-                  }}
-                />
-              }
-              label={
-                <Typography
-                  variant="body2"
-                >
-                  N (kN)
-                </Typography>
-              }
-              sx={{ margin: 0 }}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={selectedOption === 'Vy'}
-                  onChange={() => handleChangeSelectedOption('Vy')}
-                  size="small"
-                  sx={{
-                    color: '#e0e0e0',
-                    '&.Mui-checked': {
-                      color: '#4a90e2'
-                    }
-                  }}
-                />
-              }
-              label={
-                <Typography variant="body2">
-                  Vy (kN)
-                </Typography>
-              }
-              sx={{ margin: 0 }}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={selectedOption === 'Vz'}
-                  onChange={() => handleChangeSelectedOption('Vz')}
-                  size="small"
-                  sx={{
-                    color: '#e0e0e0',
-                    '&.Mui-checked': {
-                      color: '#4a90e2'
-                    }
-                  }}
-                />
-              }
-              label={
-                <Typography variant="body2">
-                  Vz (kN)
-                </Typography>
-              }
-              sx={{ margin: 0 }}
-            />
-          </Box>
-        </Box>
-        <Box>
-          <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            Moments
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={selectedOption === 'T'}
-                  onChange={() => handleChangeSelectedOption('T')}
-                  size="small"
-                  sx={{
-                    color: '#e0e0e0',
-                    '&.Mui-checked': {
-                      color: '#4a90e2'
-                    }
-                  }}
-                />
-              }
-              label={
-                <Typography variant="body2">
-                  T (kNm)
-                </Typography>
-              }
-              sx={{ margin: 0 }}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={selectedOption === 'My'}
-                  onChange={() => handleChangeSelectedOption('My')}
-                  size="small"
-                  sx={{
-                    color: '#e0e0e0',
-                    '&.Mui-checked': {
-                      color: '#4a90e2'
-                    }
-                  }}
-                />
-              }
-              label={
-                <Typography variant="body2">
-                  My (kNm)
-                </Typography>
-              }
-              sx={{ margin: 0 }}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={selectedOption === 'Mz'}
-                  onChange={() => handleChangeSelectedOption('Mz')}
-                  size="small"
-                  sx={{
-                    color: '#e0e0e0',
-                    '&.Mui-checked': {
-                      color: '#4a90e2'
-                    }
-                  }}
-                />
-              }
-              label={
-                <Typography variant="body2">
-                  Mz (kNm)
-                </Typography>
-              }
-              sx={{ margin: 0 }}
-            />
-          </Box>
-        </Box>
-      </Box>
-      <Box sx={{ mt: 3, mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1, ml: 'auto', width: '100px' }}>
-        <Typography variant="subtitle2">
-          Scale
-        </Typography>
-        <TextField
-          name='scale'
-          placeholder={'scale'}
-          value={scale}
-          onChange={(e: any) => {
-            setScale(e.target.value)
+    <Box sx={{ mt: 2, mb: 2, width: '340px' }}>
+      <SecTitle>Members</SecTitle>
+      <FormControl fullWidth size="small">
+        <Select
+          multiple
+          value={selectedMembers}
+          onChange={(e) => setSelectedMembers(e.target.value as number[])}
+          renderValue={(selected) => (selected as number[]).map(id => model.members.find((m: any) => m.id === id)?.label || id).join(', ')}
+          sx={{
+            backgroundColor: UI.panel,
+            fontSize: '0.8rem',
+            fontFamily: UI.mono,
+            '& .MuiOutlinedInput-notchedOutline': { borderColor: UI.borderDark },
+            '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: UI.dim },
+            '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: UI.accent },
+            '& .MuiSelect-select': { py: 0.9, color: UI.text },
           }}
-        />
-      </Box>
-      <Box sx={{ 
-        position: 'absolute', 
-        bottom: '15px',
-        left: 0,
-        right: 0,
-        display: 'flex', 
-        justifyContent: 'center',
-        px: 2
+          MenuProps={{
+            PaperProps: {
+              sx: {
+                backgroundColor: UI.panel,
+                border: `1px solid ${UI.border}`,
+                maxHeight: 300,
+                '& .MuiMenuItem-root': { fontFamily: UI.mono, fontSize: '0.8rem', color: UI.text },
+              },
+            },
+          }}
+        >
+          {model.members?.map((member: any) => (
+            <MenuItem key={member.id} value={member.id}>
+              <Checkbox checked={selectedMembers.indexOf(member.id) > -1} size="small" sx={{ color: UI.dim, '&.Mui-checked': { color: UI.accent } }} />
+              {member.label || `Member ${member.id}`}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
+
+      <Box sx={{ mt: 2 }}><SecTitle>Result type</SecTitle></Box>
+      <ToggleButtonGroup
+        value={post.activeType}
+        exclusive
+        onChange={handleModeChange}
+        size="small"
+        fullWidth
+        sx={{
+          mt: 0.5,
+          flexWrap: 'wrap',
+          gap: 0.5,
+          // MUI joins buttons by hiding the left border of every :not(:first-of-type)
+          // button — this breaks once the group wraps. Restore a complete edge
+          // on every button so no cell loses its border.
+          '& .MuiToggleButtonGroup-grouped': {
+            '&:not(:first-of-type)': {
+              marginLeft: 0,
+              borderLeft: `1px solid ${UI.borderDark}`,
+              borderTopLeftRadius: '6px',
+              borderBottomLeftRadius: '6px',
+            },
+            '&:not(:last-of-type)': {
+              borderTopRightRadius: '6px',
+              borderBottomRightRadius: '6px',
+            },
+            '&:first-of-type': {
+              borderTopLeftRadius: '6px',
+              borderBottomLeftRadius: '6px',
+            },
+            '&:last-of-type': {
+              borderTopRightRadius: '6px',
+              borderBottomRightRadius: '6px',
+            },
+          },
         }}
       >
+        {[...DIAGRAM_TYPES, DEFLECTION_TYPE].map((type) => (
+          <ToggleButton
+            key={type}
+            value={type}
+            sx={{
+              py: 0.5, px: 1, flex: '1 1 30%',
+              fontSize: '0.72rem', fontFamily: UI.mono, textTransform: 'none',
+              color: UI.text, borderColor: UI.borderDark,
+              '&:hover': { backgroundColor: UI.panel2 },
+              '&.Mui-selected': {
+                backgroundColor: UI.accent, color: '#fff',
+                '&:hover': { backgroundColor: UI.accentDark },
+              },
+            }}
+          >
+            {TYPE_LABELS[type]}
+          </ToggleButton>
+        ))}
+      </ToggleButtonGroup>
+
+      {!isDefl && post.activeType && (
+        <Box sx={{ mt: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontFamily: UI.mono, fontSize: '11px', color: UI.dim }}>Diagram scale</Typography>
+            <Typography sx={{ fontFamily: UI.mono, fontSize: '11px', fontWeight: 700, color: UI.text }}>×{scale.toFixed(1)}</Typography>
+          </Box>
+          <Slider
+            value={scale}
+            onChange={(_, v) => setScale(v as number)}
+            onChangeCommitted={renderActive}
+            min={0.2} max={3} step={0.1} size="small"
+            sx={{ color: UI.accent }}
+          />
+        </Box>
+      )}
+
+      {isDefl && (
+        <Box sx={{ mt: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Typography sx={{ fontFamily: UI.mono, fontSize: '11px', color: UI.dim }}>Exaggeration</Typography>
+            <Typography sx={{ fontFamily: UI.mono, fontSize: '11px', fontWeight: 700, color: UI.text }}>×{deflScale}</Typography>
+          </Box>
+          <Slider
+            value={deflScale}
+            onChange={(_, v) => setDeflScale(v as number)}
+            onChangeCommitted={renderActive}
+            min={10} max={1000} step={10} size="small"
+            sx={{ color: UI.accent }}
+          />
+        </Box>
+      )}
+
+      {post.activeType && (
+        <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+          {!isDefl && (
+            <>
+              <FormControlLabel control={<Switch size="small" checked={post.showRibbon} onChange={handleToggle('showRibbon')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Filled ribbon</Typography>} sx={{ margin: 0 }} />
+              <FormControlLabel control={<Switch size="small" checked={post.showHatch} onChange={handleToggle('showHatch')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Hatch lines</Typography>} sx={{ margin: 0 }} />
+            </>
+          )}
+          <FormControlLabel control={<Switch size="small" checked={post.showContour} onChange={handleToggle('showContour')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Contour trên thanh</Typography>} sx={{ margin: 0 }} />
+          <FormControlLabel control={<Switch size="small" checked={post.showLabels} onChange={handleToggle('showLabels')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Max / Min tags</Typography>} sx={{ margin: 0 }} />
+          {isDefl && (
+            <FormControlLabel control={<Switch size="small" checked={post.showRefLine} onChange={handleToggle('showRefLine')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Reference line (dashed)</Typography>} sx={{ margin: 0 }} />
+          )}
+        </Box>
+      )}
+
+      <Legend />
+
+      {post.activeType && (
+        <Box sx={{ mt: 1.5 }}>
+          <SummaryTable />
+          <StationTable memberIds={selectedMembers} />
+        </Box>
+      )}
+
+      <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
         <Button
           variant="contained"
           size="small"
-          onClick={handleApply}
+          onClick={renderActive}
           sx={{
-            backgroundColor: '#ffffff',
-            color: '#333',
-            border: '1px solid #b0b0b0',
-            '&:hover': {
-              backgroundColor: '#f5f5f5',
-              border: '1px solid #999999',
-            },
-            textTransform: 'none',
-            fontSize: '0.8rem',
-            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontFamily: UI.mono, textTransform: 'none', px: 3,
+            backgroundColor: UI.panel, color: UI.text,
+            border: `1px solid ${UI.borderDark}`,
+            boxShadow: 'none',
+            '&:hover': { backgroundColor: UI.panel2, boxShadow: 'none' },
           }}
         >
           Apply
         </Button>
       </Box>
-    </>
+    </Box>
   );
-};
+});
 
 export default Diagrams;

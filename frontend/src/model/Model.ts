@@ -13,16 +13,19 @@ import {
   ElasticBeamColumn,
   Console,
   Visibility,
-  WebSocketHandler
+  WebSocketHandler,
+  Shell
 } from "./index";
 import { makeAutoObservable } from "mobx";
-import { Material, mockMaterials, mockSections, Section } from "../types";
+import { Material, mockMaterials, mockSections, Section, NavTool } from "../types";
 import { GUI } from "lil-gui";
 import { Line3D, Member, Level, mockLevels } from "../types";
 import BoundaryCondition from "./BoundaryCondition/BoundaryCondition";
 import Load from "./Load/Load";
 import { buildModelOnjson } from "../helpers";
 import ToolsController from "./Geometry/Tools/Controller";
+import ZoomTool from "./Geometry/Tools/Zoom";
+import { preloadToolCursors, toolCursor } from "./Utils/CursorIcons";
 export type PointerCoords = {
   x: number;
   y: number;
@@ -49,6 +52,7 @@ export class Model {
   // axes : Axes
   nodes : Node[]
   members : Member[]
+  shells : Shell[] = []
   boundaryConditions : BoundaryCondition[] = []
   // lines : Line3D[]
   gridHelper : GridHelper
@@ -65,7 +69,132 @@ export class Model {
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
   visibility : Visibility
-  ws : WebSocketHandler = new WebSocketHandler('ws://localhost:8000/ws/1', this)
+  contextMenu = {
+    visible: false,
+    x: 0,
+    y: 0,
+  }
+  activeDialog: string | null = null;
+  // Results lock: true after a successful analysis — model editing is disabled until unlocked
+  isLocked: boolean = false;
+  // Active bottom-bar navigation tool (select / zoom / pan / orbit)
+  navTool: NavTool = 'select';
+  // Zoom navigation tool handling fit / window / drag modes
+  zoomTool: ZoomTool;
+  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard'];
+  ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
+
+  closeContextMenu = () => {
+    this.contextMenu.visible = false;
+  }
+
+  openContextMenu = (x: number, y: number) => {
+    this.contextMenu = { visible: true, x, y };
+  }
+
+  openDialog = (dialog: string): boolean => {
+    // While results are locked, editing dialogs are blocked (view dialogs stay available)
+    if (this.isLocked && this.editingDialogs.includes(dialog)) {
+      return false;
+    }
+    this.activeDialog = dialog;
+    return true;
+  }
+
+  /** Lock the model after a successful analysis: results become active, editing is disabled. */
+  lockResults = () => {
+    this.isLocked = true;
+  }
+
+  /** Unlock: wipe all computed results and return to model editing mode. */
+  unlockResults = () => {
+    this.isLocked = false;
+    this.invalidateResults();
+    this.selector.clear();
+    this.toolsController.deactivate();
+    if (this.activeDialog === 'results') this.closeDialog();
+  }
+
+  closeDialog = () => {
+    const currentTool = this.toolsController.getCurrentTool();
+    currentTool?.stop();
+    this.activeDialog = null;
+  }
+
+  /**
+   * Switch the active bottom-bar navigation tool. Applying the tool configuration
+   * is delegated to applyNavTool so the constructor can share the same path.
+   */
+  setNavTool = (tool: NavTool) => {
+    if (this.navTool === tool) return;
+    this.navTool = tool;
+    this.applyNavTool();
+  }
+
+  /**
+   * Sync OrbitControls bindings + the Selector with the active nav tool:
+   * - select: picking + rubber-band selection (Selector enabled)
+   * - pan / orbit: camera owns the left button (Selector disabled)
+   * - zoom  : left drag is handled by the ZoomTool (Selector disabled)
+   */
+  applyNavTool = () => {
+    const tool = this.navTool;
+    const camera = this.camera;
+
+    // Stop any active drawing/copy tool so it does not fight the camera gesture
+    this.toolsController.deactivate();
+
+    if (tool === 'orbit' && camera.viewMode === '2d') {
+      camera.handle3dView();
+    }
+    camera.applyNavTool(tool);
+
+    if (tool === 'select') {
+      this.zoomTool.stop();
+      this.selector.enable();
+    } else if (tool === 'zoom') {
+      this.selector.disable();
+      this.zoomTool.start();
+    } else {
+      // pan / orbit
+      this.zoomTool.stop();
+      this.selector.disable();
+    }
+
+    this.applyCursor();
+  }
+
+  /**
+   * Reflect the active navigation tool on the canvas cursor:
+   * - select : default arrow (used for picking)
+   * - pan    : the toolbar's PanTool icon (grab while the cursor rasterises)
+   * - orbit  : the toolbar's ThreeDRotation icon (grab while it rasterises)
+   * - zoom   : depends on the zoom sub-mode (window = crosshair, drag = ns-resize)
+   */
+  applyCursor = () => {
+    const tool = this.navTool;
+    const domElement = this.renderer?.domElement;
+    if (!domElement) return;
+
+    let cursor = 'default';
+    switch (tool) {
+      case 'select':
+        cursor = 'default';
+        break;
+      case 'pan':
+        cursor = toolCursor('pan', 'grab');
+        break;
+      case 'orbit':
+        cursor = toolCursor('orbit', 'grab');
+        break;
+      case 'zoom':
+        if (this.zoomTool?.mode === 'window') cursor = 'crosshair';
+        else if (this.zoomTool?.mode === 'drag') cursor = 'ns-resize';
+        else cursor = 'default';
+        break;
+    }
+    domElement.style.cursor = cursor;
+  }
 
   static getInstance(): Model {
     if (Model.instance === null) {
@@ -101,6 +230,8 @@ export class Model {
     this.setupEvent = true;
     
     this.selector = new Selector(this); 
+    this.toolsController.canActivate = () => !this.isLocked;
+    this.zoomTool = new ZoomTool(this);
     
     // this.axes = new Axes(this)  
     this.canvas = document.querySelector('canvas') as HTMLCanvasElement
@@ -112,29 +243,28 @@ export class Model {
       this.camera.cam, 
       this.renderer, 
       { 
-        // Position options: "top-left" | "top-right" | "bottom-left" | "bottom-right"
-        placement: "bottom-left", 
-        size: 100, // Size of the gizmo in pixels
+        type: "cube", // Autodesk ViewCube style — clickable faces / edges / corners
+        placement: "bottom-right", 
+        size: 100,
         offset :{
-          left:300,
-          bottom:50,
+          right: 60,
+          bottom: 80,
         },
-        y: {
-          label: 'Z',
-        },
-        z: {
-          label: 'Y',
-        }
       }
     )
     this.gizmo.attachControls(this.camera.controls);
     this.nodes = []
     this.members = []
+    this.shells = []
     this.layer = 0
     this.visibility = new Visibility(this)
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
     makeAutoObservable(this)
+
+    // Rasterise the pan / orbit toolbar icons into custom PNG cursors up front,
+    // then re-apply so an already-active tool picks them up as soon as ready.
+    void preloadToolCursors().then(() => this.applyCursor());
     
   }
 
@@ -144,7 +274,10 @@ export class Model {
       this.container = document.getElementById('app-container') as HTMLDivElement
       this.renderer.setSize( window.innerWidth, window.innerHeight );
       this.container?.appendChild( this.renderer.domElement )
-      this.scene.background = new THREE.Color('white');
+      this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+      // AutoCAD-style dark blue-black viewport background
+      this.scene.background = new THREE.Color('#212830');
+      await this.ws.connect();
       if (this.ws.isConnected())  console.log('Connected!');
       
     } catch (error) {
@@ -162,6 +295,7 @@ export class Model {
   }
 
   private update = () => {
+    this.camera.updateDepthRange(); // keep near/far in sync with model growth (prevents culling)
     this.camera.cam.updateProjectionMatrix();
     this.renderer.render(this.scene, this.camera.cam);
     this.camera.controls.update()
@@ -197,10 +331,11 @@ export class Model {
       removeObjWithChildren(obj)
     });
     this.container.removeChild(this.renderer.domElement)
-    this.selector.dipose()
+    this.selector.dispose()
     this.labeler.dispose()
     this.gizmo.dispose()
     this.removeListeners()
+    this.zoomTool.stop()
     this.toolsController.dispose()
     // Disconnect when done
     this.ws.disconnect();
@@ -234,6 +369,11 @@ export class Model {
     })
     this.members = []
     
+    // Dispose of all shells
+    const shells = [...this.shells]
+    shells.forEach(shell => shell.remove())
+    this.shells = []
+    
     // Dispose of all nodes
     // Create a copy of the array to avoid issues when dispose() modifies the original array
     const nodes = [...this.nodes]
@@ -244,10 +384,14 @@ export class Model {
     this.postProcessing.dispose()
     
     // Clear labeler
-    this.labeler.deleteAll('load')
     this.labeler.deleteAll('effort')
     
     console.log('Model cleared successfully')
+  }
+
+  public invalidateResults = () => {
+    this.postProcessing.dispose()
+    this.output = null
   }
 
   updatePointerCoords = (event : MouseEvent) =>

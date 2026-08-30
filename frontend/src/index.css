@@ -66,3 +66,18 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+
+.selectBox {
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background-color: rgba(65, 137, 230, 0.2);
+  position: fixed;
+  pointer-events: none;
+}
+
+.zoomBox {
+  border: 1px solid rgba(74, 144, 226, 0.9);
+  background-color: rgba(74, 144, 226, 0.15);
+  position: fixed;
+  pointer-events: none;
+  z-index: 1000;
+}

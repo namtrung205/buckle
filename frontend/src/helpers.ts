@@ -54,11 +54,13 @@ export const exportModelJson = (model: Model) => {
         y: load.value.y,
         z: load.value.z
       },
-      // direction: {
-      //   x: load.direction.x,
-      //   y: load.direction.y,
-      //   z: load.direction.z
-      // }
+      magnitude: load.magnitude,
+    })),
+    shells: model.shells.map(shell => ({
+      id: shell.id,
+      nodes: shell.nodes.map(node => node.id),
+      thickness: shell.thickness,
+      material: shell.material
     }))
   };
 
@@ -179,6 +181,9 @@ export const buildModelOnjson = async (model: Model , path : string) => {
       console.log(`Created ${jsonData.loads.length} loads`)
     }
     
+    // Fit the camera to the model so large models are not culled by the far plane
+    model.camera.fitModelToView()
+
     console.log('Model loaded successfully from JSON!')
     // alert('Model loaded successfully!')
     

@@ -13,6 +13,8 @@ import random
 from .helpers import compute_section_properties
 import numpy as np
 import json
+import threading
+import time
 from .settings import *
 # Export public API
 __all__ = ['run_analysis']
@@ -51,10 +53,25 @@ def print_model_for_inspection(model: dict):
     print(json.dumps(model.get('loads', []), indent=2, default=str))
     print("\n" + "="*80 + "\n")
 
-def run_analysis(model: dict):
+
+# Global lock to ensure only one analysis runs at a time (OpenSees is a singleton)
+analysis_lock = threading.Lock()
+
+def run_analysis(model: dict, log_callback=None):
+  # Use acquire with a timeout of 60 seconds to prevent total hang
+  
+  def _log(msg: str):
+      print(msg, flush=True)
+      if log_callback:
+          log_callback(msg)
+          
+  acquired = analysis_lock.acquire(timeout=60)
+  if not acquired:
+      raise HTTPException(status_code=503, detail="Analysis engine is busy. Please try again in a few seconds.")
+      
   try:
+    start_total_time = time.time()
     global output
-    output = {}
     output = {}
     output['nodes'] = []
     output['members'] = []
@@ -62,63 +79,79 @@ def run_analysis(model: dict):
     members = model['members']
     # materials = model['materials']
     sections = model['sections']
+    shells = model.get('shells', [])
     loads = model['loads']
     boundary_conditions = model['boundary_conditions']
     
-    # print("[ANALYSIS] Starting structural analysis...", model)
-    
+    _log(f"\n[ANALYSIS] Starting structural analysis...")
+    _log(f"[ANALYSIS] Input Summary: {len(nodes)} nodes, {len(members)} members, {len(shells)} shells, {len(sections)} sections, {len(loads)} loads, {len(boundary_conditions)} boundary conditions")
     # Initialize
+    t0 = time.time()
     init()
-    print(f"[ANALYSIS] ✓ Model initialized (3D, 6 DOF per node)")
+    _log(f"[ANALYSIS] ✓ Model initialized (3D, 6 DOF per node) in {time.time()-t0:.3f}s")
     
     # Create nodes
+    t0 = time.time()
     create_nodes(nodes)
-    print(f"[ANALYSIS] ✓ Created {len(nodes)} nodes")
+    _log(f"[ANALYSIS] ✓ Created {len(nodes)} nodes in {time.time()-t0:.3f}s")
 
     # Create transformation for beam-column elements
+    t0 = time.time()
     create_geometric_transformation(members)
-    print(f"[ANALYSIS] ✓ Created geometric transformations for {len(members)} members")
+    _log(f"[ANALYSIS] ✓ Created geometric transformations for {len(members)} members in {time.time()-t0:.3f}s")
 
     # Create sections 
+    t0 = time.time()
     create_sections(sections)
-    print(f"[ANALYSIS] ✓ Created {len(sections)} sections")
+    _log(f"[ANALYSIS] ✓ Created {len(sections)} sections in {time.time()-t0:.3f}s")
     
     # Create elements
+    t0 = time.time()
     create_members(members)
-    print(f"[ANALYSIS] ✓ Created elements (discretized members)")
+    create_shells(shells)
+    _log(f"[ANALYSIS] ✓ Created elements (members + {len(shells)} shells) in {time.time()-t0:.3f}s")
 
     # Apply boundary conditions
+    t0 = time.time()
     apply_boundary_conditions(boundary_conditions)
-    print(f"[ANALYSIS] ✓ Applied boundary conditions to {len(boundary_conditions)} constraint(s)")
+    _log(f"[ANALYSIS] ✓ Applied boundary conditions to {len(boundary_conditions)} constraint(s) in {time.time()-t0:.3f}s")
     
     # Apply loads
+    t0 = time.time()
     apply_loads(loads)
-    print(f"[ANALYSIS] ✓ Applied {len(loads)} load case(s)")
+    _log(f"[ANALYSIS] ✓ Applied {len(loads)} load case(s) in {time.time()-t0:.3f}s")
     
     # Run the analysis
-    print("[ANALYSIS] Starting static analysis...")
-    run_static_analysis(model)
-    print("[ANALYSIS] ✓ Static analysis completed successfully")
+    _log("[ANALYSIS] Starting static analysis...")
+    t0 = time.time()
+    run_static_analysis(model, _log)
+    _log(f"[ANALYSIS] ✓ Static analysis completed in {time.time()-t0:.3f}s")
 
     # Extract results
-    extract_results()
-    print("[ANALYSIS] ✓ Results extracted")
+    t0 = time.time()
+    extract_results(_log)
+    _log(f"[ANALYSIS] ✓ Results extracted in {time.time()-t0:.3f}s")
     # print('output: ', output)
     
     # Clean up
+    t0 = time.time()
     ops.wipe()
-    print("[ANALYSIS] ✓ Model cleaned up")
+    _log(f"[ANALYSIS] ✓ Model cleaned up in {time.time()-t0:.3f}s")
     
+    _log(f"[ANALYSIS] ✓ Total analysis time: {time.time() - start_total_time:.3f}s")
     return output
 
   except Exception as e:
       error_msg = str(e)
       # Check if this is a DPBSV error
-      if "DPBSV" in error_msg or "illegal value" in error_msg.lower():
-          print("\n!!! DPBSV ERROR DETECTED - Printing model for inspection !!!")
+      if "DPBSV" in error_msg or "illegal value" in error_msg.lower() or "singular" in error_msg.lower():
+          print("\n!!! SINGULARITY OR DPBSV ERROR DETECTED - Printing model for inspection !!!")
           print_model_for_inspection(model)
       print('ERROR: ', e)
       raise HTTPException(status_code=500, detail=str(e))
+  finally:
+      # Always release the lock
+      analysis_lock.release()
 
 def init():
     """Initializes a new OpenSees 3D model."""
@@ -171,14 +204,22 @@ def calculate_vecxz(member):
     cross_length = np.linalg.norm(cross_vec)
 
     # Determine local z-axis based on member orientation
-    if cross_length < 1e-6:  # Vertical member
-        vecxz = np.array([1, 0, 0])
-    else:  # Horizontal member
-        vecxz = np.array([0, 0, 1])
+    if cross_length < 1e-6:  # Element is parallel to the "up" vector (JSON Y)
+        # Try local X-axis (JSON X) as fallback for vertical members
+        fallback_up = np.array([1, 0, 0])
+        cross_fallback = np.cross(fallback_up, local_vecx)
+        if np.linalg.norm(cross_fallback) < 1e-6:
+            # If still parallel, use JSON Z as fallback
+            vecxz_json = np.array([0, 0, 1])
+        else:
+            vecxz_json = fallback_up
+    else:  # Normal horizontal or inclined member
+        vecxz_json = np.array([0, 0, 1])
         
-    vec = vecxz.tolist()
-    member['vecxz'] = vec
-    return vec
+    # Swap coordinates for OpenSees: JSON (vx, vy, vz) -> OpenSees (vx, vz, vy)
+    vecxz_ops = [float(vecxz_json[0]), float(vecxz_json[2]), float(vecxz_json[1])]
+    member['vecxz'] = vecxz_ops
+    return vecxz_ops
 
 def create_geometric_transformation(members):
     """Creates a linear geometric transformation for beam-column elements."""
@@ -215,12 +256,14 @@ def create_nodes(nodes):
 def get_release(release_type):
   if not release_type:
     return None, None
+  # Usually 'pinned' means releasing bending moments (ry, rz), NOT torsion (rx)!
+  # Releasing rx at both ends would create a singular matrix (unrestrained spin)
   if release_type == 'fixed-pinned':
-    return None, {'rx': 0, 'ry': 0, 'rz': 0}
+    return None, {'ry': 0, 'rz': 0}
   elif release_type == 'pinned-fixed':
-    return {'rx': 0, 'ry': 0, 'rz': 0}, None
+    return {'ry': 0, 'rz': 0}, None
   elif release_type == 'pinned-pinned':
-    return {'rx': 0, 'ry': 0, 'rz': 0}, {'rx': 0, 'ry': 0, 'rz': 0}
+    return {'ry': 0, 'rz': 0}, {'ry': 0, 'rz': 0}
   else:
     return None, None
 
@@ -245,8 +288,8 @@ def get_release_node(member, node_id, releases):
     constrained_dofs = []
     materials = []
     
-    # Stiffness for released DOFs (very low)
-    k_release = 1e-12
+    # Stiffness for released DOFs (small enough to act as a hinge, but large enough for double precision)
+    k_release = 1e-4
     
     # DOF mapping
     dof_mapping = {
@@ -371,23 +414,23 @@ def mesh_member(member):
         output['nodes'].append({
             'id': node_id,
             'x': x_coord, 
-            'y': z_coord,
-            'z': y_coord
+            'y': y_coord,
+            'z': z_coord
         })
         
         new_nodes.append({
           'id': node_id,
           'x': x_coord,
-          'y': z_coord,
-          'z': y_coord
+          'y': y_coord,
+          'z': z_coord
         })
     
     # Append the provided ending node
     new_nodes.append({
       'id': nj['id'],
       'x': nj['x'],
-      'y': nj['z'],
-      'z': nj['y']
+      'y': nj['y'],
+      'z': nj['z']
     })
     
     # Create elements between consecutive nodes
@@ -403,6 +446,34 @@ def mesh_member(member):
       })
 
     return new_nodes, new_members, L
+
+def create_shells(shells):
+  """Creates ShellMITC4 elements in the OpenSees model."""
+  for shell in shells:
+    shell_id = shell['id']
+    nodes = shell['nodes']
+    thickness = shell.get('thickness', 0.005) # Default 5mm
+    material = shell.get('material', {'E': 2.1e11, 'nu': 0.3})
+    
+    # Skip degenerate shells (duplicate nodes — e.g. triangular gable passed as quad)
+    if len(set(nodes)) < len(nodes):
+        print(f"Warning: Shell {shell_id} has duplicate node IDs {nodes} — skipping degenerate element")
+        continue
+    
+    # Skip any shell that is not exactly 4 unique nodes
+    if len(nodes) != 4:
+        print(f"Warning: Shell {shell_id} has {len(nodes)} nodes (expected 4 for ShellMITC4). Skipping.")
+        continue
+    
+    # Create a unique section for this shell (simpler for now)
+    # OpenSees section 'ElasticMembranePlateSection' tag E nu h rho
+    section_tag = int(random.random() * 0x7FFFFFFF)
+    E = material.get('E', 2.1e11)
+    nu = material.get('nu', 0.3)
+    rho = material.get('rho', 7850.0)
+    
+    ops.section('ElasticMembranePlateSection', section_tag, E, nu, thickness, rho)
+    ops.element('ShellMITC4', shell_id, *nodes, section_tag)
 
 def apply_boundary_conditions(boundary_conditions):
   """Applies boundary conditions to the model."""
@@ -444,19 +515,56 @@ def apply_boundary_conditions(boundary_conditions):
         
         # Fix the support node (ground)
         ops.fix(support_node, 1, 1, 1, 1, 1, 1)
-      else:      
-        ops.fix(target, dx, dy, dz, rx, ry, rz)
-      
+    else:      
+        # Swap fixity: OpenSees coord 2 = JSON Z, OpenSees coord 3 = JSON Y
+        # JSON (dx, dy, dz, rx, ry, rz) -> OpenSees (dx, dz, dy, rx, rz, ry)
+        ops.fix(target, dx, dz, dy, rx, rz, ry)
+
+def calculate_quad_area_and_normal(node_coords):
+    """
+    Computes area and normal vector of a 4-node quad by splitting it into 2 triangles.
+    node_coords: [[x1,z1,y1], [x2,z2,y2], [x3,z3,y3], [x4,z4,y4]] (OpenSees coords)
+    Returns: (area, normal_vector)
+    """
+    pts = [np.array(c) for c in node_coords]
+    # Triangle 1: 0-1-2
+    v1 = pts[1] - pts[0]
+    v2 = pts[2] - pts[0]
+    cp1 = np.cross(v1, v2)
+    a1 = 0.5 * np.linalg.norm(cp1)
+    
+    # Triangle 2: 0-2-3
+    v3 = pts[2] - pts[0]
+    v4 = pts[3] - pts[0]
+    cp2 = np.cross(v3, v4)
+    a2 = 0.5 * np.linalg.norm(cp2)
+    
+    total_area = a1 + a2
+    # Weighted average normal
+    if total_area > 1e-12:
+        normal = (cp1 + cp2) / (np.linalg.norm(cp1 + cp2) + 1e-16)
+    else:
+        normal = np.array([0, 0, 0])
+        
+    return total_area, normal
+
 def apply_loads(loads):
     """Applies loads to the model."""
     ops.timeSeries("Linear", 1)
     ops.pattern("Plain", 1, 1)
     members = output['members']
     nodes = output['nodes']
+    total_pressure_nodes = set()
+    total_loads_applied = 0
+
+    _log_info = lambda msg: print(msg, flush=True)
+    _log_info(f"[LOADS] Processing {len(loads)} load case(s):")
+    for i, load in enumerate(loads):
+        _log_info(f"  [{i+1}] type='{load.get('type')}' name='{load.get('name')}' targets={len(load.get('targets',[]))} magnitude={load.get('magnitude')} value={load.get('value')}")
 
     for load in loads:
       targets = load['targets']
-      value = load['value']
+      value = load.get('value') or {}  # Safe fallback: pressure loads may omit 'value'
       if(load['type'] == 'linear'):
         for id in targets:
           member = next((e for e in members if e['id'] == id), None)
@@ -488,37 +596,119 @@ def apply_loads(loads):
             fy = value['z'] * 1E3
             fz = value['y'] * 1E3
             ops.load(id, fx, fy, fz, 0.0, 0.0, 0.0)
+      elif(load['type'] == 'pressure'):
+        # Pressure load: kN/m2 on shell elements
+        # JSON coords: x=X, y=up, z=depth
+        # OpenSees coords: 1=X, 2=JSON_Z (depth), 3=JSON_Y (up/vertical)
+        for shell_id in targets:
+          try:
+            # Find the nodes of the shell
+            shell_nodes = ops.eleNodes(shell_id)
+            if not shell_nodes or len(shell_nodes) != 4:
+                continue
+            
+            # Get coordinates for area/normal calculation
+            coords = [ops.nodeCoord(n) for n in shell_nodes]
+            area, normal = calculate_quad_area_and_normal(coords)
+            
+            # Treat None/missing magnitude as 0 (vector load path)
+            magnitude = load.get('magnitude', 0)
+            if magnitude is None:
+                magnitude = 0
 
-def run_static_analysis(model: dict = None):
+            if magnitude == 0 and isinstance(value, dict):
+                # Vector load (e.g. Snow): value is in JSON coords (x, y=up, z=depth)
+                # Convert JSON -> OpenSees: fy_ops = value_z_json, fz_ops = value_y_json
+                fx_total = value.get('x', 0) * area * 1000
+                fy_total = value.get('z', 0) * area * 1000  # JSON Z -> OPS Y
+                fz_total = value.get('y', 0) * area * 1000  # JSON Y (vertical) -> OPS Z
+                print(f"[LOAD] Shell {shell_id}: Snow/vector load area={area:.3f}m², F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
+            else:
+                # Scalar magnitude (e.g. Wind): normal pressure perpendicular to surface
+                force_vec = float(magnitude) * area * 1000 * normal
+                fx_total, fy_total, fz_total = force_vec[0], force_vec[1], force_vec[2]
+                print(f"[LOAD] Shell {shell_id}: Wind/scalar load magnitude={magnitude} area={area:.3f}m², F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
+            
+            # Distribute equally to 4 corner nodes
+            for node_id in shell_nodes:
+                ops.load(node_id, fx_total/4.0, fy_total/4.0, fz_total/4.0, 0.0, 0.0, 0.0)
+                
+          except Exception as e:
+            print(f"Warning: Failed to apply pressure load to shell {shell_id}: {e}")
+
+def run_static_analysis(model: dict = None, log_callback=None):
     """Sets up and runs the static analysis."""
+    def _log(msg: str):
+        print(msg, flush=True)
+        if log_callback: log_callback(msg)
+
     try:
-        ops.system("BandSPD")
-        ops.numberer("RCM")
-        ops.constraints("Plain")
+        # Check system health
+        num_nodes = len(ops.getNodeTags())
+        num_elements = len(ops.getEleTags())
+        _log(f"[ANALYSIS] Model statistics: {num_nodes} nodes, {num_elements} elements")
         
-        # Apply load in multiple steps instead of one
+        # UmfPack handles unsymmetric/ill-conditioned systems from shell drilling DOF
+        # common in mixed shell+beam models
+        solver_set = False
+        for solver in ["UmfPack", "SparseSYM", "BandGenLinLapack", "FullGeneral"]:
+            try:
+                ops.system(solver)
+                _log(f"[ANALYSIS] Using solver: {solver}")
+                solver_set = True
+                break
+            except:
+                continue
+        if not solver_set:
+            ops.system("FullGeneral")
+            _log("[ANALYSIS] Warning: Falling back to FullGeneral solver")
+        
+        ops.numberer("RCM")
+        # Penalty is more stable than Transformation for mixed shell+beam models
+        # with shared nodes — avoids DOF elimination issues from drilling DOF
+        ops.constraints("Penalty", 1.0e12, 1.0e12)
+        
+        # Apply load in multiple steps
         num_steps = 10
         load_step = 1.0 / num_steps
         
-        # Set integrator before creating analysis
         ops.integrator("LoadControl", load_step)
-        
-        # Set convergence test with slightly relaxed tolerance
-        ops.test("NormUnbalance", 1.0e-5, 50)
-        
+        ops.test("NormDispIncr", 1.0e-6, 100)
         ops.algorithm("Newton")
         ops.analysis("Static")
         
-        # Perform the analysis in incremental steps
-        ok = ops.analyze(num_steps)
-        
-        if ok != 0:
-            print(f"Analysis failed with error code: {ok}")
-            raise Exception(f"Analysis failed to converge")
-        
+        # Perform the analysis step-by-step to show progress
+        for i in range(num_steps):
+            ok = ops.analyze(1)
+            
+            # Fallback 1: KrylovNewton — better for ill-conditioned systems
+            if ok != 0:
+                _log(f"[ANALYSIS]   > Newton failed at step {i+1}, trying KrylovNewton...")
+                ops.test("NormDispIncr", 1.0e-4, 200)
+                ops.algorithm("KrylovNewton")
+                ok = ops.analyze(1)
+                ops.test("NormDispIncr", 1.0e-6, 100)
+                ops.algorithm("Newton")
+            
+            # Fallback 2: ModifiedNewton with energy convergence criterion
+            if ok != 0:
+                _log(f"[ANALYSIS]   > KrylovNewton failed at step {i+1}, trying ModifiedNewton+EnergyIncr...")
+                ops.test("EnergyIncr", 1.0e-8, 200)
+                ops.algorithm("ModifiedNewton")
+                ok = ops.analyze(1)
+                ops.test("NormDispIncr", 1.0e-6, 100)
+                ops.algorithm("Newton")
+            
+            if ok != 0:
+                _log(f"[ANALYSIS]   > Analysis failed to converge at step {i+1}")
+                raise Exception(f"Analysis failed to converge at step {i+1}")
+            else:
+                _log(f"[ANALYSIS]   > Completed load step {i+1}/{num_steps}")
+                
         return 0
     except Exception as e:
         error_msg = str(e)
+        _log(f"[ANALYSIS ERROR] {error_msg}")
         # Check if this is a DPBSV error
         if "DPBSV" in error_msg or "illegal value" in error_msg.lower():
             print("\n!!! DPBSV ERROR DETECTED IN run_static_analysis - Printing model for inspection !!!")
@@ -547,19 +737,34 @@ def extract_node_displacements():
     except Exception as e:
       print(f"Warning: Could not extract displacement for node {node_id}: {e}")
 
-def extract_results():
+def extract_results(log_callback=None):
   """Extracts and processes results from the analysis."""
+  def _log(msg: str):
+      print(msg, flush=True)
+      if log_callback: log_callback(msg)
+      
   members = output['members']
   
+  _log(f"[ANALYSIS]   > Extracting displacements for {len(output['nodes'])} nodes...")
   extract_node_displacements()
 
-  for member in members:
+  _log(f"[ANALYSIS]   > Extracting internal forces for {len(members)} structural members...")
+  
+  total_members = len(members)
+  log_interval = max(1, total_members // 10) # Log every 10%
+  
+  for idx, member in enumerate(members):
+    if (idx + 1) % log_interval == 0 or idx == total_members - 1:
+        _log(f"[ANALYSIS]     ... processed sections for {idx + 1}/{total_members} members")
+        
     mesh = member['mesh']
     nodes = mesh['nodes']
     child_members = mesh['members']
     node_efforts_dict = {}
+    stations_dict = {}
 
     forces = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz']
+    nep_stations = 11  # evaluation points per child element -> smooth diagrams + hover readouts
     for child_member in child_members:
       child_id = child_member['id']
       
@@ -596,9 +801,10 @@ def extract_results():
       # Process each force type
       for force in forces:
         try:
-          data = extract_section_force_data(child_id, force, sfac=1E-5, nep=2, dir_plt=0)
+          data = extract_section_force_data(child_id, force, sfac=1E-5, nep=nep_stations, dir_plt=0)
           force_values = data['force_values']
           displaced_positions = data['displaced_positions']
+          base_positions = data.get('base_positions')
           
           # Determine unit based on force type
           if force in ['N']:
@@ -637,12 +843,39 @@ def extract_results():
             current_value = node_efforts_dict[node_j]["efforts"][force]["value"]
             mean_value = (current_value + force_values[1]) / 2
             node_efforts_dict[node_j]["efforts"][force]["value"] = np.round(mean_value, 2)
-            
+
+          # Collect intermediate stations for smooth diagram rendering & hover readouts
+          if base_positions is not None:
+            for k in range(len(force_values)):
+              key = tuple(np.round(base_positions[k], 6))
+              value = float(np.round(force_values[k], 2))
+              # Full-precision plot point: coord + value * SFAC * localAxis (per-force plane)
+              plot_point = [float(c) for c in displaced_positions[k]]
+              if key not in stations_dict:
+                stations_dict[key] = {
+                  "coord": np.round(base_positions[k], 6).tolist(),
+                  "displaced": displaced_positions[k],
+                  "values": {force: value},
+                  "plot_points": {force: plot_point},
+                }
+              else:
+                entry = stations_dict[key]
+                if force in entry["values"]:
+                  entry["values"][force] = float(np.round((entry["values"][force] + value) / 2, 2))
+                  previous = entry["plot_points"].get(force)
+                  if previous is not None:
+                    entry["plot_points"][force] = [(previous[i] + plot_point[i]) / 2 for i in range(3)]
+                else:
+                  entry["values"][force] = value
+                  entry["plot_points"][force] = plot_point
+
         except Exception as e:
           print(f"Warning: Could not extract {force} data for element {child_id}: {e}")
           continue
     
     member['node_efforts'] = list(node_efforts_dict.values())
+    if stations_dict:
+      member['stations'] = list(stations_dict.values())
     # member['plot_2d'] = plot_2d(member, forces)
 
   
@@ -1131,7 +1364,7 @@ def extract_section_force_data(ele_tag, sf_type, sfac=1/500, nep=2, dir_plt=0,):
     # print('s_p: ', s_p)
     # Save the data for the current element
     force_data = {
-        # "base_positions": s_0,
+        "base_positions": s_0.tolist(),
         "displaced_positions": s_p.tolist(),
         # "evaluation_points": xl,
         "force_values": (ss / 1E3).tolist(),

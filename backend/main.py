@@ -12,6 +12,8 @@ import json
 import math
 from datetime import datetime, timezone
 from websockets.exceptions import ConnectionClosed
+import asyncio
+import anyio
 
 # Importer le routeur depuis le fichier api.py
 from routes.auth import router as auth_router
@@ -127,7 +129,8 @@ async def proxy_middleware(request: Request, call_next):
     return await call_next(request)
 
 # Serve the static files from the React build directory only in production
-if ENVIRONMENT != "development":
+# and only if the build directory exists (not in Docker where Nginx handles the frontend)
+if ENVIRONMENT != "development" and os.path.isdir(os.path.join(build_dir, 'static')):
     app.mount("/static", StaticFiles(directory=os.path.join(build_dir, 'static')), name="static")
     
     @app.get("/")
@@ -217,7 +220,21 @@ async def get_benchmark(id: str):
 @app.post("/analysis")
 async def get_analysis(model : dict):
   try :
-    output = run_analysis(model)
+    print("\n" + "="*80)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] RECEIVED NEW ANALYSIS REQUEST")
+    print(f"Nodes: {len(model.get('nodes', []))}, Members: {len(model.get('members', []))}, Loads: {len(model.get('loads', []))}")
+    print(f"RAW INPUT (First 500 chars): {str(model)[:500]}...", flush=True)
+    print("="*80 + "\n")
+    
+    loop = asyncio.get_running_loop()
+    def send_log(msg: str):
+        # Fire and forget progress update over websocket
+        asyncio.run_coroutine_threadsafe(
+            manager.broadcast(json.dumps({"message": "analysis_progress", "data": msg})),
+            loop
+        )
+
+    output = await anyio.to_thread.run_sync(run_analysis, model, send_log)
     return {
       "status": "Analysis completed successfully",
       "output": output

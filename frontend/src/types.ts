@@ -81,9 +81,21 @@ export type Node = {
   z : number;
 }
 
+export type Shell = {
+  id: number
+  nodes: number[]
+  thickness: number
+  material: Material
+}
+
 export type Member = ElasticBeamColumn 
 
-export type ElementType = 'elasticBeamColumn' | '3dLine' | 'node' | 'colUp' | 'colDown'
+export type ElementType = 'elasticBeamColumn' | '3dLine' | 'node' | 'shell' | 'colUp' | 'colDown'
+
+// Navigation / viewport tools (driven by the bottom bar)
+export type NavTool = 'select' | 'zoom' | 'pan' | 'orbit'
+// Zoom sub-modes available from the zoom split button
+export type ZoomMode = 'fit' | 'window' | 'drag'
 
 // Levels 
 export interface Level {
@@ -111,27 +123,30 @@ export type Prompt = {
 
 export const mockSections: Section[] = [
   {
-    id: 2,
-    name: 'REC 0.3x0.5m',
-    type: 'Rectangular',
-    width: 200,
-    height: 500,
+    id: 1,
+    name: 'IPE 300',
+    type: 'I',
+    depth: 300,
+    width: 150,
+    tw: 7.1,
+    tf: 10.7,
+    r: 15,
     material: {
-      id: 1,
-      name: 'Concrete',
-      E: 30e9,
-      nu: 0.2
+      id: 2,
+      name: 'Steel',
+      E: 210e9,
+      nu: 0.3
     },
     properties: {
-      A: 0.15,
-      Iz: 0.003125,
-      Iy: 0.001125,
-      Jxx: 0.004250,
-      G: 12.5e9,
-      E: 30e9,
-      v: 0.2
+      A: 0.00538,
+      Iz: 0.00000604,
+      Iy: 0.00008356,
+      Jxx: 0.00000020,
+      G: 80.76e9,
+      E: 210e9,
+      v: 0.3
     }
-  }, 
+  }
 ]
 
 export const mockMaterials : Material[] = [

@@ -31,6 +31,7 @@ class BoundaryCondition {
   }
 
   createOrUpdate(){ 
+    this.model.invalidateResults()
     this.dispose()  
     switch(this.type){
       case 'fixed':
@@ -49,7 +50,7 @@ class BoundaryCondition {
         this.dx = 1
         this.dy = 1
         this.dz = 1
-        this.rx = 0
+        this.rx = 1  // Restrain torsion to prevent mechanism/singularity
         this.ry = 0
         this.rz = 0
         this.targets.forEach(target => {
@@ -58,9 +59,9 @@ class BoundaryCondition {
         break
       case 'roller' :
         this.dx = 0
-        this.dy = 0
-        this.dz = 1
-        this.rx = 0
+        this.dy = 1  // MUST fix vertical translation (Y) to prevent rigid body rotation
+        this.dz = 1  // Fix out-of-plane translation
+        this.rx = 1  // Restrain torsion to prevent mechanism/singularity
         this.ry = 0
         this.rz = 0
         this.targets.forEach(target => {
@@ -109,7 +110,7 @@ class BoundaryCondition {
     if(this.type != 'roller') return 
 
     const sphereGeometry = new THREE.SphereGeometry( 0.12, 16, 16 )
-    const sphereMaterial = new THREE.MeshBasicMaterial( { color: 'black' } )
+    const sphereMaterial = new THREE.MeshBasicMaterial( { color: '#cfd6dc' } ) // Light gray — visible on the dark background
     
     const sphere1 = new THREE.Mesh( sphereGeometry, sphereMaterial )
     sphere1.position.set(node.x - 0.1, node.y -0.4, node.z)
