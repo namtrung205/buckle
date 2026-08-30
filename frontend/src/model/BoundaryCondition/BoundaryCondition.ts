@@ -33,6 +33,7 @@ class BoundaryCondition {
 
   createOrUpdate(){ 
     this.model.invalidateResults()
+    this.replaceExistingSupports()
     this.dispose()  
     switch(this.type){
       case 'fixed':
@@ -92,6 +93,23 @@ class BoundaryCondition {
       this.model.boundaryConditions.splice(index, 1)
     }
     this.dispose()
+  }
+
+  /**
+   * Enforce one support per node: when this boundary condition claims a node
+   * already referenced by another support, the other support loses that node
+   * (and is removed entirely once it runs out of targets). The new/edited
+   * support therefore replaces any previous support on the same nodes.
+   */
+  replaceExistingSupports(){
+    for(const target of this.targets){
+      const conflicts = this.model.boundaryConditions.filter(bc => bc.id !== this.id && bc.targets.includes(target))
+      for(const bc of conflicts){
+        bc.targets = bc.targets.filter(t => t !== target)
+        this.model.labeler.batchDelete([`support-${bc.id}-${target}`])
+        if(bc.targets.length === 0) bc.delete()
+      }
+    }
   }
 
   /**
