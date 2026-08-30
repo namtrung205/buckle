@@ -36,7 +36,7 @@ export type Label = {
 const SUPPORT_FIX_COLOR = '#22c55e'      // restrained DOF (xanh)
 const SUPPORT_FREE_COLOR = '#ef4444'     // free DOF (đỏ)
 const SUPPORT_OUTLINE_COLOR = '#111827'  // sector borders
-const SUPPORT_HEX_RADIUS = 20            // hexagon circumradius in px
+const SUPPORT_HEX_RADIUS = 10            // hexagon circumradius in px
 
 function buildSupportHexagon(fixity : SupportFixity) : SVGSVGElement {
   const ns = 'http://www.w3.org/2000/svg'
@@ -66,7 +66,7 @@ function buildSupportHexagon(fixity : SupportFixity) : SVGSVGElement {
     sector.setAttribute('points', `0,0 ${v1.x},${v1.y} ${v2.x},${v2.y}`)
     sector.setAttribute('fill', fixity[dofOrder[i]] ? SUPPORT_FIX_COLOR : SUPPORT_FREE_COLOR)
     sector.setAttribute('stroke', SUPPORT_OUTLINE_COLOR)
-    sector.setAttribute('stroke-width', '0.75')
+    sector.setAttribute('stroke-width', '0.5')
     sector.setAttribute('stroke-linejoin', 'round')
     svg.appendChild(sector)
   }
@@ -290,6 +290,13 @@ class Labeler {
       cPointLabel.position.copy(position);
       cPointLabel.userData.type = label.type
       cPointLabel.userData.id = label.id
+      // CSS2D stacking precedence: three's CSS2DRenderer assigns element
+      // z-index by sorting on renderOrder first (higher renders on top), then
+      // camera distance — so this is the only reliable way to control overlap.
+      // Result min/max tags ('effort') must always paint above support
+      // hexagons sharing the same node; support symbols stay below every
+      // other annotation.
+      cPointLabel.renderOrder = label.type === 'effort' ? 10 : (label.type === 'support' ? 0 : 5);
       this.model.scene.add(cPointLabel);
       this.labelObjects.push(cPointLabel);
     }
