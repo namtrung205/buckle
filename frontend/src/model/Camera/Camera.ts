@@ -123,6 +123,56 @@ export class Camera {
     this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
     this.controls.update();
   }
+  /**
+   * Zoom to a single element (double-click in select mode). Keeps the current
+   * view direction, recentres the orbit target on the element and resizes the
+   * frustum / camera distance so the element fills the viewport with a margin.
+   */
+  fitObjectToView(object: THREE.Object3D) {
+    this.fitBoxToView(new THREE.Box3().setFromObject(object));
+  }
+
+  /** Fit the frustum + camera to a world-space box (see fitObjectToView). */
+  private fitBoxToView(box: THREE.Box3) {
+    if (box.isEmpty()) return;
+
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z, 1);
+    const radius = maxDim / 2;
+
+    // Depth range scales with the element so nothing is culled by the near/far planes
+    const near = Math.max(0.01, radius / 500);
+    const far = Math.max(2000, radius * 100);
+    this.orthoCam.near = near;
+    this.orthoCam.far = far;
+    this.perspectiveCam.near = near;
+    this.perspectiveCam.far = far;
+
+    // Orthographic frustum covers the element with a margin
+    this.frustumSize = maxDim * 1.4;
+    if (this.cam instanceof THREE.OrthographicCamera) this.cam.zoom = 1;
+
+    // Orbit around the element centre, keeping the current view direction
+    this.controls.target.copy(center);
+
+    if (this.viewMode === '2d') {
+      // Top view: stay straight above the element centre, far enough for the far plane
+      this.cam.position.set(center.x, center.y + Math.max(50, radius * 3), center.z);
+    } else {
+      const dir = this.cam.position.clone().sub(this.controls.target);
+      // Degenerate case (camera exactly on the target): fall back to the iso direction
+      if (dir.lengthSq() < 1e-12) {
+        dir.set(0.65, 1, 0.65);
+      }
+      dir.normalize();
+      this.cam.position.copy(center).addScaledVector(dir, radius * 3 + 1);
+    }
+    this.cam.lookAt(center);
+
+    this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
+    this.controls.update();
+  }
 
   private lastNodeCount = -1;
   private frameCounter = 0;
