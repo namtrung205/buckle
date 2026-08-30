@@ -2,13 +2,75 @@ import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRe
 import { Model } from "../Model";
 import { Vector3 } from "three";
 
-type Label = {
+/**
+ * Per-DOF restraint state of a rigid support. Drives the sector colors of the
+ * Midas-Civil style hexagon support symbol ('support' label type).
+ */
+export type SupportFixity = {
+  x : boolean
+  y : boolean
+  z : boolean
+  mx : boolean
+  my : boolean
+  mz : boolean
+}
+
+export type Label = {
   id : string
   position : Vector3
   text : string
-  type? : string // 'effort' | 'load' | 'length' | 'angle' | 'arc' | 'gridSnap' | 'endPointSnap' | 'prompt' | 'fixed-support' | 'pinned-support' | 'custom'
+  type? : string // 'effort' | 'load' | 'length' | 'angle' | 'arc' | 'gridSnap' | 'endPointSnap' | 'prompt' | 'support' | 'fixed-support' | 'pinned-support' | 'custom'
   rotation? : number
   backgroundColor? : string 
+  fixity? : SupportFixity // 'support' labels: restraint flags rendered as hexagon sector colors
+}
+
+// ---------------------------------------------------------------------------
+// Support symbol (Midas-Civil style)
+// Regular hexagon split into 6 triangular sectors. Clockwise from the top
+// vertex the DOF order is: X, Y, Z (right half) then MX, MY, MZ (left half).
+// A sector is filled green when its DOF is restrained and red when it is free.
+// Rendered through CSS2D so the symbol always draws on top of the 3D scene and
+// keeps a constant screen size at any zoom / orbit angle.
+// ---------------------------------------------------------------------------
+const SUPPORT_FIX_COLOR = '#22c55e'      // restrained DOF (xanh)
+const SUPPORT_FREE_COLOR = '#ef4444'     // free DOF (đỏ)
+const SUPPORT_OUTLINE_COLOR = '#111827'  // sector borders
+const SUPPORT_HEX_RADIUS = 20            // hexagon circumradius in px
+
+function buildSupportHexagon(fixity : SupportFixity) : SVGSVGElement {
+  const ns = 'http://www.w3.org/2000/svg'
+  const r = SUPPORT_HEX_RADIUS
+  const size = r * 2 + 2
+  const svg = document.createElementNS(ns, 'svg')
+  svg.setAttribute('width', String(size))
+  svg.setAttribute('height', String(size))
+  svg.setAttribute('viewBox', `${-size / 2} ${-size / 2} ${size} ${size}`)
+  svg.style.display = 'block'
+  svg.style.overflow = 'visible'
+
+  // Pointy-top hexagon: vertices clockwise starting at the top vertex (90°)
+  const vertexAngles = [90, 30, -30, -90, -150, 150]
+  const vertices = vertexAngles.map(deg => {
+    const rad = deg * Math.PI / 180
+    // Screen Y grows downward → flip the sign so 90° points up
+    return { x: Math.cos(rad) * r, y: -Math.sin(rad) * r }
+  })
+
+  // Sector i = triangle (center, vertex[i], vertex[i+1]); clockwise from top
+  const dofOrder : (keyof SupportFixity)[] = ['x', 'y', 'z', 'mx', 'my', 'mz']
+  for(let i = 0; i < 6; i++){
+    const v1 = vertices[i]
+    const v2 = vertices[(i + 1) % 6]
+    const sector = document.createElementNS(ns, 'polygon')
+    sector.setAttribute('points', `0,0 ${v1.x},${v1.y} ${v2.x},${v2.y}`)
+    sector.setAttribute('fill', fixity[dofOrder[i]] ? SUPPORT_FIX_COLOR : SUPPORT_FREE_COLOR)
+    sector.setAttribute('stroke', SUPPORT_OUTLINE_COLOR)
+    sector.setAttribute('stroke-width', '0.75')
+    sector.setAttribute('stroke-linejoin', 'round')
+    svg.appendChild(sector)
+  }
+  return svg
 }
 
 class Labeler {
@@ -185,6 +247,22 @@ class Labeler {
         arrow.style.bottom = '-8px';
         arrow.style.left = '24px'; // Center the arrow
         pContainer.appendChild(arrow);
+      }
+      else if(type === 'support'){
+        // Midas-Civil style hexagon support symbol — pure CSS2D annotation,
+        // always rendered on top of the 3D scene at constant screen size.
+        pContainer.style.backgroundColor = 'transparent';
+        pContainer.style.height = 'auto';
+        pContainer.style.width = 'auto';
+        pContainer.style.minWidth = '0';
+        pContainer.style.boxShadow = 'none';
+        pContainer.style.border = 'none';
+        pContainer.style.padding = '0';
+        pContainer.style.position = 'relative';
+        p.style.display = 'none';
+        if(label.fixity){
+          pContainer.appendChild(buildSupportHexagon(label.fixity));
+        }
       }
       
       else {
