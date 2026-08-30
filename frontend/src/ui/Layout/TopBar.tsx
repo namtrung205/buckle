@@ -7,6 +7,7 @@ import {
   Lock as LockIcon,
   LockOpen as LockOpenIcon,
   WarningAmber as WarningAmberIcon,
+  Download as DownloadIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
@@ -413,6 +414,43 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     console.log('Model downloaded successfully');
   };
 
+  // Download the analysis results exactly as returned by the backend
+  // (nodal displacements + member internal forces) as a JSON file.
+  const downloadResults = () => {
+    if (!model.output) {
+      toast.error('No analysis results available. Run the analysis first.', {
+        position: "bottom-right",
+        autoClose: 4000,
+      });
+      return;
+    }
+
+    const resultsData = {
+      ...model.output,
+      metadata: {
+        exportDate: new Date().toISOString(),
+        modelName: 'FEM Analysis Results',
+        version: '1.0'
+      }
+    };
+
+    const dataStr = JSON.stringify(resultsData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `fem-results-${new Date().toISOString().split('T')[0]}.json`;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+
+    console.log('Analysis results downloaded successfully');
+  };
+
   const upload = () => {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
@@ -700,7 +738,14 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
               />
             </RibbonPanel>
             <RibbonPanel label="Results">
-              <RibbonButton title="Results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
+              <RibbonButton title="View results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
+              <RibbonButton
+                title="Download analysis results"
+                label="Download"
+                onClick={downloadResults}
+                icon={<DownloadIcon sx={{ fontSize: 15 }} />}
+                disabled={!hasResults}
+              />
             </RibbonPanel>
           </>
         )}
