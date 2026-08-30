@@ -4,13 +4,14 @@ import { useModel } from '../../../../model/Context';
 import { DIAGRAM_TYPES } from '../../../../model/PostProcessing/PostProcessing';
 import { UI, fmtValue, SecTitle } from '../ui';
 
+// Quantities are unit-less here — the unit reference lives in the status bar
 const TYPE_TITLES: Record<string, string> = {
-  N: 'N [kN]',
-  Vy: 'Vy [kN]',
-  Vz: 'Vz [kN]',
-  T: 'T [kN]',
-  My: 'My [kNm]',
-  Mz: 'Mz [kNm]',
+  N: 'N',
+  Vy: 'Vy',
+  Vz: 'Vz',
+  T: 'T',
+  My: 'My',
+  Mz: 'Mz',
 };
 
 /** Summary of max/min internal forces and peak deflection across the analysed members. */
@@ -55,7 +56,7 @@ const SummaryTable = observer(() => {
     if (mag > maxDefl) maxDefl = mag;
   }
   if (maxDefl > 0) {
-    rows.push({ label: 'Δ max [mm]', max: fmtValue(maxDefl * 1000), min: '—' });
+    rows.push({ label: 'Δ max', max: fmtValue(maxDefl * 1000), min: '—' });
   }
 
   if (rows.length === 0) return null;

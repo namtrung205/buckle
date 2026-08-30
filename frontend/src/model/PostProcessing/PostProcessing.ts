@@ -598,7 +598,8 @@ class PostProcessing {
     const suffix = type === DEFLECTION_TYPE ? 'defl' : type
     if (max.station) {
       const isDefl = type === DEFLECTION_TYPE
-      const text = isDefl ? `${fmt(max.value * 1000)} mm` : `${fmt(max.value)} ${this.unit}`
+      // Plain numbers only — the unit reference lives in the status bar
+      const text = isDefl ? fmt(max.value * 1000) : fmt(max.value)
       this.labels.push({
         id: `max-${suffix}-label-${data.memberId}`,
         position: max.station.offset.clone(),
@@ -611,7 +612,7 @@ class PostProcessing {
       this.labels.push({
         id: `min-${suffix}-label-${data.memberId}`,
         position: min.station.offset.clone(),
-        text: `${fmt(min.value)} ${this.unit}`,
+        text: fmt(min.value),
         type: 'effort',
         backgroundColor: min.value >= 0 ? POS : NEG
       })

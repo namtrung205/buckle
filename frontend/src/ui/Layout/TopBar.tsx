@@ -1,9 +1,8 @@
-import { Box, Typography, IconButton, Tooltip, Divider, Button, Tabs, Tab, Grid } from '@mui/material';
+import { Box, Typography, IconButton, Tooltip, Button, Tabs, Tab } from '@mui/material';
 import {
   Menu as MenuIcon,
   Save as SaveIcon,
   FolderOpen as OpenIcon,
-  Help as HelpIcon,
   OpenWith as MoveIcon,
   Lock as LockIcon,
   LockOpen as LockOpenIcon,
@@ -55,24 +54,30 @@ interface RibbonButtonProps {
   };
 }
 
+/** Small ribbon button — icon + label, sized for the 3-row panel grids. */
 const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled, active }: RibbonButtonProps) => {
   return (
-    <Tooltip title={title}>
+    <Tooltip title={title} enterDelay={400}>
       <Button
         variant="text"
         onClick={onClick}
-        disabled = {disabled}
+        disabled={disabled}
         sx={{
-          minWidth: '50px',
-          flexDirection: 'column',
-          gap: 0.3,
-          py: 0.5,
-          px: 1,
+          minWidth: 0,
+          height: 22,
+          justifyContent: 'flex-start',
+          gap: 0.75,
+          px: 0.75,
+          py: 0,
+          borderRadius: 1,
           color: '#e0e0e0',
           textTransform: 'none',
           backgroundColor: active ? '#4a90e2' : 'transparent',
           '&:hover': {
             bgcolor: active ? '#3a7bc8' : '#3f3f3f',
+          },
+          '&.Mui-disabled': {
+            color: '#6f6f6f',
           },
         }}
       >
@@ -82,22 +87,62 @@ const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled, active
             src={iconImage.src}
             alt={iconImage.alt}
             sx={{
-              width: iconImage.size || 18,
-              height: iconImage.size || 18,
+              width: iconImage.size || 15,
+              height: iconImage.size || 15,
               objectFit: 'contain',
               filter: 'brightness(0) saturate(100%) invert(100%)',
             }}
           />
         ) : (
-          <Box sx={{ color: '#ffffff' }}>
+          <Box sx={{ display: 'flex', color: '#ffffff' }}>
             {icon}
           </Box>
         )}
-        <Typography sx={{ fontSize: '0.65rem' }}>{label}</Typography>
+        <Typography sx={{ fontSize: '0.68rem', lineHeight: 1, whiteSpace: 'nowrap' }}>{label}</Typography>
       </Button>
     </Tooltip>
   );
 };
+
+/** Ribbon panel — small buttons laid out in a 3-row grid, panel name underneath. */
+const RibbonPanel = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <Box
+    sx={{
+      display: 'flex',
+      flexDirection: 'column',
+      px: 1.5,
+      borderRight: '1px solid #1e1e1e',
+      '&:last-of-type': { borderRight: 'none' },
+    }}
+  >
+    <Box
+      sx={{
+        display: 'grid',
+        gridAutoFlow: 'column',
+        gridTemplateRows: 'repeat(3, 22px)',
+        gap: '0 6px',
+        justifyContent: 'start',
+        alignItems: 'stretch',
+        flex: 1,
+      }}
+    >
+      {children}
+    </Box>
+    <Typography
+      sx={{
+        fontSize: '0.6rem',
+        color: '#a0a0a0',
+        fontWeight: 600,
+        mt: 0.4,
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        textAlign: 'center',
+      }}
+    >
+      {label}
+    </Typography>
+  </Box>
+);
 
 const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   const model = useModel();
@@ -130,6 +175,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   };
   const [tool, setTool] = useState('')
   const [confirmUnlock, setConfirmUnlock] = useState(false)
+  const [activeTab, setActiveTab] = useState<string>('model')
   const toolName = model?.toolsController.getCurrentToolName()
   
   const handleToolChange = (newTool: string) => {
@@ -541,26 +587,6 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     }
   };
 
-  const modelButtons = [
-    { title: 'Materials', label: 'Materials', iconImage: { src: '/construction.png', alt: 'Materials', size: 18 }, onClick: () => open('materials') },
-    { title: 'Sections', label: 'Sections', iconImage: { src: '/sections.png', alt: 'Sections', size: 18 }, onClick: () => open('sections') },
-    { title: 'Draw', label: 'Draw', iconImage: { src: '/pencil.png', alt: 'Draw', size: 18 }, onClick: () => open('draw') },
-    // { title: 'Beam', label: 'Beam', iconImage: { src: '/beam.png', alt: 'Beam', size: 18 }, onClick: () => {} },
-    // { title: 'Column', label: 'Column', iconImage: { src: '/column.png', alt: 'Column', size: 18 }, onClick: () => handleToolChange('column')},
-    { title: 'Loads', label: 'Loads', iconImage: { src: '/loads.png', alt: 'Loads', size: 22 }, onClick: () => open('loads') },
-    { title: 'Supports', label: 'Supports', iconImage: { src: '/supports.png', alt: 'Supports', size: 22 }, onClick: () => open('supports') },
-    { title: 'Warehouse', label: 'Warehouse', iconImage: { src: '/warehouse.png', alt: 'Generator', size: 18 }, onClick: () => open('warehouseWizard') },
-    { title: 'Move', label: 'Move', icon: <MoveIcon sx={{ fontSize: 18 }} />, onClick: () => open('move') },
-    // { title: 'Copy', label: 'Copy', iconImage: { src: '/copy.png', alt: 'Copy', size: 18 }, onClick: () => open('copy'), disabled : model?.selector.selected.length === 0 },
-  ];
-
-  const analysisButtons = [
-    { title: 'Run Analysis', label: 'Run', iconImage: { src: '/run.png', alt: 'Run', size: 18 }, onClick: runAnalysis },
-    { title: 'Results', label: 'Results', iconImage: { src: '/growth.png', alt: 'Results', size: 18 }, onClick: () => open('results') },
-    { title: 'Settings', label: 'Settings', iconImage: { src: '/engrenage.png', alt: 'Settings', size: 18 }, onClick: () => open('settings') },
-    // { title: 'Draw', label: 'Draw', iconImage: { src: '/pencil.png', alt: 'Draw', size: 18 }, onClick: () => open('draw') },
-  ];
-
   return (
     <Box
       sx={{
@@ -571,26 +597,24 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
       }}
     >
-      {/* Ribbon Bar */}
+      {/* Tab strip */}
       <Box
         sx={{
-          height: '60px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          marginTop:"0.25rem",
           px: 3,
-          gap: 3,
-          mt:2
+          pt: 0.5,
         }}
       >
-        <Box sx={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0 }}>
           {/* Hamburger Menu */}
           <IconButton
             onClick={onMenuClick}
             size="small"
             sx={{
               color: '#e0e0e0',
+              mr: 1,
               '&:hover': {
                 bgcolor: '#3f3f3f',
               },
@@ -598,92 +622,88 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
           >
             <MenuIcon sx={{ fontSize: 18 }} />
           </IconButton>
-          
-        {/* File Group */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
-          <Typography sx={{ fontSize: '0.6rem', color: '#a0a0a0', fontWeight: 600, mb: 0.3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            File
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 0.5 }}>
-            <RibbonButton
-              title="Open"
-              label="Open"
-              onClick={upload}
-              icon={<OpenIcon sx={{ fontSize: 18 }} />}
-            />
-            <RibbonButton
-              title="Save"
-              label="Save"
-              onClick={download}
-              icon={<SaveIcon sx={{ fontSize: 18 }} />}
-            />
-          </Box>
+          <Tabs
+            value={activeTab}
+            onChange={(_, value: string) => setActiveTab(value)}
+            sx={{
+              minHeight: 28,
+              flex: 1,
+              '& .MuiTab-root': {
+                minHeight: 28,
+                py: 0.25,
+                px: 2,
+                fontSize: '0.75rem',
+                textTransform: 'none',
+                color: '#a0a0a0',
+              },
+              '& .MuiTab-root.Mui-selected': { color: '#ffffff' },
+              '& .MuiTabs-indicator': { backgroundColor: '#4a90e2', height: 2 },
+            }}
+          >
+            <Tab value="file" label="File" />
+            <Tab value="model" label="Model" />
+            <Tab value="view" label="View" />
+            <Tab value="analysis" label="Analysis" />
+          </Tabs>
         </Box>
+        <RibbonButton
+          title="Docs"
+          label="Docs"
+          onClick={() => window.open('https://github.com/igor-barcelos/buckle', '_blank')}
+          iconImage={{ src: '/github.png', alt: 'Docs', size: 15 }}
+        />
+      </Box>
 
-        <Divider orientation="vertical" flexItem sx={{ bgcolor: '#1e1e1e', my: 1 }} />
-
-        {/* Model Group */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
-          <Typography sx={{ fontSize: '0.6rem', color: '#a0a0a0', fontWeight: 600, mb: 0.3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Model
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 0.5 }}>
-            {modelButtons.map((button, index) => (
+      {/* Ribbon content — panels of small buttons for the active tab */}
+      <Box sx={{ display: 'flex', alignItems: 'stretch', px: 3, pt: 0.5, pb: 1 }}>
+        {activeTab === 'file' && (
+          <RibbonPanel label="File">
+            <RibbonButton title="Open" label="Open" onClick={upload} icon={<OpenIcon sx={{ fontSize: 15 }} />} />
+            <RibbonButton title="Save" label="Save" onClick={download} icon={<SaveIcon sx={{ fontSize: 15 }} />} />
+          </RibbonPanel>
+        )}
+        {activeTab === 'model' && (
+          <>
+            <RibbonPanel label="Define">
+              <RibbonButton title="Materials" label="Materials" onClick={() => open('materials')} iconImage={{ src: '/construction.png', alt: 'Materials', size: 15 }} />
+              <RibbonButton title="Sections" label="Sections" onClick={() => open('sections')} iconImage={{ src: '/sections.png', alt: 'Sections', size: 15 }} />
+            </RibbonPanel>
+            <RibbonPanel label="Assign">
+              <RibbonButton title="Loads" label="Loads" onClick={() => open('loads')} iconImage={{ src: '/loads.png', alt: 'Loads', size: 15 }} />
+              <RibbonButton title="Supports" label="Supports" onClick={() => open('supports')} iconImage={{ src: '/supports.png', alt: 'Supports', size: 15 }} />
+            </RibbonPanel>
+            <RibbonPanel label="Modify">
+              <RibbonButton title="Draw" label="Draw" onClick={() => open('draw')} iconImage={{ src: '/pencil.png', alt: 'Draw', size: 15 }} />
+              <RibbonButton title="Move" label="Move" onClick={() => open('move')} icon={<MoveIcon sx={{ fontSize: 15 }} />} />
+            </RibbonPanel>
+            <RibbonPanel label="Generate">
+              <RibbonButton title="Warehouse generator" label="Warehouse" onClick={() => open('warehouseWizard')} iconImage={{ src: '/warehouse.png', alt: 'Generator', size: 15 }} />
+            </RibbonPanel>
+          </>
+        )}
+        {activeTab === 'view' && (
+          <RibbonPanel label="View">
+            <RibbonButton title="Settings" label="Settings" onClick={() => open('settings')} iconImage={{ src: '/engrenage.png', alt: 'Settings', size: 15 }} />
+          </RibbonPanel>
+        )}
+        {activeTab === 'analysis' && (
+          <>
+            <RibbonPanel label="Solve">
+              <RibbonButton title="Run Analysis" label="Run" onClick={runAnalysis} iconImage={{ src: '/run.png', alt: 'Run', size: 15 }} />
               <RibbonButton
-                key={index}
-                title={button.title}
-                label={button.label}
-                onClick={button.onClick}
-                icon={button.icon}
-                iconImage={button.iconImage}
-                // disabled={button.disabled}
+                title={isLocked ? 'Unlock — clear results and edit the model' : 'Model unlocked'}
+                label={isLocked ? 'Locked' : 'Unlocked'}
+                onClick={() => { if (model && isLocked) setConfirmUnlock(true); }}
+                icon={isLocked ? <LockIcon sx={{ fontSize: 15 }} /> : <LockOpenIcon sx={{ fontSize: 15 }} />}
+                active={isLocked}
+                disabled={!isLocked && !hasResults}
               />
-            ))}
-          </Box>
-        </Box>
-
-        <Divider orientation="vertical" flexItem sx={{ bgcolor: '#1e1e1e', my: 1 }} />
-
-        {/* Analysis Group */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
-          <Typography sx={{ fontSize: '0.6rem', color: '#a0a0a0', fontWeight: 600, mb: 0.3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Analysis
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 0.5 }}>
-            <RibbonButton
-              title={isLocked ? 'Unlock — clear results and edit the model' : 'Model unlocked'}
-              label={isLocked ? 'Locked' : 'Unlocked'}
-              onClick={() => { if (model && isLocked) setConfirmUnlock(true); }}
-              icon={isLocked ? <LockIcon sx={{ fontSize: 18 }} /> : <LockOpenIcon sx={{ fontSize: 18 }} />}
-              active={isLocked}
-              disabled={!isLocked && !hasResults}
-            />
-            {analysisButtons.map((button, index) => (
-              <RibbonButton
-                key={index}
-                title={button.title}
-                label={button.label}
-                onClick={button.onClick}
-                iconImage={button.iconImage}
-              />
-            ))}
-          </Box>
-        </Box>
-        </Box>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3 }}>
-            <Typography sx={{ fontSize: '0.6rem', color: '#666', fontWeight: 600, mb: 0.3, textTransform: 'uppercase', letterSpacing: '0.5px', visibility: 'hidden' }}>
-              Help
-            </Typography>
-            <RibbonButton
-              title="Docs"
-              label="Docs"
-              onClick={() => window.open('https://github.com/igor-barcelos/buckle', '_blank')}
-              iconImage={{ src: '/github.png', alt: 'Docs', size: 18 }}
-            />
-          </Box>
-        </Box>
+            </RibbonPanel>
+            <RibbonPanel label="Results">
+              <RibbonButton title="Results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
+            </RibbonPanel>
+          </>
+        )}
       </Box>
 
       <Settings open={dialogs.settings} onClose={close} />

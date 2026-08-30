@@ -40,7 +40,7 @@ const Legend = observer(() => {
   if (!activeType) return null;
 
   const isDefl = activeType === DEFLECTION_TYPE;
-  const unit = post.unit;
+  // Min/max are plain numbers — the unit reference lives in the status bar
   const minValue = isDefl ? post.max * 1000 : post.min;
   const maxValue = isDefl ? post.max * 1000 : post.max;
 
@@ -66,11 +66,6 @@ const Legend = observer(() => {
         <span>{fmtValue(minValue)}</span>
         <span>{fmtValue(maxValue)}</span>
       </Box>
-      {unit && (
-        <Typography sx={{ textAlign: 'center', fontFamily: UI.mono, fontSize: '10px', color: UI.dim, mt: 0.25 }}>
-          {unit}
-        </Typography>
-      )}
     </Box>
   );
 });
