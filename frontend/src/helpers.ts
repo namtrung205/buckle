@@ -65,17 +65,23 @@ export const exportModelJson = (model: Model) => {
         release: member.release || ""
       };
     }),
+    // DOF restraint flags (dx, dy, dz, rx, ry, rz) are semantic labels, not
+    // spatial vectors — they keep their meaning (Dx = restrain translation
+    // along X, ...) regardless of the render frame. They must NOT be swapped
+    // Y<->Z like node coordinates / vecxz / load values are. OpenSees applies
+    // them directly via ops.fix(target, dx, dy, dz, rx, ry, rz) with DOFs
+    // 1..6 = Dx,Dy,Dz,Rx,Ry,Rz, so pass them through unchanged.
     boundary_conditions: model.boundaryConditions.map(bc => ({
       id: bc.id,
       type: bc.type,
       targets: bc.targets,
       name: bc.name,
       dx: bc.dx,
-      dy: bc.dz,
-      dz: bc.dy,
+      dy: bc.dy,
+      dz: bc.dz,
       rx: bc.rx,
-      ry: bc.rz,
-      rz: bc.ry
+      ry: bc.ry,
+      rz: bc.rz
     })),
     loads: model.loads.map(load => {
       const v = threeToJson(load.value);
@@ -207,7 +213,9 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
     console.log(`Created ${jsonData.shells.length} shells`)
   }
 
-  // 5. Create boundary conditions — swap Y<->Z DOF flags (dy<->dz, ry<->rz)
+  // 5. Create boundary conditions — DOF flags keep their semantic meaning and
+  // are passed through unchanged (no Y<->Z swap; only spatial vectors such as
+  // node coordinates / vecxz / load values are converted to the three.js frame).
   if (jsonData.boundary_conditions) {
     jsonData.boundary_conditions.forEach((bcData: any) => {
       const boundaryCondition = new BoundaryCondition(model, {
@@ -216,11 +224,11 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
         targets: bcData.targets,
         name: bcData.name,
         dx: bcData.dx,
-        dy: bcData.dz,
-        dz: bcData.dy,
+        dy: bcData.dy,
+        dz: bcData.dz,
         rx: bcData.rx,
-        ry: bcData.rz,
-        rz: bcData.ry
+        ry: bcData.ry,
+        rz: bcData.rz
       } as any)
       boundaryCondition.createOrUpdate()
     })
