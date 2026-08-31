@@ -178,6 +178,10 @@ class PostProcessing {
       `[Diagrams] member ${member.id}: offset source = ${hasPlotPoints ? 'backend plot_points' : vecxz ? 'vecxz fallback' : 'generic fallback'}, localZ(three) = (${localZ.x.toFixed(2)}, ${localZ.y.toFixed(2)}, ${localZ.z.toFixed(2)})`
     )
 
+    // True displacement stations from the backend (real nodal + Hermite-refined).
+    // Preferred for the deflected-shape mode; fall back to end-node lerp below.
+    const dispStations = this.getMemberDisplacementStations(member, axis, p0)
+
     const stations: StationPoint[] = points.map(p => {
       const base = this.toThreeCoord(p.coord)
       // Per-force diagram offsets exactly as the backend computes them:
@@ -187,10 +191,25 @@ class PostProcessing {
       for (const [key, point] of Object.entries(p.plotPoints)) {
         offsetsByType[key] = this.toThreeCoord(point).sub(base).multiplyScalar(1 / (SFAC * 1E3))
       }
-      // Real displacement interpolated between the two end nodes (deflected-shape mode)
+      const t = length > 0 ? base.clone().sub(p0).dot(axis) / length : 0
+      // Real displacement for the deflected-shape mode, preferring the true
+      // backend stations (cubic-accurate) over the legacy straight end-to-end lerp.
       let dispVec: THREE.Vector3 | undefined
-      if (endDisp) {
-        const t = length > 0 ? base.clone().sub(p0).dot(axis) / length : 0
+      if (dispStations.length >= 2) {
+        // Piecewise-linear interpolation between the (already cubic) displacement
+        // stations to match this station's arc position t.
+        let lo = dispStations[0]
+        let hi = dispStations[dispStations.length - 1]
+        for (let k = 1; k < dispStations.length; k++) {
+          if (dispStations[k].s >= t * length) { lo = dispStations[k - 1]; hi = dispStations[k]; break }
+        }
+        const span = hi.s - lo.s
+        const f = span > 1e-12 ? (t * length - lo.s) / span : 0
+        dispVec = lo.vec.clone().lerp(hi.vec, f)
+        p.values['dX'] = dispVec.x
+        p.values['dY'] = dispVec.y
+        p.values['dZ'] = dispVec.z
+      } else if (endDisp) {
         dispVec = endDisp[0].clone().lerp(endDisp[1], t)
         p.values['dX'] = dispVec.x
         p.values['dY'] = dispVec.y
@@ -242,6 +261,28 @@ class PostProcessing {
     }
     if (!result[0] || !result[1]) return null
     return [result[0] as THREE.Vector3, result[1] as THREE.Vector3]
+  }
+
+  /**
+   * Per-member true displacement stations from the backend (when available).
+   *
+   * The backend `displacement_stations` carries the real, per-node (and
+   * Hermite-refined) deflection in the Z-up frame. We convert each to the
+   * three.js frame and report its arc position along the member axis, giving a
+   * cubic-accurate deflected shape instead of a straight end-to-end lerp.
+   */
+  private getMemberDisplacementStations(member: any, axis: THREE.Vector3, p0: THREE.Vector3): { s: number, vec: THREE.Vector3 }[] {
+    const raw = member?.displacement_stations
+    if (!Array.isArray(raw) || raw.length < 2) return []
+    const out: { s: number, vec: THREE.Vector3 }[] = []
+    for (const st of raw) {
+      const coord = this.toThreeCoord(st.coord)
+      const d = st.disp ?? {}
+      const s = coord.sub(p0).dot(axis)
+      out.push({ s, vec: jsonToThree(d.ux ?? 0, d.uy ?? 0, d.uz ?? 0) })
+    }
+    out.sort((a, b) => a.s - b.s)
+    return out
   }
 
   /** Largest extent of the analysed model, used for auto-scaling diagrams. */

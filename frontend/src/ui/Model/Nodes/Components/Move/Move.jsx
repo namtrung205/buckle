@@ -16,6 +16,7 @@ import {
 } from '@mui/icons-material';
 import { useModel } from '../../../../../model/Context';
 import { observer } from 'mobx-react-lite';
+import { colors, fontFamily } from '../../../../../theme';
 import * as THREE from 'three'
 import Node from '../../../../../model/Elements/Node/Node'
 import Dialog from '../../../../../components/Dialog/Dialog';
@@ -167,9 +168,9 @@ const Move = ({
               variant="body2"
               sx={{
                 fontWeight: 500,
-                color: '#b0b0b0',
+                color: colors.textDim,
                 fontSize: '0.8rem',
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                fontFamily,
                 mb: 1,
                 width: '100%'
               }}
@@ -184,42 +185,42 @@ const Move = ({
                   onChange={handleNodeSelection}
                   sx={{
                     width: '100%',
-                    backgroundColor: '#ffffff',
-                    color: '#b0b0b0',
+                    backgroundColor: colors.surfaceAlt,
+                    color: colors.textDim,
                     fontSize: '0.875rem',
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                    fontFamily,
                     '& .MuiOutlinedInput-notchedOutline': {
-                      borderColor: '#b0b0b0',
+                      borderColor: colors.border,
                     },
                     '&:hover .MuiOutlinedInput-notchedOutline': {
-                      borderColor: '#999',
+                      borderColor: colors.borderDark,
                     },
                     '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                      borderColor: '#555',
+                      borderColor: colors.accent,
                     },
                     '& .MuiSelect-icon': {
-                      color: '#555',
+                      color: colors.textDim,
                     },
                     '& .MuiSelect-select': {
                       py: 1,
                       fontSize: '0.875rem',
-                      fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      color: '#b0b0b0'
+                      fontFamily,
+                      color: colors.textDim
                     }
                   }}
                   MenuProps={{
                     PaperProps: {
                       sx: {
-                        backgroundColor: '#ffffff',
-                        border: '1px solid #b0b0b0',
+                        backgroundColor: colors.surfaceAlt,
+                        border: '1px solid ' + colors.border,
                         '& .MuiMenuItem-root': {
                           fontSize: '0.875rem',
-                          color: '#333',
+                          color: colors.text,
                           '&:hover': {
-                            backgroundColor: '#e8e8e8',
+                            backgroundColor: colors.hover,
                           },
                           '&.Mui-selected': {
-                            backgroundColor: '#d0d0d0',
+                            backgroundColor: colors.surfaceAlt,
                           },
                         },
                       }
@@ -245,13 +246,13 @@ const Move = ({
                               size="small"
                               sx={{ 
                                 height: 24,
-                                backgroundColor: '#d0d0d0',
-                                color: 'black',
+                                backgroundColor: colors.surfaceAlt,
+                                color: colors.text,
                                 marginTop:'0.5rem',
                                 '& .MuiChip-deleteIcon': {
-                                  color: '#666',
+                                  color: colors.textDim,
                                   '&:hover': {
-                                    color: '#000'
+                                    color: colors.text
                                   }
                                 }
                               }}
@@ -277,9 +278,9 @@ const Move = ({
               variant="body2"
               sx={{
                 fontWeight: 500,
-                color: '#b0b0b0',
+                color: colors.textDim,
                 fontSize: '0.875rem',
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                fontFamily,
                 mb: 1.5
               }}
             >
@@ -287,7 +288,7 @@ const Move = ({
             </Typography>
             <Box sx={{ 
               width: '100%',
-              border: '1px solid #b0b0b0',
+              border: '1px solid ' + colors.border,
               borderRadius: '4px',
               p: 2
             }}>
@@ -298,9 +299,9 @@ const Move = ({
                         variant="body2"
                         sx={{
                           fontWeight: 500,
-                          color: '#b0b0b0',
+                          color: colors.textDim,
                           fontSize: '0.8rem',
-                          fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          fontFamily,
                         }}
                       >
                         dX
@@ -326,9 +327,9 @@ const Move = ({
                         variant="body2"
                         sx={{
                           fontWeight: 500,
-                          color: '#b0b0b0',
+                          color: colors.textDim,
                           fontSize: '0.8rem',
-                          fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          fontFamily,
                         }}
                       >
                         dY
@@ -354,9 +355,9 @@ const Move = ({
                         variant="body2"
                         sx={{
                           fontWeight: 500,
-                          color: '#b0b0b0',
+                          color: colors.textDim,
                           fontSize: '0.8rem',
-                          fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          fontFamily,
                         }}
                       >
                         dZ
@@ -382,9 +383,9 @@ const Move = ({
                         variant="body2"
                         sx={{
                           fontWeight: 500,
-                          color: '#b0b0b0',
+                          color: colors.textDim,
                           fontSize: '0.8rem',
-                          fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          fontFamily,
                         }}
                       >
                         Edit mode
@@ -408,9 +409,9 @@ const Move = ({
                         variant="body2"
                         sx={{
                           fontWeight: 500,
-                          color: '#b0b0b0',
+                          color: colors.textDim,
                           fontSize: '0.8rem',
-                          fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          fontFamily,
                         }}
                       >
                         Repetitions
@@ -439,10 +440,10 @@ const Move = ({
               onClick={handleSave}
               size="small"
               sx={{
-                color: 'white',
+                color: colors.text,
                 '&:hover': {
-                  color: '#000',
-                  backgroundColor: 'rgba(0, 0, 0, 0.08)',
+                  color: colors.text,
+                  backgroundColor: colors.hover,
                 },
               }}
             >

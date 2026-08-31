@@ -1,6 +1,7 @@
 import { Box, Typography } from '@mui/material';
 import { useModel } from '../../model/Context';
 import { observer } from 'mobx-react-lite';
+import { colors, fontFamily } from '../../theme';
 
 /**
  * Global unit system — the single place units are referenced.
@@ -37,8 +38,8 @@ const StatusBar = () => {
     <Box
       sx={{
         height: '24px',
-        backgroundColor: '#2d2d2d',
-        borderTop: '1px solid #1e1e1e',
+        backgroundColor: colors.surface,
+        borderTop: '1px solid ' + colors.border,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -48,18 +49,18 @@ const StatusBar = () => {
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-          <Typography sx={{ fontSize: '0.7rem', color: '#a0a0a0', fontWeight: 500 }}>
+          <Typography sx={{ fontSize: '0.7rem', color: colors.textDim, fontWeight: 500 }}>
             U N I T S :
           </Typography>
           {UNIT_ITEMS.map(item => {
             const isActive = activeType != null && !!item.diagramTypes?.includes(activeType);
-            const color = isActive ? '#4fc3f7' : '#a0a0a0';
+            const color = isActive ? colors.accent : colors.textDim;
             return (
               <Typography
                 key={item.label}
-                sx={{ fontSize: '0.7rem', color, fontWeight: isActive ? 700 : 500, fontFamily: '"Inter", sans-serif' }}
+                sx={{ fontSize: '0.7rem', color, fontWeight: isActive ? 700 : 500, fontFamily }}
               >
-                {item.label}: <Box component="span" sx={{ color: isActive ? '#4fc3f7' : '#e0e0e0' }}>{item.unit}</Box>
+                {item.label}: <Box component="span" sx={{ color: isActive ? colors.accent : colors.text }}>{item.unit}</Box>
               </Typography>
             );
           })}
@@ -67,16 +68,16 @@ const StatusBar = () => {
 
         {(nodesCount > 0 || membersCount > 0) && (
           <>
-            <Typography sx={{ fontSize: '0.7rem', color: '#a0a0a0', fontWeight: 500 }}>
+            <Typography sx={{ fontSize: '0.7rem', color: colors.textDim, fontWeight: 500 }}>
               S E L E C T I O N :
             </Typography>
             {nodesCount > 0 && (
-              <Typography sx={{ fontSize: '0.7rem', color: '#ffb300', fontWeight: 500, fontFamily: '"Inter", sans-serif' }}>
+              <Typography sx={{ fontSize: '0.7rem', color: colors.secondary, fontWeight: 500, fontFamily }}>
                 {nodesCount} Node{nodesCount > 1 ? 's' : ''}
               </Typography>
             )}
             {membersCount > 0 && (
-              <Typography sx={{ fontSize: '0.7rem', color: '#4fc3f7', fontWeight: 500, fontFamily: '"Inter", sans-serif' }}>
+              <Typography sx={{ fontSize: '0.7rem', color: colors.accent, fontWeight: 500, fontFamily }}>
                 {membersCount} Member{membersCount > 1 ? 's' : ''}
               </Typography>
             )}
@@ -88,9 +89,9 @@ const StatusBar = () => {
         <Typography
           sx={{
             fontSize: '0.7rem',
-            color: '#ffffff',
+            color: colors.text,
             fontWeight: 500,
-            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontFamily,
           }}
         >
           X: {model?.pointerCoords.x.toFixed(2)} Y: {model?.pointerCoords.y.toFixed(2)} Z: {model?.pointerCoords.z.toFixed(2)}

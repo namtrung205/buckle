@@ -6,15 +6,16 @@ import {
   Typography
 } from '@mui/material';
 import { ExpandMore } from '@mui/icons-material';
+import { colors } from '../../theme';
 
-const Accordion = ({ 
-  title, 
-  children, 
+const Accordion = ({
+  title,
+  children,
   defaultExpanded = false,
   sx = {},
   titleSx = {},
   contentSx = {},
-  ...props 
+  ...props
 }) => {
   return (
     <MuiAccordion
@@ -23,21 +24,15 @@ const Accordion = ({
         mt: 1,
         width: '100%',
         boxShadow: 'none',
-        // border: '1px solid #e0e0e0',
-        // '&:before': {
-        //   display: 'none',
-        // },
-        // '&.Mui-expanded': {
-        //   margin: '8px 0',
-        // },
+        backgroundColor: colors.surface,
         ...sx
       }}
       {...props}
     >
       <AccordionSummary
-        expandIcon={<ExpandMore sx={{ color: 'black' }} />}
+        expandIcon={<ExpandMore sx={{ color: colors.textDim }} />}
         sx={{
-          backgroundColor: 'white',
+          backgroundColor: colors.surface,
           width: '100%',
           padding: 0,
           minHeight: '36px',
@@ -58,7 +53,7 @@ const Accordion = ({
           variant="body2"
           sx={{
             fontWeight: 500,
-            color: '#333333',
+            color: colors.textDim,
             fontSize: '0.8rem',
             width: '100%'
           }}
@@ -69,7 +64,7 @@ const Accordion = ({
       <AccordionDetails
         sx={{
           padding: 0,
-          backgroundColor: '#ffffff',
+          backgroundColor: colors.surface,
           ...contentSx
         }}
       >

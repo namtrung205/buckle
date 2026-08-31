@@ -11,6 +11,7 @@ import {
 import CloseIcon from '@mui/icons-material/Close';
 import Draggable from 'react-draggable';
 import Paper from '@mui/material/Paper';
+import { colors, fontFamily } from '../../theme';
 
 interface DialogProps extends Omit<MuiDialogProps, 'title'> {
   open: boolean;
@@ -79,12 +80,12 @@ const Dialog: React.FC<DialogProps> = ({
       }}
       PaperProps={{
         sx: {
-          backgroundColor: '#2d2d2d',
+          backgroundColor: colors.surface,
           borderRadius: '8px',
-          border: '2px solid #1e1e1e',
-          boxShadow: '0 4px 8px rgba(0, 0, 0, 0.5)',
+          border: `1px solid ${colors.border}`,
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
           overflow: 'hidden',
-          color: '#e0e0e0',
+          color: colors.text,
           maxHeight: '80vh',
           overflowY: 'auto',
           position: 'fixed',
@@ -101,8 +102,8 @@ const Dialog: React.FC<DialogProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            backgroundColor: '#2d2d2d',
-            borderBottom: '2px solid #1e1e1e',
+            backgroundColor: colors.surface,
+            borderBottom: `1px solid ${colors.border}`,
             py: 1,
             px: 2,
             cursor: draggable ? 'move' : 'default',
@@ -112,10 +113,10 @@ const Dialog: React.FC<DialogProps> = ({
         >
           <Typography
             sx={{
-              color: '#e0e0e0',
+              color: colors.text,
               fontSize: '0.9rem',
               fontWeight: 400,
-              fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              fontFamily,
             }}
           >
             {title}
@@ -125,10 +126,10 @@ const Dialog: React.FC<DialogProps> = ({
             onClick={onClose}
             size="small"
             sx={{
-              color: '#b0b0b0',
+              color: colors.textDim,
               '&:hover': {
-                color: '#e0e0e0',
-                backgroundColor: '#3f3f3f',
+                color: colors.text,
+                backgroundColor: colors.hover,
               },
             }}
           >
@@ -136,11 +137,11 @@ const Dialog: React.FC<DialogProps> = ({
           </IconButton>
         </DialogTitle>
       )}
-      <DialogContent sx={{ p: 2, backgroundColor: '#2d2d2d', pointerEvents: 'auto' }}>
+      <DialogContent sx={{ p: 2, backgroundColor: colors.surface, pointerEvents: 'auto' }}>
         {children}
       </DialogContent>
       {actions && (
-        <DialogActions sx={{ pointerEvents: 'auto', p: 2, backgroundColor: '#2d2d2d', borderTop: '2px solid #1e1e1e' }}>
+        <DialogActions sx={{ pointerEvents: 'auto', p: 2, backgroundColor: colors.surface, borderTop: `1px solid ${colors.border}` }}>
           {actions}
         </DialogActions>
       )}

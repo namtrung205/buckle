@@ -7,6 +7,7 @@ import {
 import TextField from '../../../components/TextField/TextField';
 import { useModel } from '../../../model/Context';
 import { observer } from 'mobx-react-lite';
+import { fieldLabelSx } from '../../../theme';
 
 const GridHelper = () => {
 	const model = useModel()
@@ -21,14 +22,7 @@ const GridHelper = () => {
 	return(
 		<>
 			<Box>
-				<Typography
-					sx={{
-						fontSize: '0.75rem',
-						mb: 0.5,
-						fontWeight: 500,
-						fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-					}}
-				>
+				<Typography sx={fieldLabelSx}>
 					Spacing
 				</Typography>
 				<TextField
@@ -41,15 +35,7 @@ const GridHelper = () => {
 			</Box>
 
 			<Box>
-				<Typography
-					sx={{
-						fontSize: '0.75rem',
-						color: '#555',
-						mb: 0.5,
-						fontWeight: 500,
-						fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-					}}
-				>
+				<Typography sx={fieldLabelSx}>
 					Size
 				</Typography>
 				<TextField

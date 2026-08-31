@@ -3,6 +3,7 @@ import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
 import { useEffect, useRef } from 'react';
 import { Prompt } from '../../types';
+import { colors } from '../../theme';
 
 interface AnalysisProgressProps {
   open: boolean;
@@ -30,16 +31,16 @@ const AnalysisProgress = observer(({ open, onClose, onViewResults }: AnalysisPro
       fullWidth
       PaperProps={{
         sx: {
-          bgcolor: '#2d2d2d',
-          color: '#e0e0e0',
-          border: '1px solid #404040',
+          backgroundColor: colors.surface,
+          color: colors.text,
+          border: `1px solid ${colors.border}`,
         }
       }}
     >
-      <DialogTitle sx={{ borderBottom: '1px solid #404040', pb: 2 }}>
+      <DialogTitle sx={{ borderBottom: `1px solid ${colors.border}`, pb: 2 }}>
         Analysis Progress
         {!model.console.isFinished && (
-          <Typography component="span" sx={{ ml: 2, fontSize: '0.9rem', color: '#90caf9', fontStyle: 'italic' }}>
+          <Typography component="span" sx={{ ml: 2, fontSize: '0.9rem', color: colors.accentSoft, fontStyle: 'italic' }}>
             Calculation in progress...
           </Typography>
         )}
@@ -48,7 +49,7 @@ const AnalysisProgress = observer(({ open, onClose, onViewResults }: AnalysisPro
         <Box 
           sx={{ 
             height: '400px', 
-            bgcolor: '#1e1e1e', 
+            backgroundColor: colors.bg, 
             p: 2, 
             overflowY: 'auto',
             fontFamily: 'monospace',
@@ -58,17 +59,17 @@ const AnalysisProgress = observer(({ open, onClose, onViewResults }: AnalysisPro
           }}
         >
           {model.console.prompts.map((line: Prompt, index: number) => (
-            <Typography key={index} sx={{ fontSize: '0.85rem', color: line.message.includes('ERROR') ? '#f44336' : '#a0a0a0', fontFamily: 'monospace' }}>
+            <Typography key={index} sx={{ fontSize: '0.85rem', color: line.message.includes('ERROR') ? colors.danger : colors.textDim, fontFamily: 'monospace' }}>
               {line.message}
             </Typography>
           ))}
           <div ref={logsEndRef} />
         </Box>
       </DialogContent>
-      <DialogActions sx={{ borderTop: '1px solid #404040', p: 2 }}>
+      <DialogActions sx={{ borderTop: `1px solid ${colors.border}`, p: 2 }}>
         <Button 
           onClick={onClose} 
-          sx={{ color: '#a0a0a0' }}
+          color="inherit"
         >
           Close
         </Button>
@@ -77,11 +78,9 @@ const AnalysisProgress = observer(({ open, onClose, onViewResults }: AnalysisPro
           variant="contained" 
           disabled={!model.console.isFinished}
           sx={{ 
-            bgcolor: '#1976d2',
-            '&:hover': { bgcolor: '#115293' },
             '&.Mui-disabled': {
-              bgcolor: '#3d3d3d',
-              color: '#666'
+              backgroundColor: colors.surfaceAlt,
+              color: colors.textFaint
             }
           }}
         >

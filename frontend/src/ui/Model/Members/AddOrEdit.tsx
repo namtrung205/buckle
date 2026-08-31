@@ -13,6 +13,7 @@ import Dialog from '../../../components/Dialog/Dialog';
 import ElasticBeamColumn from '../../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import TextField from '../../../components/TextField/TextField';
 import Select from '../../../components/Select';
+import { colors, fieldLabelSx } from '../../../theme';
 
 interface AddOrEditProps {
   open: boolean;
@@ -136,44 +137,17 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
     <Box sx={{ display: 'flex', gap: 1 }}>
       <Button
         variant="outlined"
+        color="inherit"
         size="small"
         onClick={handleCancel}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: '#ffffff',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Cancel
       </Button>
       <Button
-        variant="outlined"
+        variant="contained"
         size="small"
         onClick={handleSave}
         startIcon={<SaveIcon sx={{ fontSize: '0.875rem' }} />}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: '#ffffff',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Save
       </Button>
@@ -196,15 +170,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
         <Stack spacing={1.5}>
           {/* Label */}
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Label
             </Typography>
             <TextField
@@ -218,15 +184,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
 
           {/* Node I */}
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Node I
             </Typography>
             <Select
@@ -240,15 +198,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
 
           {/* Node J */}
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Node J
             </Typography>
             <Select
@@ -262,15 +212,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
 
           {/* Section */}
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Section
             </Typography>
             <Select
@@ -284,15 +226,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
 
           {/* Gamma */}
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Gamma
             </Typography>
             <TextField
@@ -306,15 +240,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
 
           {/* Release */}
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Release
             </Typography>
             <Box sx={{ position: 'relative' }}>
@@ -338,10 +264,10 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
                     top: '50%',
                     transform: 'translateY(-50%)',
                     padding: '2px',
-                    color: '#ffffff',
+                    color: colors.textDim,
                     '&:hover': {
-                      color: '#e0e0e0',
-                      backgroundColor: '#4a4a4a',
+                      color: colors.text,
+                      backgroundColor: colors.hover,
                     },
                   }}
                 >

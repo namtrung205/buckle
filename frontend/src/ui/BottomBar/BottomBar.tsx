@@ -19,6 +19,7 @@ import {
 } from '@mui/icons-material';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
+import { colors } from '../../theme';
 import { NavTool, ZoomMode } from '../../types';
 
 interface ZoomOption {
@@ -38,13 +39,13 @@ const zoomOption = (mode: ZoomMode): ZoomOption =>
   ZOOM_OPTIONS.find(option => option.mode === mode) ?? ZOOM_OPTIONS[0];
 
 const activeStyle = (active: boolean) => ({
-  color: active ? '#ffffff' : '#e0e0e0',
+  color: active ? colors.text : colors.text,
   width: 30,
   height: 30,
   borderRadius: 1.5,
-  backgroundColor: active ? '#4a90e2' : 'transparent',
+  backgroundColor: active ? colors.accent : 'transparent',
   '&:hover': {
-    bgcolor: active ? '#3a7bc8' : '#3c3c3c',
+    bgcolor: active ? colors.accentHover : colors.hover,
   },
 });
 
@@ -113,7 +114,7 @@ const BottomBar = observer(() => {
           backgroundColor: 'rgba(45, 45, 45, 0.92)',
           backdropFilter: 'blur(4px)',
           borderRadius: '18px',
-          border: '1px solid #3c3c3c',
+          border: '1px solid ' + colors.border,
           boxShadow: '0 4px 12px rgba(0, 0, 0, 0.4)',
         }}
       >
@@ -123,7 +124,7 @@ const BottomBar = observer(() => {
           </IconButton>
         </Tooltip>
 
-        <Divider orientation="vertical" flexItem sx={{ bgcolor: '#1e1e1e', mx: 0.5 }} />
+        <Divider orientation="vertical" flexItem sx={{ bgcolor: colors.border, mx: 0.5 }} />
 
         {/* Zoom split button */}
         <Tooltip title={`Zoom — ${zoom.title}`}>
@@ -136,13 +137,13 @@ const BottomBar = observer(() => {
             onClick={(event: MouseEvent<HTMLElement>) => setZoomAnchor(event.currentTarget)}
             size="small"
             sx={{
-              color: '#e0e0e0',
+              color: colors.text,
               width: 16,
               height: 30,
               p: 0,
               mr: 0.5,
               borderRadius: 1.5,
-              '&:hover': { bgcolor: '#3c3c3c' },
+              '&:hover': { bgcolor: colors.hover },
             }}
           >
             <KeyboardArrowDown sx={{ fontSize: 14 }} />
@@ -157,8 +158,8 @@ const BottomBar = observer(() => {
           slotProps={{
             paper: {
               sx: {
-                backgroundColor: '#2d2d2d',
-                color: '#ffffff',
+                backgroundColor: colors.surface,
+                color: colors.text,
                 boxShadow: '0 4px 6px rgba(0, 0, 0, 0.5)',
                 minWidth: '64px',
               },
@@ -171,15 +172,15 @@ const BottomBar = observer(() => {
               selected={zoomMode === option.mode}
               onClick={() => handleZoomModeSelect(option.mode)}
               sx={{
-                '&:hover': { backgroundColor: '#3f3f3f' },
+                '&:hover': { backgroundColor: colors.hover },
                 justifyContent: 'space-between',
                 gap: 1,
               }}
             >
               <Tooltip title={option.title}>
-                <option.Icon sx={{ fontSize: 18, color: '#e0e0e0' }} />
+                <option.Icon sx={{ fontSize: 18, color: colors.text }} />
               </Tooltip>
-              {zoomMode === option.mode && <Check sx={{ color: '#4a90e2', fontSize: 16 }} />}
+              {zoomMode === option.mode && <Check sx={{ color: colors.accent, fontSize: 16 }} />}
             </MenuItem>
           ))}
         </Menu>

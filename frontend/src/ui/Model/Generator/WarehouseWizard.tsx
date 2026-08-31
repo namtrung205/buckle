@@ -14,6 +14,7 @@ import { observer } from 'mobx-react-lite';
 import * as THREE from 'three';
 import { useModel } from '../../../model/Context';
 import Dialog from '../../../components/Dialog/Dialog';
+import { colors } from '../../../theme';
 import TextField from '../../../components/TextField';
 import { Node, ElasticBeamColumn, Load, Shell } from '../../../model';
 import BoundaryCondition from '../../../model/BoundaryCondition/BoundaryCondition';
@@ -404,10 +405,10 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
           <Tabs
             value={tabIndex}
             onChange={handleTabChange}
-            TabIndicatorProps={{ style: { backgroundColor: '#ffeb3b' } }}
+            TabIndicatorProps={{ style: { backgroundColor: colors.accent } }}
             sx={{
-              '& .MuiTab-root': { color: '#aaa', textTransform: 'none', fontWeight: 600 },
-              '& .Mui-selected': { color: '#ffeb3b !important' }
+              '& .MuiTab-root': { color: colors.textFaint, textTransform: 'none', fontWeight: 600 },
+              '& .Mui-selected': { color: colors.accentSoft }
             }}
           >
             <Tab label="1. General Info" />
@@ -426,8 +427,8 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             <Grid item xs={12}><TextField label="Number of Bays" name="numBays" type="number" value={params.numBays} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
             <Grid item xs={12}>
               <FormControlLabel
-                control={<Checkbox name="clearExisting" checked={params.clearExisting} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#f44336' } }} />}
-                label={<Typography variant="body2" sx={{ color: '#e0e0e0', fontWeight: 500 }}>Clear existing model before generation</Typography>}
+                control={<Checkbox name="clearExisting" checked={params.clearExisting} onChange={handleChange} sx={{ color: colors.textFaint, '&.Mui-checked': { color: colors.danger } }} />}
+                label={<Typography variant="body2" sx={{ color: colors.text, fontWeight: 500 }}>Clear existing model before generation</Typography>}
               />
             </Grid>
           </Grid>
@@ -437,7 +438,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
            <Grid container spacing={2} sx={{ mt: 1 }}>
              <Grid item xs={12}><TextField label="Purlins spaces per side" name="numPurlins" type="number" value={params.numPurlins} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
              <Grid item xs={12}>
-               <Typography variant="caption" sx={{ color: '#666' }}>Note: Rafters and Columns currently use the default section defined in the model.</Typography>
+               <Typography variant="caption" sx={{ color: colors.textFaint }}>Note: Rafters and Columns currently use the default section defined in the model.</Typography>
              </Grid>
            </Grid>
         </CustomTabPanel>
@@ -446,8 +447,8 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
               <FormControlLabel
-                control={<Checkbox name="hasBracing" checked={params.hasBracing} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#4caf50' } }} />}
-                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Cross Bracing (Side Walls & Roof)</Typography>}
+                control={<Checkbox name="hasBracing" checked={params.hasBracing} onChange={handleChange} sx={{ color: colors.textFaint, '&.Mui-checked': { color: colors.success } }} />}
+                label={<Typography variant="body2" sx={{ color: colors.text }}>Add Cross Bracing (Side Walls & Roof)</Typography>}
               />
             </Grid>
           </Grid>
@@ -457,30 +458,30 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={6}>
               <FormControlLabel
-                control={<Checkbox name="addMembrane" checked={params.addMembrane} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }} />}
-                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Enable Membrane/Bạt</Typography>}
+                control={<Checkbox name="addMembrane" checked={params.addMembrane} onChange={handleChange} sx={{ color: colors.textFaint, '&.Mui-checked': { color: colors.accent } }} />}
+                label={<Typography variant="body2" sx={{ color: colors.text }}>Enable Membrane/Bạt</Typography>}
               />
             </Grid>
             <Grid item xs={6}><TextField label="Thickness (m)" name="membraneThickness" type="number" value={params.membraneThickness} onChange={handleChange} fullWidth size="small" disabled={!params.addMembrane} placeholder="" /></Grid>
             
-            <Grid item xs={12}><Divider sx={{ my: 1, bgcolor: '#333' }} /></Grid>
+            <Grid item xs={12}><Divider sx={{ my: 1, bgcolor: colors.border }} /></Grid>
 
             {/* Wind Load */}
             <Grid item xs={7}>
               <FormControlLabel
-                control={<Checkbox name="addWindLoad" checked={params.addWindLoad} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#03a9f4' } }} />}
-                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Wind Load (Pressure)</Typography>}
+                control={<Checkbox name="addWindLoad" checked={params.addWindLoad} onChange={handleChange} sx={{ color: colors.textFaint, '&.Mui-checked': { color: colors.accent } }} />}
+                label={<Typography variant="body2" sx={{ color: colors.text }}>Add Wind Load (Pressure)</Typography>}
               />
             </Grid>
             <Grid item xs={5}><TextField label="Wind (kN/m²)" name="windMagnitude" type="number" value={params.windMagnitude} onChange={handleChange} fullWidth size="small" disabled={!params.addWindLoad} placeholder="" /></Grid>
             
             {params.addWindLoad && (
               <Grid item xs={12} sx={{ pl: 4, mt: -1 }}>
-                <Typography variant="caption" sx={{ display: 'block', mb: 0.5, color: '#888' }}>Target Shells:</Typography>
+                <Typography variant="caption" sx={{ display: 'block', mb: 0.5, color: colors.textDim }}>Target Shells:</Typography>
                 <Grid container>
-                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnRoof" checked={params.windOnRoof} onChange={handleChange} size="small" sx={{ color: '#888', '&.Mui-checked': { color: '#ffeb3b' } }} />} label={<Typography variant="caption" sx={{ color: '#e0e0e0' }}>Roof</Typography>} /></Grid>
-                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnSideWalls" checked={params.windOnSideWalls} onChange={handleChange} size="small" sx={{ color: '#888', '&.Mui-checked': { color: '#ffeb3b' } }} />} label={<Typography variant="caption" sx={{ color: '#e0e0e0' }}>Sides</Typography>} /></Grid>
-                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnEndWalls" checked={params.windOnEndWalls} onChange={handleChange} size="small" sx={{ color: '#888', '&.Mui-checked': { color: '#ffeb3b' } }} />} label={<Typography variant="caption" sx={{ color: '#e0e0e0' }}>Ends</Typography>} /></Grid>
+                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnRoof" checked={params.windOnRoof} onChange={handleChange} size="small" sx={{ color: colors.textDim, '&.Mui-checked': { color: colors.accent } }} />} label={<Typography variant="caption" sx={{ color: colors.text }}>Roof</Typography>} /></Grid>
+                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnSideWalls" checked={params.windOnSideWalls} onChange={handleChange} size="small" sx={{ color: colors.textDim, '&.Mui-checked': { color: colors.accent } }} />} label={<Typography variant="caption" sx={{ color: colors.text }}>Sides</Typography>} /></Grid>
+                  <Grid item xs={4}><FormControlLabel control={<Checkbox name="windOnEndWalls" checked={params.windOnEndWalls} onChange={handleChange} size="small" sx={{ color: colors.textDim, '&.Mui-checked': { color: colors.accent } }} />} label={<Typography variant="caption" sx={{ color: colors.text }}>Ends</Typography>} /></Grid>
                 </Grid>
               </Grid>
             )}
@@ -488,29 +489,29 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             {/* Snow Load */}
             <Grid item xs={7}>
               <FormControlLabel
-                control={<Checkbox name="addSnowLoad" checked={params.addSnowLoad} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#ffeb3b' } }} />}
-                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Add Snow Load (Gravity)</Typography>}
+                control={<Checkbox name="addSnowLoad" checked={params.addSnowLoad} onChange={handleChange} sx={{ color: colors.textFaint, '&.Mui-checked': { color: colors.accent } }} />}
+                label={<Typography variant="body2" sx={{ color: colors.text }}>Add Snow Load (Gravity)</Typography>}
               />
             </Grid>
             <Grid item xs={5}><TextField label="Snow (kN/m²)" name="snowMagnitude" type="number" value={params.snowMagnitude} onChange={handleChange} fullWidth size="small" disabled={!params.addSnowLoad} placeholder="" /></Grid>
 
-            <Grid item xs={12}><Divider sx={{ my: 1, bgcolor: '#333' }} /></Grid>
+            <Grid item xs={12}><Divider sx={{ my: 1, bgcolor: colors.border }} /></Grid>
             
             <Grid item xs={12}>
               <FormControlLabel
-                control={<Checkbox name="addSelfWeight" checked={params.addSelfWeight} onChange={handleChange} sx={{ color: '#666', '&.Mui-checked': { color: '#4caf50' } }} />}
-                label={<Typography variant="body2" sx={{ color: '#e0e0e0' }}>Include Steel Self-Weight</Typography>}
+                control={<Checkbox name="addSelfWeight" checked={params.addSelfWeight} onChange={handleChange} sx={{ color: colors.textFaint, '&.Mui-checked': { color: colors.success } }} />}
+                label={<Typography variant="body2" sx={{ color: colors.text }}>Include Steel Self-Weight</Typography>}
               />
             </Grid>
           </Grid>
         </CustomTabPanel>
 
         <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end', gap: 2, p: 2 }}>
-          <Button onClick={onClose} sx={{ color: '#aaa' }}>Cancel</Button>
+          <Button onClick={onClose} sx={{ color: colors.textFaint }}>Cancel</Button>
           <Button
             onClick={handleGenerate}
             variant="contained"
-            sx={{ bgcolor: '#4caf50', '&:hover': { bgcolor: '#388e3c' }, textTransform: 'none', px: 4, fontWeight: 600 }}
+            sx={{ bgcolor: colors.success, '&:hover': { bgcolor: colors.success }, textTransform: 'none', px: 4, fontWeight: 600 }}
           >
             Generate & Load Model
           </Button>

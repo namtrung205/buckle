@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { colors, fontFamily } from '../../../theme';
 import {
   Box,
   Typography,
@@ -92,7 +93,7 @@ const Benchmarks = observer(() => {
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#e8e8e8',
+        backgroundColor: colors.surface,
         p: 3,
       }}
     >
@@ -100,9 +101,9 @@ const Benchmarks = observer(() => {
         sx={{
           fontSize: '1.25rem',
           fontWeight: 600,
-          color: '#333',
+          color: colors.text,
           mb: 2,
-          fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontFamily,
         }}
       >
         Benchmarks
@@ -117,7 +118,7 @@ const Benchmarks = observer(() => {
             flex: 1,
           }}
         >
-          <CircularProgress size={40} sx={{ color: '#555' }} />
+          <CircularProgress size={40} sx={{ color: colors.textDim }} />
         </Box>
       )}
 
@@ -140,9 +141,9 @@ const Benchmarks = observer(() => {
               <ListItem
                 key={benchmark.id}
                 sx={{
-                  borderBottom: index < benchmarks.length - 1 ? '1px solid #e0e0e0' : 'none',
+                  borderBottom: index < benchmarks.length - 1 ? '1px solid ' + colors.borderDark : 'none',
                   '&:hover': {
-                    backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                    backgroundColor: colors.hover,
                   },
                 }}
               >
@@ -152,8 +153,8 @@ const Benchmarks = observer(() => {
                       sx={{
                         fontSize: '0.9rem',
                         fontWeight: 600,
-                        color: '#333',
-                        fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        color: colors.text,
+                        fontFamily,
                         mb: 0.5,
                       }}
                     >
@@ -164,8 +165,8 @@ const Benchmarks = observer(() => {
                     <Typography
                       sx={{
                         fontSize: '0.8rem',
-                        color: '#666',
-                        fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                        color: colors.textDim,
+                        fontFamily,
                       }}
                     >
                       {benchmark.description}
@@ -179,10 +180,10 @@ const Benchmarks = observer(() => {
                       size="small"
                       onClick={() => handleImport(benchmark.id)}
                       sx={{
-                        color: '#555',
+                        color: colors.textDim,
                         '&:hover': {
-                          color: '#000',
-                          backgroundColor: 'rgba(0, 0, 0, 0.08)',
+                          color: colors.text,
+                          backgroundColor: colors.hover,
                         },
                       }}
                     >

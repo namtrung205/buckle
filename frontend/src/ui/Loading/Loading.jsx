@@ -1,4 +1,5 @@
 import React from 'react';
+import { colors } from '../../theme';
 import { Backdrop, CircularProgress, Typography, Box } from '@mui/material';
 import { Settings } from '@mui/icons-material';
 
@@ -19,7 +20,7 @@ const Loading = ({
         <Settings 
           sx={{ 
             fontSize: 60, 
-            color: '#2196f3',
+            color: colors.accent,
             animation: 'spin 2s linear infinite',
             '@keyframes spin': {
               '0%': {
@@ -34,7 +35,7 @@ const Loading = ({
         <Typography
           variant="h6"
           sx={{
-            color: '#ffffff',
+            color: colors.text,
             mt: 2
           }}
         >

@@ -14,6 +14,7 @@ import { Section as SectionType } from '../../../types';
 import Section from '../../../model/Section/Section';
 import TextField from '../../../components/TextField/TextField';
 import Select from '../../../components/Select';
+import { fieldLabelSx } from '../../../theme';
 interface EditSectionProps {
   open: boolean;
   onClose: () => void;
@@ -110,42 +111,17 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
     <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
       <Button
         variant="outlined"
+        color="inherit"
         size="small"
         onClick={onClose}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: 'white',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-          },
-        }}
       >
         Cancel
       </Button>
       <Button
-        variant="outlined"
+        variant="contained"
         size="small"
         onClick={handleSave}
         startIcon={<SaveIcon sx={{ fontSize: '0.875rem' }} />}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: 'white',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-          },
-        }}
       >
         Save
       </Button>
@@ -169,13 +145,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
           {/* Name */}
           <Box>
             <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#b0b0b0',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
+              sx={fieldLabelSx}
             >
               Name
             </Typography>
@@ -192,13 +162,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
           {/* Type */}
           <Box>
             <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#b0b0b0',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
+              sx={fieldLabelSx}
             >
               Type
             </Typography>
@@ -214,13 +178,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
           {/* Material */}
           <Box>
             <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#b0b0b0',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
+              sx={fieldLabelSx}
             >
               Material
             </Typography>
@@ -238,13 +196,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
             <>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   Width (mm)
                 </Typography>
@@ -259,13 +211,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
               </Box>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   Height (mm)
                 </Typography>
@@ -284,13 +230,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
           {formData.type === 'Circular' && (
             <Box>
               <Typography
-                sx={{
-                  fontSize: '0.75rem',
-                  color: '#b0b0b0',
-                  mb: 0.5,
-                  fontWeight: 500,
-                  fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                }}
+                sx={fieldLabelSx}
               >
                 Diameter (mm)
               </Typography>
@@ -309,13 +249,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
             <>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   Diameter (mm)
                 </Typography>
@@ -330,13 +264,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
               </Box>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   Thickness (mm)
                 </Typography>
@@ -356,13 +284,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
             <>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   Depth (mm)
                 </Typography>
@@ -377,13 +299,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
               </Box>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   Width (mm)
                 </Typography>
@@ -398,13 +314,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
               </Box>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   tw (mm)
                 </Typography>
@@ -419,13 +329,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
               </Box>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   tf (mm)
                 </Typography>
@@ -440,13 +344,7 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
               </Box>
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#b0b0b0',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   r (mm)
                 </Typography>

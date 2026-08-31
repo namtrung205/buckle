@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import Dialog from '../../../components/Dialog/Dialog';
 import TextField from '../../../components/TextField/TextField';
 import Select from '../../../components/Select';
+import { fieldLabelSx } from '../../../theme';
 import { useModel } from '../../../model/Context';
 import Load from '../../../model/Load/Load';
 import { LoadType } from '../../../types';
@@ -207,47 +208,20 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
     <Box sx={{ display: 'flex', gap: 1 }}>
       <Button
         variant="outlined"
+        color="inherit"
         size="small"
         onClick={() => {
           reset();
           onClose();
         }}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: '#ffffff',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Cancel
       </Button>
       <Button
-        variant="outlined"
+        variant="contained"
         size="small"
         onClick={handleSave}
         startIcon={<SaveIcon sx={{ fontSize: '0.875rem' }} />}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: '#ffffff',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Save
       </Button>
@@ -269,16 +243,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
     >
         <Stack spacing={1.5}>
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Name
             </Typography>
             <TextField
@@ -291,16 +256,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
           </Box>
 
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Type
             </Typography>
             <Select
@@ -313,16 +269,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
           </Box>
 
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Direction
             </Typography>
             <Select
@@ -335,16 +282,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
           </Box>
 
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Value
             </Typography>
             <TextField
@@ -357,16 +295,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
           </Box>
 
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Elements
             </Typography>
             <FormControl fullWidth size="small">
@@ -386,60 +315,29 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
                           key={id}
                           label={getTargetLabel(id)}
                           size="small"
-                          sx={{
-                            backgroundColor: '#5a5a5a',
-                            color: '#e0e0e0',
-                            '& .MuiChip-deleteIcon': {
-                              color: '#ffffff',
-                              '&:hover': {
-                                color: '#f44336',
-                              },
-                            },
-                          }}
+                          onDelete={() =>
+                            setLoad((prev) => ({
+                              ...prev,
+                              targets: prev.targets.filter((t) => t !== id),
+                            }))
+                          }
                         />
                       ))}
                     </Box>
                   );
                 }}
                 sx={{
-                  backgroundColor: '#ffff',
                   fontSize: '0.875rem',
-                  '& .MuiOutlinedInput-notchedOutline': {
-                    borderColor: '#1e1e1e',
-                  },
-                  '&:hover .MuiOutlinedInput-notchedOutline': {
-                    borderColor: '#404040',
-                  },
-                  '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                    borderColor: '#5a5a5a',
-                  },
                   '& .MuiSelect-select': {
                     display: 'flex',
                     flexWrap: 'wrap',
                     gap: 0.5,
                     minHeight: '32px',
                     alignItems: 'center',
-                    color:'#e0e0e0'
                   },
                 }}
                 MenuProps={{
-                  PaperProps: {
-                    sx: {
-                      backgroundColor: '#3f3f3f',
-                      border: '1px solid #1e1e1e',
-                      maxHeight: 300,
-                      '& .MuiMenuItem-root': {
-                        fontSize: '0.85rem',
-                        color: '#e0e0e0',
-                        '&:hover': {
-                          backgroundColor: '#4a4a4a',
-                        },
-                        '&.Mui-selected': {
-                          backgroundColor: '#5a5a5a',
-                        },
-                      },
-                    },
-                  },
+                  PaperProps: { sx: { maxHeight: 300 } },
                 }}
               >
                 {

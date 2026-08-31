@@ -13,6 +13,7 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
+import { colors, fontFamily } from '../../theme';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
 import AddOrEditNode from '../Model/Nodes/AddOrEdit';
@@ -57,10 +58,10 @@ const TreeItem = ({ id, label, icon, children, level = 0, onAdd }: TreeItemProps
           px: 2,
           pl: 2 + level * 1.5,
           py: 1,
-          color: '#e0e0e0',
+          color: colors.text,
           transition: 'all 0.15s ease-in-out',
           '&:hover': {
-            backgroundColor: '#3f3f3f',
+            backgroundColor: colors.hover,
           },
         }}
       >
@@ -77,9 +78,9 @@ const TreeItem = ({ id, label, icon, children, level = 0, onAdd }: TreeItemProps
           {hasChildren && (
             <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 20 }}>
               {expanded ? (
-                <ExpandMoreIcon sx={{ fontSize: 18, color: '#a0a0a0' }} />
+                <ExpandMoreIcon sx={{ fontSize: 18, color: colors.textDim }} />
               ) : (
-                <ChevronRightIcon sx={{ fontSize: 18, color: '#a0a0a0' }} />
+                <ChevronRightIcon sx={{ fontSize: 18, color: colors.textDim }} />
               )}
             </Box>
           )}
@@ -91,8 +92,8 @@ const TreeItem = ({ id, label, icon, children, level = 0, onAdd }: TreeItemProps
             sx={{
               fontSize: '0.8rem',
               fontWeight: level === 0 ? 600 : 500,
-              color: level === 0 ? '#e0e0e0' : '#b0b0b0',
-              fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              color: level === 0 ? colors.text : colors.textDim,
+              fontFamily,
             }}
           >
             {label}
@@ -109,10 +110,10 @@ const TreeItem = ({ id, label, icon, children, level = 0, onAdd }: TreeItemProps
               opacity: isHovered ? 1 : 0.5,
               transition: 'all 0.2s ease-in-out',
               padding: '4px',
-              color: '#b0b0b0',
+              color: colors.textDim,
               '&:hover': {
-                backgroundColor: '#4a4a4a',
-                color: '#e0e0e0',
+                backgroundColor: colors.hover,
+                color: colors.text,
                 opacity: 1,
               },
             }}
@@ -156,8 +157,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
     <Box
       sx={{
         width: isCollapsed ? 0 : '280px',
-        backgroundColor: '#2d2d2d',
-        borderRight: isCollapsed ? 'none' : '2px solid #1e1e1e',
+        backgroundColor: colors.surface,
+        borderRight: isCollapsed ? 'none' : '2px solid ' + colors.border,
         display: 'flex',
         flexDirection: 'column',
         transition: 'width 0.3s ease-in-out, opacity 0.3s ease-in-out, border 0.3s ease-in-out',
@@ -176,13 +177,13 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
             width: '8px',
           },
           '&::-webkit-scrollbar-track': {
-            background: '#353535',
+            background: colors.surfaceAlt,
           },
           '&::-webkit-scrollbar-thumb': {
-            background: '#5a5a5a',
+            background: colors.border,
             borderRadius: '4px',
             '&:hover': {
-              background: '#6a6a6a',
+              background: colors.borderDark,
             },
           },
         }}
@@ -209,11 +210,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 '&:hover': {
-                  backgroundColor: '#3f3f3f',
+                  backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: '#b0b0b0' }}>
+              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
                 {material.name || `Material ${material.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -224,7 +225,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     setSelectedMaterial(material);
                     setAddOrEditMaterial(true);
                   }}
-                  sx={{ padding: '2px', color: '#b0b0b0', '&:hover': { color: '#e0e0e0' } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -237,7 +238,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                       model.materials.splice(index, 1);
                     }
                   }}
-                  sx={{ padding: '2px', color: '#d32f2f', '&:hover': { color: '#b71c1c' } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -265,11 +266,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 '&:hover': {
-                  backgroundColor: '#3f3f3f',
+                  backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: '#b0b0b0' }}>
+              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
                 {section.name || `Section ${section.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -280,7 +281,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     setSelectedSection(section)
                     setAddOrEditSection(true)
                   }}
-                  sx={{ padding: '2px', color: '#b0b0b0', '&:hover': { color: '#e0e0e0' } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -290,7 +291,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     e.stopPropagation();
                     console.log('Delete section', section.id);
                   }}
-                  sx={{ padding: '2px', color: '#d32f2f', '&:hover': { color: '#b71c1c' } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -321,11 +322,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 '&:hover': {
-                  backgroundColor: '#3f3f3f',
+                  backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: '#b0b0b0' }}>
+              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
                 {node.name || `Node ${node.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -336,7 +337,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                       setSelectedNode(node);
                       setAddOrEditNode(true); 
                   }}
-                  sx={{ padding: '2px', color: '#b0b0b0', '&:hover': { color: '#e0e0e0' } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -346,7 +347,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     e.stopPropagation();
                     node.delete()
                   }}
-                  sx={{ padding: '2px', color: '#d32f2f', '&:hover': { color: '#b71c1c' } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -355,7 +356,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           ))}
           {(model?.nodes?.length || 0) > 50 && (
             <Box sx={{ px: 2, pl: 6, py: 0.8 }}>
-              <Typography sx={{ fontSize: '0.7rem', color: '#707070', fontStyle: 'italic' }}>
+              <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint, fontStyle: 'italic' }}>
                 ... and {(model?.nodes?.length || 0) - 50} more
               </Typography>
             </Box>
@@ -384,11 +385,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 '&:hover': {
-                  backgroundColor: '#3f3f3f',
+                  backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: '#b0b0b0' }}>
+              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
                 {member.label || `Member ${member.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -399,7 +400,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     setSelectedMember(member);
                     setAddOrEditMember(true);
                   }}
-                  sx={{ padding: '2px', color: '#b0b0b0', '&:hover': { color: '#e0e0e0' } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -410,7 +411,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     console.log('Delete member', member.id);
                     member.remove()
                   }}
-                  sx={{ padding: '2px', color: '#d32f2f', '&:hover': { color: '#b71c1c' } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -419,7 +420,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           ))}
           {(model?.members?.length || 0) > 50 && (
             <Box sx={{ px: 2, pl: 6, py: 0.8 }}>
-              <Typography sx={{ fontSize: '0.7rem', color: '#707070', fontStyle: 'italic' }}>
+              <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint, fontStyle: 'italic' }}>
                 ... and {(model?.members?.length || 0) - 50} more
               </Typography>
             </Box>
@@ -448,11 +449,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 '&:hover': {
-                  backgroundColor: '#3f3f3f',
+                  backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: '#b0b0b0' }}>
+              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
                 {bc.name || `Support ${bc.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -463,7 +464,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     setSelectedBoundaryCondition(bc);
                     setAddOrEditBoundaryCondition(true);
                   }}
-                  sx={{ padding: '2px', color: '#b0b0b0', '&:hover': { color: '#e0e0e0' } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -477,7 +478,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                       support.delete();
                     }
                   }}
-                  sx={{ padding: '2px', color: '#d32f2f', '&:hover': { color: '#b71c1c' } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -508,11 +509,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 '&:hover': {
-                  backgroundColor: '#3f3f3f',
+                  backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: '#b0b0b0' }}>
+              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
                 {load.name || `Load ${load.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -524,7 +525,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     setSelectedLoad(load)
                     setAddOrEditLoad(true)
                   }}
-                  sx={{ padding: '2px', color: '#b0b0b0', '&:hover': { color: '#e0e0e0' } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -535,7 +536,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     console.log('Delete load', load.id);
                     load.delete()
                   }}
-                  sx={{ padding: '2px', color: '#d32f2f', '&:hover': { color: '#b71c1c' } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>

@@ -1,4 +1,5 @@
 import { Box, Typography, IconButton, Tooltip, Button, Tabs, Tab } from '@mui/material';
+import { colors } from '../../theme';
 import {
   Menu as MenuIcon,
   Save as SaveIcon,
@@ -72,14 +73,14 @@ const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled, active
           px: 0.75,
           py: 0,
           borderRadius: 1,
-          color: '#e0e0e0',
+          color: colors.text,
           textTransform: 'none',
-          backgroundColor: active ? '#4a90e2' : 'transparent',
+          backgroundColor: active ? colors.accent : 'transparent',
           '&:hover': {
-            bgcolor: active ? '#3a7bc8' : '#3f3f3f',
+            bgcolor: active ? colors.accentHover : colors.hover,
           },
           '&.Mui-disabled': {
-            color: '#6f6f6f',
+            color: colors.textFaint,
           },
         }}
       >
@@ -96,7 +97,7 @@ const RibbonButton = ({ title, label, onClick, icon, iconImage, disabled, active
             }}
           />
         ) : (
-          <Box sx={{ display: 'flex', color: '#ffffff' }}>
+          <Box sx={{ display: 'flex', color: colors.text }}>
             {icon}
           </Box>
         )}
@@ -113,7 +114,7 @@ const RibbonPanel = ({ label, children }: { label: string; children: React.React
       display: 'flex',
       flexDirection: 'column',
       px: 1.5,
-      borderRight: '1px solid #1e1e1e',
+      borderRight: '1px solid ' + colors.border,
       '&:last-of-type': { borderRight: 'none' },
     }}
   >
@@ -133,7 +134,7 @@ const RibbonPanel = ({ label, children }: { label: string; children: React.React
     <Typography
       sx={{
         fontSize: '0.6rem',
-        color: '#a0a0a0',
+        color: colors.textDim,
         fontWeight: 600,
         mt: 0.4,
         textTransform: 'uppercase',
@@ -403,8 +404,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#2d2d2d',
-        borderBottom: '2px solid #1e1e1e',
+        backgroundColor: colors.surface,
+        borderBottom: '2px solid ' + colors.border,
         boxShadow: '0 2px 4px rgba(0, 0, 0, 0.3)',
       }}
     >
@@ -424,10 +425,10 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             onClick={onMenuClick}
             size="small"
             sx={{
-              color: '#e0e0e0',
+              color: colors.text,
               mr: 1,
               '&:hover': {
-                bgcolor: '#3f3f3f',
+                bgcolor: colors.hover,
               },
             }}
           >
@@ -445,10 +446,10 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
                 px: 2,
                 fontSize: '0.75rem',
                 textTransform: 'none',
-                color: '#a0a0a0',
+                color: colors.textDim,
               },
-              '& .MuiTab-root.Mui-selected': { color: '#ffffff' },
-              '& .MuiTabs-indicator': { backgroundColor: '#4a90e2', height: 2 },
+              '& .MuiTab-root.Mui-selected': { color: colors.text },
+              '& .MuiTabs-indicator': { backgroundColor: colors.accent, height: 2 },
             }}
           >
             <Tab value="file" label="File" />
@@ -549,7 +550,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         maxWidth="xs"
         actions={
           <>
-            <Button onClick={() => setConfirmUnlock(false)} sx={{ color: '#b0b0b0' }}>
+            <Button onClick={() => setConfirmUnlock(false)} sx={{ color: colors.textDim }}>
               Cancel
             </Button>
             <Button
@@ -560,7 +561,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
               }}
               variant="contained"
               disableElevation
-              sx={{ backgroundColor: '#e5484d', '&:hover': { backgroundColor: '#c73a3f' } }}
+              color="error"
             >
               Unlock &amp; Delete Results
             </Button>
@@ -568,8 +569,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         }
       >
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
-          <WarningAmberIcon sx={{ color: '#f5a623', mt: 0.3 }} />
-          <Typography sx={{ color: '#e0e0e0', fontSize: '0.85rem', lineHeight: 1.55 }}>
+          <WarningAmberIcon sx={{ color: colors.secondary, mt: 0.3 }} />
+          <Typography sx={{ color: colors.text, fontSize: '0.85rem', lineHeight: 1.55 }}>
             Unlocking will delete all analysis results — diagrams, contour colours, min/max tags,
             legend, summary and station data. You will need to re-run the analysis to view results again.
           </Typography>

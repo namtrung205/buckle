@@ -1,4 +1,5 @@
 import React from 'react';
+import { colors } from '../../theme';
 import { Box, Typography, Card, CardContent, CardMedia, CardActionArea, Grid } from '@mui/material';
 import { PlayCircleOutline } from '@mui/icons-material';
 
@@ -23,22 +24,22 @@ const Tutorials = () => {
     <Box
       sx={{
         padding: '40px',
-        backgroundColor: '#000000',
-        color: '#ffffff',
+        backgroundColor: colors.bg,
+        color: colors.text,
         maxHeight: '85vh',
         overflow: 'auto',
         '&::-webkit-scrollbar': {
           width: '8px',
         },
         '&::-webkit-scrollbar-track': {
-          background: 'rgba(255,255,255,0.1)',
+          background: colors.surfaceAlt,
           borderRadius: '4px',
         },
         '&::-webkit-scrollbar-thumb': {
-          background: 'rgba(255,255,255,0.3)',
+          background: colors.border,
           borderRadius: '4px',
           '&:hover': {
-            background: 'rgba(255,255,255,0.5)',
+            background: colors.borderDark,
           },
         },
       }}
@@ -50,7 +51,7 @@ const Tutorials = () => {
           sx={{
             fontWeight: 300,
             letterSpacing: '-0.02em',
-            color: '#ffffff',
+            color: colors.text,
           }}
         >
           Buckle Tutorials
@@ -58,7 +59,7 @@ const Tutorials = () => {
         {/* <Typography
           variant="body2"
           sx={{
-            color: '#999999',
+            color: colors.textDim,
             marginTop: '8px',
           }}
         >
@@ -113,7 +114,7 @@ const Tutorials = () => {
                     <PlayCircleOutline
                       sx={{
                         fontSize: 64,
-                        color: '#ffffff',
+                        color: colors.text,
                         opacity: 0.9,
                       }}
                     />
@@ -123,7 +124,7 @@ const Tutorials = () => {
                   <Typography
                     variant="h6"
                     sx={{
-                      color: '#ffffff',
+                      color: colors.text,
                       fontWeight: 500,
                       fontSize: '1rem',
                       marginBottom: '4px',
@@ -134,7 +135,7 @@ const Tutorials = () => {
                   <Typography
                     variant="body2"
                     sx={{
-                      color: '#2196f3',
+                      color: colors.accent,
                       fontSize: '0.875rem',
                       marginBottom: '12px',
                     }}
@@ -144,7 +145,7 @@ const Tutorials = () => {
                   <Typography
                     variant="body2"
                     sx={{
-                      color: '#999999',
+                      color: colors.textDim,
                       fontSize: '0.813rem',
                       lineHeight: 1.5,
                     }}
@@ -155,7 +156,7 @@ const Tutorials = () => {
                     <Typography
                       variant="caption"
                       sx={{
-                        color: '#666666',
+                        color: colors.textDim,
                         fontSize: '0.75rem',
                         fontStyle: 'italic',
                         display: 'block',

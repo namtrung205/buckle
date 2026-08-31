@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Box, Typography, Table, TableBody, TableCell, TableHead, TableRow, Paper, Dialog, DialogTitle, DialogContent, IconButton, Button, Checkbox } from '@mui/material';
 import { Close } from '@mui/icons-material';
 import TextField from '../../../components/TextField/TextField';
+import { colors, fontFamily, fieldLabelSx } from '../../../theme';
 
 interface ElasticProps {
   bc: {
@@ -50,13 +51,7 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
     <>
       <Box>
         <Typography
-          sx={{
-            fontSize: '0.75rem',
-            color: '#b0b0b0',
-            mb: 0.5,
-            fontWeight: 500,
-            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          }}
+          sx={fieldLabelSx}
         >
           Elastic Stiffness
         </Typography>
@@ -66,14 +61,14 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
           onClick={handleOpen}
           fullWidth
           sx={{
-            backgroundColor: '#ffffff',
-            color: '#555',
-            borderColor: '#b0b0b0',
+            backgroundColor: colors.surfaceAlt,
+            color: colors.textDim,
+            borderColor: colors.border,
             fontSize: '0.75rem',
             textTransform: 'none',
             '&:hover': {
-              backgroundColor: '#f5f5f5',
-              borderColor: '#999',
+              backgroundColor: colors.hover,
+              borderColor: colors.borderDark,
             },
           }}
         >
@@ -88,9 +83,9 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
         fullWidth={false}
         PaperProps={{
           sx: {
-            backgroundColor: '#e8e8e8',
+            backgroundColor: colors.surface,
             borderRadius: '8px',
-            border: '2px solid #b0b0b0',
+            border: '1px solid ' + colors.border,
             boxShadow: '0 4px 8px rgba(0, 0, 0, 0.15)',
             width: '350px',
             maxWidth: '480px',
@@ -102,18 +97,18 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            backgroundColor: '#e8e8e8',
-            borderBottom: '2px solid #b0b0b0',
+            backgroundColor: colors.surface,
+            borderBottom: '1px solid ' + colors.border,
             py: 1,
             px: 2,
           }}
         >
           <Typography
             sx={{
-              color: '#333',
+              color: colors.text,
               fontSize: '0.9rem',
               fontWeight: 500,
-              fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+              fontFamily,
             }}
           >
             Elastic Stiffness
@@ -122,22 +117,22 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
             onClick={handleClose}
             size="small"
             sx={{
-              color: '#555',
+              color: colors.textDim,
               '&:hover': {
-                color: '#000',
-                backgroundColor: 'rgba(0, 0, 0, 0.08)',
+                color: colors.text,
+                backgroundColor: colors.hover,
               },
             }}
           >
             <Close fontSize="small" />
           </IconButton>
         </DialogTitle>
-        <DialogContent sx={{ p: 2, backgroundColor: '#e8e8e8' }}>
+        <DialogContent sx={{ p: 2, backgroundColor: colors.surface }}>
           <Paper
             variant="outlined"
             sx={{
-              border: '1px solid #b0b0b0',
-              backgroundColor: '#ffffff',
+              border: '1px solid ' + colors.border,
+              backgroundColor: colors.surfaceAlt,
               overflow: 'hidden',
               width: '100%',
             }}
@@ -149,10 +144,10 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                     sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#333',
-                      backgroundColor: '#e8e8e8',
-                      borderBottom: '2px solid #b0b0b0',
-                      fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      color: colors.text,
+                      backgroundColor: colors.surface,
+                      borderBottom: '1px solid ' + colors.border,
+                      fontFamily,
                       py: 1,
                       px: 1.5,
                     }}
@@ -164,10 +159,10 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                     sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#333',
-                      backgroundColor: '#e8e8e8',
-                      borderBottom: '2px solid #b0b0b0',
-                      fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      color: colors.text,
+                      backgroundColor: colors.surface,
+                      borderBottom: '1px solid ' + colors.border,
+                      fontFamily,
                       py: 1,
                       px: 1.5,
                     }}
@@ -178,10 +173,10 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                     sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#333',
-                      backgroundColor: '#e8e8e8',
-                      borderBottom: '2px solid #b0b0b0',
-                      fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      color: colors.text,
+                      backgroundColor: colors.surface,
+                      borderBottom: '1px solid ' + colors.border,
+                      fontFamily,
                       py: 1,
                       px: 1.5,
                     }}
@@ -192,10 +187,10 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                     sx={{
                       fontSize: '0.75rem',
                       fontWeight: 600,
-                      color: '#333',
-                      backgroundColor: '#e8e8e8',
-                      borderBottom: '2px solid #b0b0b0',
-                      fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                      color: colors.text,
+                      backgroundColor: colors.surface,
+                      borderBottom: '1px solid ' + colors.border,
+                      fontFamily,
                       py: 1,
                       px: 1.5,
                     }}
@@ -223,10 +218,10 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                       <TableCell
                         sx={{
                           fontSize: '0.75rem',
-                          color: '#555',
+                          color: colors.textDim,
                           fontWeight: 500,
-                          fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                          borderRight: '1px solid #e0e0e0',
+                          fontFamily,
+                          borderRight: '1px solid ' + colors.divider,
                           py: 1,
                           px: 1.5,
                         }}
@@ -236,7 +231,7 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                       <TableCell
                         align="center"
                         sx={{
-                          borderRight: '1px solid #e0e0e0',
+                          borderRight: '1px solid ' + colors.divider,
                           py: 1,
                           px: 1.5,
                         }}
@@ -246,9 +241,9 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                           onChange={handleFixedChange(prop.field)}
                           size="small"
                           sx={{
-                            color: '#555',
+                            color: colors.textDim,
                             '&.Mui-checked': {
-                              color: '#555',
+                              color: colors.textDim,
                             },
                           }}
                         />
@@ -257,7 +252,7 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                         sx={{
                           py: 0.5,
                           px: 1.5,
-                          borderRight: '1px solid #e0e0e0',
+                          borderRight: '1px solid ' + colors.divider,
                         }}
                       >
                         <TextField
@@ -269,31 +264,31 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                           disabled={fixed}
                           sx={{
                             '& .MuiOutlinedInput-root': {
-                              backgroundColor: fixed ? '#f5f5f5' : '#ffffff',
+                              backgroundColor: fixed ? colors.hover : colors.surfaceAlt,
                               height: '32px',
                               '& fieldset': {
-                                borderColor: '#b0b0b0',
+                                borderColor: colors.border,
                               },
                               '&:hover fieldset': {
-                                borderColor: '#999',
+                                borderColor: colors.borderDark,
                               },
                               '&.Mui-focused fieldset': {
-                                borderColor: '#555',
+                                borderColor: colors.accent,
                               },
                               '&.Mui-disabled': {
-                                backgroundColor: '#f5f5f5',
+                                backgroundColor: colors.hover,
                               },
                             },
                             '& .MuiInputBase-input': {
-                              color: '#333',
+                              color: colors.text,
                               textAlign: 'left',
                               padding: '6px 12px',
                               fontSize: '0.875rem',
                               '&::placeholder': {
-                                color: '#999',
+                                color: colors.textFaint,
                               },
                               '&.Mui-disabled': {
-                                color: '#999',
+                                color: colors.textFaint,
                               },
                             },
                           }}
@@ -302,9 +297,9 @@ const Elastic = ({ bc, onChange, onFixedChange }: ElasticProps) => {
                       <TableCell
                         sx={{
                           fontSize: '0.75rem',
-                          color: '#555',
+                          color: colors.textDim,
                           fontWeight: 500,
-                          fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                          fontFamily,
                           py: 1,
                           px: 1.5,
                         }}
