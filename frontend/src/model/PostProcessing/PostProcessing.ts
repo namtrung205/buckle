@@ -65,7 +65,7 @@ class PostProcessing {
   max = 0
   unit = ''
   scaleMultiplier = 1
-  deflectionMultiplier = 100
+  deflectionMultiplier = 5
   showRibbon = true
   showHatch = true
   showContour = false

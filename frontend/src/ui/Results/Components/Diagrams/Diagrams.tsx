@@ -30,7 +30,7 @@ const Diagrams = observer(() => {
   const post = model.postProcessing;
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
   const [scale, setScale] = useState<number>(1);
-  const [deflScale, setDeflScale] = useState<number>(100);
+  const [deflScale, setDeflScale] = useState<number>(5);
 
   const isDefl = post.activeType === DEFLECTION_TYPE;
 
@@ -191,7 +191,7 @@ const Diagrams = observer(() => {
             value={deflScale}
             onChange={(_, v) => setDeflScale(v as number)}
             onChangeCommitted={renderActive}
-            min={10} max={1000} step={10} size="small"
+            min={1} max={100} step={1} size="small"
             sx={{ color: UI.accent }}
           />
         </Box>
