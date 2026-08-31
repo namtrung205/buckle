@@ -1,5 +1,6 @@
 import { Model } from "../Model"
 import * as THREE from 'three'
+import type { Label, SupportFixity } from "../Labeler/Labeler"
 class BoundaryCondition {
   type : 'fixed' | 'pinned' |  'roller' | 'roller-x' | 'roller-y' | 'custom' | 'elastic' = 'fixed'
   targets : number[] = []
@@ -32,6 +33,7 @@ class BoundaryCondition {
 
   createOrUpdate(){ 
     this.model.invalidateResults()
+    this.replaceExistingSupports()
     this.dispose()  
     switch(this.type){
       case 'fixed':
@@ -42,9 +44,7 @@ class BoundaryCondition {
         this.ry = 1
         this.rz = 1
         
-        this.targets.forEach(target => {
-          this.createFixedSupport(target)
-        })
+        this.createSupportSymbols()
       break
       case 'pinned':
         this.dx = 1
@@ -53,9 +53,7 @@ class BoundaryCondition {
         this.rx = 1  // Restrain torsion to prevent mechanism/singularity
         this.ry = 0
         this.rz = 0
-        this.targets.forEach(target => {
-          this.createPinnedOrRolledSupport(target)
-        })
+        this.createSupportSymbols()
         break
       case 'roller' :
         this.dx = 0
@@ -64,16 +62,18 @@ class BoundaryCondition {
         this.rx = 1  // Restrain torsion to prevent mechanism/singularity
         this.ry = 0
         this.rz = 0
-        this.targets.forEach(target => {
-          this.createPinnedOrRolledSupport(target)
-        })
+        this.createSupportSymbols()
         break
       case 'elastic':
         this.targets.forEach(target => {
           this.createElasticSupport(target)
         })
         break
+      case 'roller-x':
+      case 'roller-y':
       case 'custom':
+        // Reflect the stored per-DOF restraint flags in the hexagon sectors
+        this.createSupportSymbols()
         break
     }
     const index = this.model.boundaryConditions.findIndex(item => item.id === this.id)
@@ -95,46 +95,63 @@ class BoundaryCondition {
     this.dispose()
   }
 
-  createPinnedOrRolledSupport(target : number){
-    const node = this.model.nodes.find(item => item.id === target)
-
-    if(!node) return 
-
-    const geometry = new THREE.ConeGeometry( 0.25, 0.5, 32 ) 
-    const material = new THREE.MeshBasicMaterial( {color: 0x1E90FF} )
-    const cone = new THREE.Mesh(geometry, material )
-    cone.position.set(node.x , node.y, node.z) 
-    this.mesh.push(cone)
-    this.model.scene.add( cone );
-
-    if(this.type != 'roller') return 
-
-    const sphereGeometry = new THREE.SphereGeometry( 0.12, 16, 16 )
-    const sphereMaterial = new THREE.MeshBasicMaterial( { color: '#cfd6dc' } ) // Light gray — visible on the dark background
-    
-    const sphere1 = new THREE.Mesh( sphereGeometry, sphereMaterial )
-    sphere1.position.set(node.x - 0.1, node.y -0.4, node.z)
-    this.mesh.push(sphere1)
-    this.model.scene.add( sphere1 )
-
-    const sphere2 = new THREE.Mesh( sphereGeometry, sphereMaterial )
-    sphere2.position.set(node.x + 0.1, node.y - 0.4, node.z)
-    this.mesh.push(sphere2)
-    this.model.scene.add( sphere2 )
+  /**
+   * Enforce one support per node: when this boundary condition claims a node
+   * already referenced by another support, the other support loses that node
+   * (and is removed entirely once it runs out of targets). The new/edited
+   * support therefore replaces any previous support on the same nodes.
+   */
+  replaceExistingSupports(){
+    for(const target of this.targets){
+      const conflicts = this.model.boundaryConditions.filter(bc => bc.id !== this.id && bc.targets.includes(target))
+      for(const bc of conflicts){
+        bc.targets = bc.targets.filter(t => t !== target)
+        this.model.labeler.batchDelete([`support-${bc.id}-${target}`])
+        if(bc.targets.length === 0) bc.delete()
+      }
+    }
   }
 
-  createFixedSupport(target : number){
-    const node = this.model.nodes.find(item => item.id === target)
-    
-    if(!node) return 
+  /**
+   * Midas-Civil style support symbol: a hexagon split into 6 sectors
+   * (X, Y, Z, MX, MY, MZ — clockwise from the upper-right) colored green when
+   * the DOF is restrained and red when it is free. Rendered as a CSS2D
+   * annotation pinned to the node so it always draws on top of every other
+   * object, with a constant screen size (no 3D geometry involved).
+   */
+  createSupportSymbols(){
+    const labels : Label[] = []
+    for(const target of this.targets){
+      const node = this.model.nodes.find(item => item.id === target)
+      if(!node) continue
 
-    const geometry = new THREE.BoxGeometry( 0.25, 0.25, 0.25 ); 
-    const material = new THREE.MeshBasicMaterial( {color: 0x1E90FF} ); 
-    const cube = new THREE.Mesh( geometry, material ); 
-    cube.position.set(node.x , node.y, node.z)
-    this.mesh.push(cube)
-    this.model.scene.add( cube );
-  
+      const fixity : SupportFixity = {
+        x : !!this.dx,
+        y : !!this.dy,
+        z : !!this.dz,
+        mx : !!this.rx,
+        my : !!this.ry,
+        mz : !!this.rz
+      }
+
+      labels.push({
+        id : `support-${this.id}-${target}`,
+        position : new THREE.Vector3(node.x, node.y, node.z),
+        text : '',
+        type : 'support',
+        fixity,
+        rotation : this.rotation || 0
+      })
+    }
+
+    // Rebuild from scratch so restraint-flag changes re-render the sector colors
+    this.removeSupportSymbols()
+    if(labels.length) this.model.labeler.create(labels)
+  }
+
+  removeSupportSymbols(){
+    const ids = this.targets.map(target => `support-${this.id}-${target}`)
+    if(ids.length) this.model.labeler.batchDelete(ids)
   }
 
   createElasticSupport(target: number){
@@ -145,10 +162,10 @@ class BoundaryCondition {
     const hasXSpring = (this.dx !== 0 && this.dx !== 1) || (this.rx !== 0 && this.rx !== 1)
     if (hasXSpring) this.createSpring(node, new THREE.Vector3(1, 0, 0), 'x')
     
-    const hasYSpring = (this.dz !== 0 && this.dz !== 1) || (this.rz !== 0 && this.rz !== 1)
+    const hasYSpring = (this.dy !== 0 && this.dy !== 1) || (this.ry !== 0 && this.ry !== 1)
     if (hasYSpring) this.createSpring(node, new THREE.Vector3(0, 1, 0), 'y')
     
-    const hasZSpring = (this.dy !== 0 && this.dy !== 1) || (this.ry !== 0 && this.ry !== 1)
+    const hasZSpring = (this.dz !== 0 && this.dz !== 1) || (this.rz !== 0 && this.rz !== 1)
     if (hasZSpring) this.createSpring(node, new THREE.Vector3(0, 0, 1), 'z')
     
   }
@@ -222,6 +239,7 @@ class BoundaryCondition {
   }
 
   private dispose = () => {
+    this.removeSupportSymbols()
     if(!this.mesh) return 
     function removeObjWithChildren(obj : any) {
       if (obj.children.length > 0) {

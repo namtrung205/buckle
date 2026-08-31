@@ -85,6 +85,11 @@ def run_analysis(model: dict, log_callback=None):
     
     _log(f"\n[ANALYSIS] Starting structural analysis...")
     _log(f"[ANALYSIS] Input Summary: {len(nodes)} nodes, {len(members)} members, {len(shells)} shells, {len(sections)} sections, {len(loads)} loads, {len(boundary_conditions)} boundary conditions")
+
+    # Fail fast with a descriptive error when the structure contains
+    # rigid-body mechanisms (otherwise the solvers only report a cryptic
+    # "failed to converge at step 1" without pointing at the cause)
+    check_rigid_body_stability(members, shells, boundary_conditions, nodes, _log)
     # Initialize
     t0 = time.time()
     init()
@@ -181,8 +186,10 @@ def calculate_vecxz(member):
     Calculate vecxz (local z-axis vector) for a member if not provided.
     Mirrors the _vecxz() logic from frontend ElasticBeamColumn.ts
 
-    For horizontal members: vecz = [0, 0, 1] (global Z-axis)
-    For vertical members: vecz = [1, 0, 0] (global X-axis)
+    Axis convention is the standard engineering frame (Midas/SAP/OpenSees):
+    X horizontal, Y horizontal, Z vertical (up). A horizontal member therefore
+    has its local z-axis aligned with the global Z-axis, and a vertical member
+    falls back to the global X-axis.
     """
     vecxz = member.get('vecxz', None)
     if vecxz:
@@ -196,28 +203,28 @@ def calculate_vecxz(member):
     local_vecx = nodej - nodei
     local_vecx = local_vecx / np.linalg.norm(local_vecx)
 
-    # Default up vector for horizontal members
-    up = np.array([0, 1, 0])
+    # Default up vector for horizontal members is global Z (vertical)
+    up = np.array([0, 0, 1])
 
     # Calculate cross product
     cross_vec = np.cross(up, local_vecx)
     cross_length = np.linalg.norm(cross_vec)
 
     # Determine local z-axis based on member orientation
-    if cross_length < 1e-6:  # Element is parallel to the "up" vector (JSON Y)
-        # Try local X-axis (JSON X) as fallback for vertical members
+    if cross_length < 1e-6:  # Element is parallel to the "up" vector (global Z)
+        # Try local X-axis as fallback for vertical members
         fallback_up = np.array([1, 0, 0])
         cross_fallback = np.cross(fallback_up, local_vecx)
         if np.linalg.norm(cross_fallback) < 1e-6:
-            # If still parallel, use JSON Z as fallback
+            # If still parallel, use global Z as fallback
             vecxz_json = np.array([0, 0, 1])
         else:
             vecxz_json = fallback_up
     else:  # Normal horizontal or inclined member
         vecxz_json = np.array([0, 0, 1])
-        
-    # Swap coordinates for OpenSees: JSON (vx, vy, vz) -> OpenSees (vx, vz, vy)
-    vecxz_ops = [float(vecxz_json[0]), float(vecxz_json[2]), float(vecxz_json[1])]
+
+    # Coordinates are already in OpenSees (Z-up) convention — no swap needed
+    vecxz_ops = [float(vecxz_json[0]), float(vecxz_json[1]), float(vecxz_json[2])]
     member['vecxz'] = vecxz_ops
     return vecxz_ops
 
@@ -243,7 +250,7 @@ def create_nodes(nodes):
   """Creates nodes in the OpenSees model and returns a set of node IDs."""
   node_ids = set()
   for node in nodes:
-    ops.node(node['id'], node['x'], node['z'], node['y'])
+    ops.node(node['id'], node['x'], node['y'], node['z'])
     node_ids.add(node['id'])
     
     output['nodes'].append({
@@ -393,8 +400,8 @@ def mesh_member(member):
     new_nodes = [{
       'id': ni['id'],
       'x': ni['x'],
-      'y': ni['z'],
-      'z': ni['y']
+      'y': ni['y'],
+      'z': ni['z']
     }]
       
     # Generate interior nodes via linear interpolation
@@ -409,7 +416,7 @@ def mesh_member(member):
         # print('z_coord: ', z_coord)
 
         node_id = int(random.random() * 0x7FFFFFFF)
-        ops.node(node_id, x_coord, z_coord, y_coord)
+        ops.node(node_id, x_coord, y_coord, z_coord)
         
         output['nodes'].append({
             'id': node_id,
@@ -516,9 +523,9 @@ def apply_boundary_conditions(boundary_conditions):
         # Fix the support node (ground)
         ops.fix(support_node, 1, 1, 1, 1, 1, 1)
     else:      
-        # Swap fixity: OpenSees coord 2 = JSON Z, OpenSees coord 3 = JSON Y
-        # JSON (dx, dy, dz, rx, ry, rz) -> OpenSees (dx, dz, dy, rx, rz, ry)
-        ops.fix(target, dx, dz, dy, rx, rz, ry)
+        # Standard engineering axis convention (X horizontal, Y horizontal,
+        # Z vertical) is identical to OpenSees — no coordinate swap needed.
+        ops.fix(target, dx, dy, dz, rx, ry, rz)
 
 def calculate_quad_area_and_normal(node_coords):
     """
@@ -547,6 +554,110 @@ def calculate_quad_area_and_normal(node_coords):
         normal = np.array([0, 0, 0])
         
     return total_area, normal
+
+def check_rigid_body_stability(members, shells, boundary_conditions, nodes, log_callback=None):
+  """Fail-fast check for rigid-body mechanisms before running the analysis.
+
+  Groups the structure into connected components (nodes joined by members or
+  shells) and counts the restrained DOFs contributed by rigid supports in each
+  component. A component with fewer than 6 restrained DOFs and no elastic
+  (spring) support is guaranteed to be a mechanism: the stiffness matrix is
+  unsolvable and every solver reports a cryptic "failed to converge" error.
+  Raising a descriptive error here pinpoints the under-restrained part instead.
+  """
+  def _log(msg: str):
+    print(msg, flush=True)
+    if log_callback: log_callback(msg)
+
+  parent = {}
+  def find(a):
+    parent.setdefault(a, a)
+    root = a
+    while parent[root] != root:
+      root = parent[root]
+    while parent[a] != root:
+      parent[a], a = root, parent[a]
+    return root
+  def union(a, b):
+    ra, rb = find(a), find(b)
+    if ra != rb:
+      parent[ra] = rb
+
+  # Seed every known node so floating nodes form their own component
+  for node in nodes:
+    find(node['id'])
+  for member in members:
+    union(member['nodei']['id'], member['nodej']['id'])
+  for shell in shells:
+    shell_nodes = shell.get('nodes') or []
+    for nid in shell_nodes[1:]:
+      union(shell_nodes[0], nid)
+
+  restrained = {}
+  elastic_roots = set()
+  for bc in boundary_conditions:
+    targets = bc.get('targets', [])
+    if bc.get('type') == 'elastic':
+      # Springs add stiffness, not restraints — remember them separately
+      for t in targets:
+        if t in parent:
+          elastic_roots.add(find(t))
+      continue
+    flags = sum(1 for k in ('dx', 'dy', 'dz', 'rx', 'ry', 'rz') if bc.get(k))
+    for t in targets:
+      if t in parent:
+        root = find(t)
+        restrained[root] = restrained.get(root, 0) + flags
+
+  # Warn about coincident nodes: they are almost always accidental duplicates
+  # (e.g. a missed node snap while drawing), and members attached to separate
+  # nodes at the same location are structurally disconnected.
+  names = {n['id']: (n.get('name') or str(n['id'])) for n in nodes}
+  tol = 1e-6
+  warned_pairs = set()
+  for i in range(len(nodes)):
+    for j in range(i + 1, len(nodes)):
+      a, b = nodes[i], nodes[j]
+      if (abs(a['x'] - b['x']) < tol and abs(a['y'] - b['y']) < tol
+          and abs(a['z'] - b['z']) < tol):
+        pair = tuple(sorted((a['id'], b['id'])))
+        if pair not in warned_pairs:
+          warned_pairs.add(pair)
+          _log(f"[ANALYSIS] Warning: {names.get(a['id'], a['id'])} and "
+               f"{names.get(b['id'], b['id'])} are at the same coordinates but are "
+               f"separate nodes — elements connected to them are structurally "
+               f"disconnected. Merge the nodes or re-draw with node snap enabled.")
+
+  unstable = []
+  for root in {find(nid) for nid in parent}:
+    fixed = restrained.get(root, 0)
+    if fixed >= 6 or root in elastic_roots:
+      continue
+    component = sorted(nid for nid in parent if find(nid) == root)
+    unstable.append((component, fixed))
+
+  if unstable:
+    names = {n['id']: (n.get('name') or str(n['id'])) for n in nodes}
+    parts = []
+    for component, fixed in unstable:
+      listed = ', '.join(names.get(nid, str(nid)) for nid in component[:10])
+      extra = '' if len(component) <= 10 else f' (+{len(component) - 10} more nodes)'
+      parts.append(f"{listed}{extra} -> only {fixed}/6 restraints")
+    raise Exception(
+      "Structure is unstable (rigid-body mechanism): some parts are not fully "
+      "restrained, so the stiffness matrix cannot be solved. Unstable parts: "
+      + ' | '.join(parts)
+      + ". Fix the supports (each independent part needs at least 6 restrained "
+        "DOFs, e.g. restrain Dx/Dy/Dz and Rx/Ry/Rz) or connect the part to an "
+        "already stable part."
+    )
+
+  # Components that only stay stable thanks to spring supports: warn only
+  warned = False
+  for root in elastic_roots:
+    if restrained.get(root, 0) < 6 and not warned:
+      _log("[ANALYSIS] Warning: some parts rely on elastic (spring) supports for stability — verify results carefully.")
+      warned = True
 
 def apply_loads(loads):
     """Applies loads to the model."""
@@ -583,23 +694,22 @@ def apply_loads(loads):
                 nDelta = distance_between_nodes / 2
               else:  # Interior nodes
                 nDelta = distance_between_nodes
-              # Apply load (note: coordinate swapping for y and z)
+              # Apply load (axis convention is identical to OpenSees: X/Y horizontal, Z up)
               fx = value['x'] * nDelta * 1E3
-              fy = value['z'] * nDelta * 1E3
-              fz = value['y'] * nDelta * 1E3
+              fy = value['y'] * nDelta * 1E3
+              fz = value['z'] * nDelta * 1E3
               ops.load(node_id, fx, fy, fz, 0.0, 0.0, 0.0)
       elif(load['type'] == 'nodal'):
         for id in targets:
           node = next((e for e in nodes if e['id'] == id), None)
           if node:
             fx = value['x'] * 1E3
-            fy = value['z'] * 1E3
-            fz = value['y'] * 1E3
+            fy = value['y'] * 1E3
+            fz = value['z'] * 1E3
             ops.load(id, fx, fy, fz, 0.0, 0.0, 0.0)
       elif(load['type'] == 'pressure'):
         # Pressure load: kN/m2 on shell elements
-        # JSON coords: x=X, y=up, z=depth
-        # OpenSees coords: 1=X, 2=JSON_Z (depth), 3=JSON_Y (up/vertical)
+        # Axis convention (X/Y horizontal, Z up) is identical to OpenSees.
         for shell_id in targets:
           try:
             # Find the nodes of the shell
@@ -617,11 +727,11 @@ def apply_loads(loads):
                 magnitude = 0
 
             if magnitude == 0 and isinstance(value, dict):
-                # Vector load (e.g. Snow): value is in JSON coords (x, y=up, z=depth)
-                # Convert JSON -> OpenSees: fy_ops = value_z_json, fz_ops = value_y_json
+                # Vector load (e.g. Snow): value is in the standard engineering
+                # frame (X/Y horizontal, Z up) — identical to OpenSees, no swap.
                 fx_total = value.get('x', 0) * area * 1000
-                fy_total = value.get('z', 0) * area * 1000  # JSON Z -> OPS Y
-                fz_total = value.get('y', 0) * area * 1000  # JSON Y (vertical) -> OPS Z
+                fy_total = value.get('y', 0) * area * 1000
+                fz_total = value.get('z', 0) * area * 1000
                 print(f"[LOAD] Shell {shell_id}: Snow/vector load area={area:.3f}m², F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
             else:
                 # Scalar magnitude (e.g. Wind): normal pressure perpendicular to surface

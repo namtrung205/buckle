@@ -7,6 +7,7 @@ import {
   Lock as LockIcon,
   LockOpen as LockOpenIcon,
   WarningAmber as WarningAmberIcon,
+  Download as DownloadIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
@@ -26,6 +27,7 @@ import ElasticBeamColumnClass from '../../model/Elements/ElasticBeamColumn/Elast
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
 import Load from '../../model/Load/Load';
 import Shell from '../../model/Elements/Shell/Shell';
+import { exportModelJson, buildModelFromJson } from '../../helpers';
 import * as THREE from 'three';
 import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
@@ -230,63 +232,12 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       model.console.setFinished(false);
       open('analysisProgress');
       
-      const nodes = model.nodes.map(node => ({
-        id: node.id,
-        x: node.x,
-        y: node.y,
-        z: node.z
-      }));
+      // Build the Z-up payload through the single source of truth. The whole
+      // model (nodes, member vecxz, boundary conditions, load values, shells)
+      // is converted from the three.js (Y-up) scene frame to the shared
+      // JSON/OpenSees (Z-up) schema HERE, at this boundary only.
+      const data = exportModelJson(model);
 
-      const members = model.members.map(member => ({
-        id: member.id,
-        name: member.label,
-        nodei: { id: member.nodes[0].id, x: member.nodes[0].x, y: member.nodes[0].y, z: member.nodes[0].z },
-        nodej: { id: member.nodes[1].id, x: member.nodes[1].x, y: member.nodes[1].y, z: member.nodes[1].z },
-        section: member.section.id,
-        vecxz: [member.vecxz.x, member.vecxz.y, member.vecxz.z],
-        release : member.release
-      }));
-
-      const sections = model.sections;
-
-      const loads = model.loads.map(load => ({
-        id: load.id,
-        type: load.type,
-        targets: load.targets,
-        name: load.name,
-        value: {
-          x: load.value.x,
-          y: load.value.y,
-          z: load.value.z
-        },
-        magnitude: load.magnitude  // ✅ Required for wind (scalar) vs snow (vector) distinction
-      }));
-
-      const boundaryConditions = model.boundaryConditions.map(boundaryCondition => {
-        const { id, type, targets, name, dx, dy, dz, rx, ry, rz } = boundaryCondition;
-        return { id, type, targets, name, dx, dy, dz, rx, ry, rz };
-      });
-
-      const materials = model.materials;
-
-      // ✅ Include shells so OpenSees can create shell elements and apply pressure loads
-      const shells = model.shells.map(shell => ({
-        id: shell.id,
-        nodes: shell.nodes.map(n => n.id),
-        thickness: shell.thickness,
-        material: shell.material
-      }));
-
-      const data = {
-        nodes,
-        members,
-        materials,
-        sections,
-        loads,
-        boundary_conditions: boundaryConditions,
-        shells,  // ✅ Shell elements for pressure load distribution
-      };
-      
       const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);
       console.log('RES', res);
       model.output = res.data.output;
@@ -332,69 +283,10 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   };
 
   const download = () => {
-    const nodes = model.nodes.map(node => ({
-      id: node.id,
-      x: node.x,
-      y: node.y,
-      z: node.z,
-      name: node.name
-    }));
-
-    const members = model.members.map(member => ({
-      id: member.id,
-      label: member.label,
-      nodei: { id: member.nodes[0].id, x: member.nodes[0].x, y: member.nodes[0].y, z: member.nodes[0].z },
-      nodej: { id: member.nodes[1].id, x: member.nodes[1].x, y: member.nodes[1].y, z: member.nodes[1].z },
-      section: member.section.id,
-      vecxz: [member.vecxz.x, member.vecxz.y, member.vecxz.z],
-      release: member.release
-    }));
-
-    const sections = model.sections;
-
-    const loads = model.loads.map(load => ({
-      id: load.id,
-      type: load.type,
-      targets: load.targets,
-      name: load.name,
-      value: {
-        x: load.value.x,
-        y: load.value.y,
-        z: load.value.z
-      },
-      magnitude: load.magnitude
-    }));
-
-    const boundaryConditions = model.boundaryConditions.map(boundaryCondition => {
-      const { id, type, targets, name, dx, dy, dz, rx, ry, rz } = boundaryCondition;
-      return { id, type, targets, name, dx, dy, dz, rx, ry, rz };
-    });
-
-    const materials = model.materials;
-    
-    // Save shell elements
-    const shells = model.shells.map(shell => ({
-      id: shell.id,
-      name: shell.label,
-      nodes: shell.nodes.map(n => n.id),
-      thickness: shell.thickness,
-      material: shell.material
-    }));
-    
-    const modelData = {
-      nodes,
-      members,
-      materials,
-      sections,
-      loads,
-      boundary_conditions: boundaryConditions,
-      shells,
-      metadata: {
-        exportDate: new Date().toISOString(),
-        modelName: 'FEM Model',
-        version: '1.0'
-      }
-    };
+    // Export through the single source of truth: converts the three.js (Y-up)
+    // scene to the Z-up JSON/OpenSees schema at this boundary only. The file
+    // can be re-uploaded (Z-up -> three.js) or sent straight to the backend.
+    const modelData = exportModelJson(model);
 
     const dataStr = JSON.stringify(modelData, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
@@ -411,6 +303,43 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     URL.revokeObjectURL(url);
     
     console.log('Model downloaded successfully');
+  };
+
+  // Download the analysis results exactly as returned by the backend
+  // (nodal displacements + member internal forces) as a JSON file.
+  const downloadResults = () => {
+    if (!model.output) {
+      toast.error('No analysis results available. Run the analysis first.', {
+        position: "bottom-right",
+        autoClose: 4000,
+      });
+      return;
+    }
+
+    const resultsData = {
+      ...model.output,
+      metadata: {
+        exportDate: new Date().toISOString(),
+        modelName: 'FEM Analysis Results',
+        version: '1.0'
+      }
+    };
+
+    const dataStr = JSON.stringify(resultsData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `fem-results-${new Date().toISOString().split('T')[0]}.json`;
+
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    URL.revokeObjectURL(url);
+
+    console.log('Analysis results downloaded successfully');
   };
 
   const upload = () => {
@@ -445,126 +374,9 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     model.isLocked = false; // loading a new model returns to editing mode
     try {
       console.log('Loading model from JSON...', jsonData);
-      
-      model.clear();
-      
-      const nodeMap = new Map<number, Node>();
-      
-      if (jsonData.nodes) {
-        jsonData.nodes.forEach((nodeData: any) => {
-          const node = new Node(
-            new THREE.Vector3(nodeData.x, nodeData.y, nodeData.z),
-            nodeData.name
-          );
-          node.id = nodeData.id;
-          node.model = model;
-          node.create();
-          model.nodes.push(node);
-          nodeMap.set(node.id, node);
-        });
-        console.log(`Created ${jsonData.nodes.length} nodes`);
-      }
-      
-      if (jsonData.materials) {
-        model.materials = jsonData.materials;
-      }
-      if (jsonData.sections) {
-        model.sections = jsonData.sections;
-      }
-      
-      if (jsonData.members) {
-        jsonData.members.forEach((memberData: any) => {
-          const nodei = nodeMap.get(memberData.nodei.id);
-          const nodej = nodeMap.get(memberData.nodej.id);
-          
-          if (!nodei || !nodej) {
-            console.warn(`Could not find nodes for member ${memberData.id}`);
-            return;
-          }
-          
-          const section = model.sections.find(s => s.id === memberData.section);
-          if (!section) {
-            console.warn(`Could not find section ${memberData.section} for member ${memberData.id}`);
-            return;
-          }
-          
-          const vecxz = new THREE.Vector3(
-            memberData.vecxz[0],
-            memberData.vecxz[1],
-            memberData.vecxz[2]
-          );
-          
-          const member = new ElasticBeamColumnClass(
-            model,
-            memberData.label || `Member ${memberData.id}`,
-            [nodei, nodej],
-            section,
-          );
-          member.id = memberData.id;
-          console.log('member id', memberData.id )
-          member.create();
-          model.members.push(member);
-        });
-        console.log(`Created ${jsonData.members.length} members`);
-      }
-      
-      if (jsonData.boundary_conditions) {
-        jsonData.boundary_conditions.forEach((bcData: any) => {
-          const boundaryCondition = new BoundaryCondition(model, {
-            id: bcData.id,
-            type: bcData.type,
-            targets: bcData.targets,
-            name: bcData.name,
-            dx: bcData.dx,
-            dy: bcData.dy,
-            dz: bcData.dz,
-            rx: bcData.rx,
-            ry: bcData.ry,
-            rz: bcData.rz
-          } as any);
-          boundaryCondition.createOrUpdate();
-        });
-        console.log(`Created ${jsonData.boundary_conditions.length} boundary conditions`);
-      }
-      
-      if (jsonData.shells) {
-        jsonData.shells.forEach((shellData: any) => {
-          const nodes = shellData.nodes.map((nodeId: number) => nodeMap.get(nodeId)).filter(Boolean);
-          if (nodes.length !== 4) {
-            console.warn(`Could not find all 4 nodes for shell ${shellData.id}`);
-            return;
-          }
-          const shell = new Shell(model, shellData.name || `Shell-${shellData.id}`, nodes, shellData.thickness || 0.005, shellData.material, shellData.id);
-          shell.create();
-          model.shells.push(shell);
-        });
-        console.log(`Created ${jsonData.shells.length} shells`);
-      }
-
-      if (jsonData.loads) {
-        jsonData.loads.forEach((loadData: any) => {
-          // Handle both Vector3 object format and direct value format
-          const value = loadData.value?.x !== undefined 
-            ? new THREE.Vector3(loadData.value.x, loadData.value.y, loadData.value.z)
-            : new THREE.Vector3(0, 0, 0);
-          
-          const load = new Load(model, {
-            id: loadData.id,
-            type: loadData.type,
-            targets: loadData.targets,
-            name: loadData.name,
-            value: value,
-            magnitude: loadData.magnitude
-          } as any);
-          load.createOrUpdate();
-        });
-        console.log(`Created ${jsonData.loads.length} loads`);
-      }
-      
-      // Fit the camera to the model so large models are not culled by the far plane
-      model.camera.fitModelToView();
-
-      console.log('Model loaded successfully from JSON!');
+      // Reuse the single import path: converts the Z-up JSON schema to the
+      // three.js (Y-up) scene frame (nodes, vecxz, BCs, loads, shells).
+      buildModelFromJson(model, jsonData);
       toast.success('Model loaded successfully!', {
         position: "bottom-right",
         autoClose: 3000,
@@ -573,7 +385,6 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         pauseOnHover: true,
         draggable: true,
       });
-      
     } catch (error) {
       console.error('Error loading model from JSON:', error);
       toast.error('Error loading model: ' + (error instanceof Error ? error.message : String(error)), {
@@ -700,7 +511,14 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
               />
             </RibbonPanel>
             <RibbonPanel label="Results">
-              <RibbonButton title="Results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
+              <RibbonButton title="View results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
+              <RibbonButton
+                title="Download analysis results"
+                label="Download"
+                onClick={downloadResults}
+                icon={<DownloadIcon sx={{ fontSize: 15 }} />}
+                disabled={!hasResults}
+              />
             </RibbonPanel>
           </>
         )}

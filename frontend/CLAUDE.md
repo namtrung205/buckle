@@ -85,7 +85,30 @@ The `src/types.ts` file defines all structural types:
 
 ## Coordinate System
 
-The application uses a right-handed coordinate system with Three.js conventions, but the viewport gizmo swaps Y and Z labels to match typical structural engineering conventions (Z-up). The `worldPlane` normal is `(0, 1, 0)` in Three.js space.
+Two coordinate frames are used, with a single conversion layer at the UI/JSON boundary:
+
+- **JSON / backend (OpenSees)**: right-handed, **Z-up** — X horizontal, Y horizontal,
+  Z vertical (Midas/SAP/ETABS convention). The backend maps these straight into
+  OpenSees with **no axis swap**.
+- **Three.js scene**: right-handed, **Y-up** (WebGL convention). The viewport
+  gizmo uses the standard Three.js axes.
+
+The conversion (`src/utils/axis.ts`) is a pure permutation without sign flip:
+
+- `jsonToThree(x, y, z) = (x, z, y)`
+- `threeToJson(v) = (v.x, v.z, v.y)`
+
+`src/helpers.ts` is the **only** place that converts. Its `exportModelJson` /
+`buildModelFromJson` are the single import/export path used by:
+- "Analyze" and "Download Model" in `TopBar.tsx` (UI → Z-up JSON → backend).
+- Upload model and the example/benchmark loaders (Z-up JSON → three.js UI).
+- `get_scene_info` via WebSocket.
+
+`member.vecxz` is stored in the **three.js frame**: horizontal members store
+`(0, 1, 0)` (three.js up), which exports to `[0, 0, 1]` in the Z-up JSON. Vertical
+members store `(1, 0, 0)` in both frames. Example JSON files in
+`frontend/public/examples` therefore list `vecxz [0, 0, 1]` for beams/rafters and
+`[1, 0, 0]` for columns. The `worldPlane` normal is `(0, 1, 0)` in Three.js space.
 
 ## State Management
 

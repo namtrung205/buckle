@@ -122,10 +122,9 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
 
       if(!member) return
 
-      const {vecxz, release} = member
+      const {release} = member
       member.update(nodes, section, gamma, name, release)
     }else{
-      const vecxz = new THREE.Vector3(0,0,1)
       const newMember = new ElasticBeamColumnMember(model, name ,  nodes, section)
       newMember.create()
     }

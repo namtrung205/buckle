@@ -8,6 +8,7 @@ import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { makeAutoObservable } from 'mobx'
 import { valueToColor01 } from './Colormap'
 import DiagramHover, { HoverMember } from './DiagramHover'
+import { jsonArrayToThree, jsonToThree } from '../../utils/axis'
 
 export const DIAGRAM_TYPES = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz'] as const
 export type DiagramType = (typeof DIAGRAM_TYPES)[number]
@@ -93,12 +94,12 @@ class PostProcessing {
   }
 
   /**
-   * The backend stores coordinates in OpenSees axes: OS (X, Y, Z) = model (x, z, y)
-   * (the vertical model y is OpenSees z). The three.js scene uses the model axes
-   * directly -> swap the Y/Z components back here.
+   * The backend returns coordinates in the Z-up engineering frame
+   * (JSON/OpenSees). The three.js scene is Y-up, so convert here via the
+   * shared axis utility (a pure Y/Z permutation).
    */
   private toThreeCoord(c: number[]) {
-    return new THREE.Vector3(c[0], c[2], c[1])
+    return jsonArrayToThree(c)
   }
 
   /**
@@ -154,8 +155,12 @@ class PostProcessing {
     let localY: THREE.Vector3
     let localZ: THREE.Vector3
     if (vPerp) {
-      localY = vPerp
-      localZ = new THREE.Vector3().crossVectors(vPerp, axis).normalize()
+      // member.vecxz is stored in the three.js frame and equals the section
+      // local Z (= world up for horizontal members). OpenSees computes
+      // vecy = vecz x vecx; because the Y<->Z conversion is a reflection the
+      // three.js relation is localY = axis x localZ (sign-flipped cross).
+      localZ = vPerp
+      localY = new THREE.Vector3().crossVectors(axis, vPerp).normalize()
     } else {
       // Fallback: a horizontal perpendicular + the vertical it defines
       localY = new THREE.Vector3().crossVectors(axis, new THREE.Vector3(0, 1, 0))
@@ -231,10 +236,9 @@ class PostProcessing {
         result.push(null)
         continue
       }
-      // The backend swaps the vertical axis when creating the OpenSees model:
-      // OpenSees (X, Y, Z) = model (x, z, y) while three.js = model (x, y, z)
-      // -> undo the swap: three disp = (OS ux, OS uz, OS uy)
-      result.push(new THREE.Vector3(d.ux ?? 0, d.uz ?? 0, d.uy ?? 0))
+      // Backend displacements are in the Z-up engineering frame; convert to
+      // three.js (Y-up) via the shared axis utility: three = (ux, uz, uy)
+      result.push(jsonToThree(d.ux ?? 0, d.uy ?? 0, d.uz ?? 0))
     }
     if (!result[0] || !result[1]) return null
     return [result[0] as THREE.Vector3, result[1] as THREE.Vector3]

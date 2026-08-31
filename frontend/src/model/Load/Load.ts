@@ -523,8 +523,8 @@ class Load {
       // Get non-zero components for label
       const nonZeroComponents = [];
       if (Math.abs(loadVector.x) > 0.001) nonZeroComponents.push(`Fx: ${loadVector.x.toFixed(1)}`);
-      if (Math.abs(loadVector.y) > 0.001) nonZeroComponents.push(`Fz: ${loadVector.y.toFixed(1)}`);
-      if (Math.abs(loadVector.z) > 0.001) nonZeroComponents.push(`Fy: ${loadVector.z.toFixed(1)}`);
+      if (Math.abs(loadVector.y) > 0.001) nonZeroComponents.push(`Fy: ${loadVector.y.toFixed(1)}`);
+      if (Math.abs(loadVector.z) > 0.001) nonZeroComponents.push(`Fz: ${loadVector.z.toFixed(1)}`);
        
       const label = {
          id: `linear-load-${elementId}`,
@@ -567,12 +567,12 @@ class Load {
         },
         {
           index: 1,
-          label: 'z',
+          label: 'y',
           direction: new THREE.Vector3(0, 1, 0)
         },
         {
           index: 2,
-          label: 'y',
+          label: 'z',
           direction: new THREE.Vector3(0, 0, 1)
         }
       ]

@@ -91,6 +91,11 @@ export default class Line implements Tool {
         this.startPoint =  new Node(this.currentPointerCoord)
       } 
 
+      // Reuse an existing node located at the same coordinates so members stay
+      // structurally connected even when the node snap was missed
+      const existingStart = findNodeAtPosition(this.model.nodes, new THREE.Vector3(this.startPoint.x, this.startPoint.y, this.startPoint.z))
+      if(existingStart) this.startPoint.id = existingStart.id
+
       if(this.type === 'colDown' || this.type === 'colUp'){
         this.create()
         return
@@ -112,6 +117,10 @@ export default class Line implements Tool {
       }else{
         const point = new THREE.Vector3(this.positions[3], this.positions[4], this.positions[5])
         this.endPoint = new Node(point)
+        // Reuse an existing node at the same coordinates (missed snap) so the
+        // new member shares that node instead of a disconnected duplicate
+        const existingEnd = findNodeAtPosition(this.model.nodes, point)
+        if(existingEnd) this.endPoint.id = existingEnd.id
       }
 
       this.create()
@@ -124,7 +133,11 @@ export default class Line implements Tool {
         this.endPoint = new Node(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z))
         this.endPoint.id = snappedNode.id
       }else{
-        this.endPoint = new Node(new THREE.Vector3(this.positions[3], this.positions[4], this.positions[5]))
+        const point = new THREE.Vector3(this.positions[3], this.positions[4], this.positions[5])
+        this.endPoint = new Node(point)
+        // Reuse an existing node at the same coordinates (missed snap)
+        const existingEnd = findNodeAtPosition(this.model.nodes, point)
+        if(existingEnd) this.endPoint.id = existingEnd.id
       }
       this.create()
     }
@@ -200,7 +213,10 @@ export default class Line implements Tool {
           const nodei = this.startPoint
           const nodej = this.endPoint
           const nodes : Node[] = [nodei, nodej]
-          
+
+          // Ignore a click on the same point (would create a zero-length member)
+          if(nodei.id === nodej.id) return
+
           if(!nodeIds.includes(nodei.id)) {
             this.model.nodes.push(nodei)
             nodei.model = this.model
@@ -223,16 +239,18 @@ export default class Line implements Tool {
           const nodei = this.startPoint
           const nodej =  this.endPoint
           const nodes = [nodei, nodej]
-          const elasticBeamColumn = new ElasticBeamColumn(this.model,  '', nodes, this.section)
-          elasticBeamColumn.create()
-          this.model.members.push(elasticBeamColumn)
+
+          // Ignore a click on the same point (would create a zero-length member)
+          if(nodei.id === nodej.id) return
 
           if(!nodeIds.includes(nodej.id)) {
-            console.log('CREATING NODE')
             this.model.nodes.push(nodej)
             nodej.model = this.model
             nodej.create()
           }
+          const elasticBeamColumn = new ElasticBeamColumn(this.model,  '', nodes, this.section)
+          elasticBeamColumn.create()
+          this.model.members.push(elasticBeamColumn)
         }
         break;
       case 'colUp':
