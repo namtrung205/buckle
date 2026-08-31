@@ -55,8 +55,8 @@
       "section": 2,
       "vecxz": [
         0,
-        1,
-        0
+        0,
+        1
       ],
       "release": "pinned-fixed"
     },
@@ -78,8 +78,8 @@
       "section": 2,
       "vecxz": [
         0,
-        1,
-        0
+        0,
+        1
       ]
     },
     {
@@ -100,8 +100,8 @@
       "section": 2,
       "vecxz": [
         0,
-        1,
-        0
+        0,
+        1
       ]
     },
     {
@@ -122,8 +122,8 @@
       "section": 2,
       "vecxz": [
         0,
-        1,
-        0
+        0,
+        1
       ],
       "release": "fixed-pinned"
     }

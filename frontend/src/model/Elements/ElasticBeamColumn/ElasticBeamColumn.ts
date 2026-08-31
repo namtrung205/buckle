@@ -244,10 +244,14 @@ class ElasticBeamColumn {
     const cross_vec = new THREE.Vector3().crossVectors(up, local_vecx)
 
     // https://help.autodesk.com/view/RSAPRO/2025/ENU/?guid=GUID-E6C19973-6864-4E67-9659-6F43579E2DB8
-    // HORIZONTAL MEMBERS LOCAL VEC_Z = GLOBAL_VEC_Z IN OPENSEESPY
-    let vecz = new THREE.Vector3(0, 0, 1)
+    // vecxz is stored in the THREE.JS (Y-up) scene frame. The JSON/backend
+    // (OpenSees) stays Z-up; the Y<->Z permutation happens ONLY in
+    // src/utils/axis.ts at the import/export boundary. For a horizontal member
+    // the stored value is three.js up (0,1,0), which maps back to [0,0,1] in
+    // the Z-up JSON/OpenSees frame.
+    let vecz = new THREE.Vector3(0, 1, 0)
 
-    // VERTICAL MEMBERS LOCAL VEC_Z = GLOBAL_VEC_X IN OPENSEESPY
+    // VERTICAL MEMBERS LOCAL VEC_Z = GLOBAL_VEC_X (same axis in both frames)
     if (cross_vec.length() === 0) vecz = new THREE.Vector3(1, 0, 0)
 
     // Apply gamma rotation about the local x-axis (member axis)

@@ -70,8 +70,6 @@ export default class WebSocketHandler {
                   const sec = this.model.sections[0]
                   // const sec = this.model.mock
                   if(!iNode || !jNode || !sec) return 
-                  const vecxz = new THREE.Vector3(0,0,1)
-                  
                   const nodes = [iNode, jNode]
                   const member = new ElasticBeamColumn(this.model, label, nodes, sec, id)
                   member.create()

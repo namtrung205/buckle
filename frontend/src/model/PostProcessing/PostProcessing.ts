@@ -155,8 +155,12 @@ class PostProcessing {
     let localY: THREE.Vector3
     let localZ: THREE.Vector3
     if (vPerp) {
-      localY = vPerp
-      localZ = new THREE.Vector3().crossVectors(vPerp, axis).normalize()
+      // member.vecxz is stored in the three.js frame and equals the section
+      // local Z (= world up for horizontal members). OpenSees computes
+      // vecy = vecz x vecx; because the Y<->Z conversion is a reflection the
+      // three.js relation is localY = axis x localZ (sign-flipped cross).
+      localZ = vPerp
+      localY = new THREE.Vector3().crossVectors(axis, vPerp).normalize()
     } else {
       // Fallback: a horizontal perpendicular + the vertical it defines
       localY = new THREE.Vector3().crossVectors(axis, new THREE.Vector3(0, 1, 0))
