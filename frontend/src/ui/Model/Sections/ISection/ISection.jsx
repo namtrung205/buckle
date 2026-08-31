@@ -8,6 +8,7 @@ import {
 
 import Select from '../../../../components/Select'
 import TextField from '../../../../components/TextField';
+import { fieldLabelSx } from '../../../../theme';
 
 const ISection = ({section, setSection, handleChange}) => {
   const [profile, setProfile] = useState('IPE80')
@@ -51,11 +52,7 @@ const ISection = ({section, setSection, handleChange}) => {
       <Grid item xs={6} md={6}>
         <Typography
           variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: '#333333',
-            fontSize: '0.8rem'
-          }}
+          sx={fieldLabelSx}
         >
           Profile
         </Typography>
@@ -72,11 +69,7 @@ const ISection = ({section, setSection, handleChange}) => {
       <Grid item xs={6} md={6}>
         <Typography
           variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: '#333333',
-            fontSize: '0.8rem'
-          }}
+          sx={fieldLabelSx}
         >
           Width (mm)
         </Typography>
@@ -92,11 +85,7 @@ const ISection = ({section, setSection, handleChange}) => {
       <Grid item xs={6} md={6}>
         <Typography
           variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: '#333333',
-            fontSize: '0.8rem'
-          }}
+          sx={fieldLabelSx}
         >
           Depth (mm)
         </Typography>
@@ -112,11 +101,7 @@ const ISection = ({section, setSection, handleChange}) => {
       <Grid item xs={6} md={6}>
         <Typography
           variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: '#333333',
-            fontSize: '0.8rem'
-          }}
+          sx={fieldLabelSx}
         >
           tw (mm)
         </Typography>
@@ -132,11 +117,7 @@ const ISection = ({section, setSection, handleChange}) => {
       <Grid item xs={6} md={6}>
         <Typography
           variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: '#333333',
-            fontSize: '0.8rem'
-          }}
+          sx={fieldLabelSx}
         >
           tf (mm)
         </Typography>
@@ -152,11 +133,7 @@ const ISection = ({section, setSection, handleChange}) => {
       <Grid item xs={6} md={6}>
         <Typography
           variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: '#333333',
-            fontSize: '0.8rem'
-          }}
+          sx={fieldLabelSx}
         >
           r (mm)
         </Typography>

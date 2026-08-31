@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { colors, fontFamily } from '../../theme';
 import {
   Box,
   Tabs,
@@ -51,9 +52,9 @@ const Docs = ({ open, onClose }: DocsProps) => {
       PaperComponent={DraggablePaper}
       PaperProps={{
         sx: {
-          backgroundColor: '#e8e8e8',
+          backgroundColor: colors.surface,
           borderRadius: '8px',
-          border: '2px solid #b0b0b0',
+          border: '1px solid ' + colors.border,
           boxShadow: '0 4px 8px rgba(0, 0, 0, 0.15)',
           width: '400px',
           maxWidth: '400px',
@@ -89,8 +90,8 @@ const Docs = ({ open, onClose }: DocsProps) => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          backgroundColor: '#e8e8e8',
-          borderBottom: '2px solid #b0b0b0',
+          backgroundColor: colors.surface,
+          borderBottom: '1px solid ' + colors.border,
           py: 1,
           px: 2,
           cursor: 'move',
@@ -98,10 +99,10 @@ const Docs = ({ open, onClose }: DocsProps) => {
       >
         <Typography
           sx={{
-            color: '#333',
+            color: colors.text,
             fontSize: '0.9rem',
             fontWeight: 400,
-            fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontFamily,
           }}
         >
           Documentation
@@ -110,28 +111,28 @@ const Docs = ({ open, onClose }: DocsProps) => {
           onClick={onClose}
           size="small"
           sx={{
-            color: '#555',
+            color: colors.textDim,
             '&:hover': {
-              color: '#000',
-              backgroundColor: 'rgba(0, 0, 0, 0.08)',
+              color: colors.text,
+              backgroundColor: colors.hover,
             },
           }}
         >
           <Close fontSize="small" />
         </IconButton>
       </DialogTitle>
-      <DialogContent sx={{ p: 0, backgroundColor: '#e8e8e8', overflow: 'hidden', display: 'flex', flexDirection: 'column', height: 'calc(80vh - 60px)' }}>
+      <DialogContent sx={{ p: 0, backgroundColor: colors.surface, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: 'calc(80vh - 60px)' }}>
         <Box
           sx={{
             width: '100%',
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
-            backgroundColor: '#e8e8e8',
+            backgroundColor: colors.surface,
           }}
         >
           {/* Tabs */}
-          <Box sx={{ borderBottom: '1px solid #b0b0b0', backgroundColor: '#e8e8e8' }}>
+          <Box sx={{ borderBottom: '1px solid ' + colors.border, backgroundColor: colors.surface }}>
             <Tabs
               value={currentTab}
               onChange={handleTabChange}
@@ -143,14 +144,14 @@ const Docs = ({ open, onClose }: DocsProps) => {
                   fontSize: '0.75rem',
                   textTransform: 'none',
                   fontWeight: 500,
-                  color: '#555',
+                  color: colors.textDim,
                   '&.Mui-selected': {
-                    color: '#333',
+                    color: colors.text,
                     fontWeight: 600,
                   },
                 },
                 '& .MuiTabs-indicator': {
-                  backgroundColor: '#555',
+                  backgroundColor: colors.accent,
                   height: 2,
                 },
               }}

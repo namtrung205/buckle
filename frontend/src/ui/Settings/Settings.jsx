@@ -10,6 +10,7 @@ import {
   Checkbox
 } from '@mui/material';
 import { useModel } from '../../model/Context';
+import { colors } from '../../theme';
 import Dialog from '../../components/Dialog/Dialog';
 import GridHelper from './GridHelper/GridHelper';
 import { observer } from 'mobx-react-lite';
@@ -98,40 +99,11 @@ const Settings = ({open, onClose}) => {
             onChange={handleTypeChange}
             size="small"
             sx={{
-              backgroundColor: '#ffffff',
               height: '32px',
               fontSize: '0.875rem',
-              color: '#333',
-              '& .MuiOutlinedInput-notchedOutline': {
-                borderColor: '#b0b0b0',
-              },
-              '&:hover .MuiOutlinedInput-notchedOutline': {
-                borderColor: '#999',
-              },
-              '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                borderColor: '#555',
-              },
               '& .MuiSelect-select': {
                 py: 0,
                 px: '12px',
-              },
-            }}
-            MenuProps={{
-              PaperProps: {
-                sx: {
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #b0b0b0',
-                  '& .MuiMenuItem-root': {
-                    fontSize: '0.875rem',
-                    color: '#333',
-                    '&:hover': {
-                      backgroundColor: '#e8e8e8',
-                    },
-                    '&.Mui-selected': {
-                      backgroundColor: '#d0d0d0',
-                    },
-                  },
-                },
               },
             }}
           >
@@ -161,9 +133,9 @@ const Settings = ({open, onClose}) => {
                         size="small"
                         name={option.value}
                         sx={{
-                          color: '#e0e0e0',
+                          color: colors.textDim,
                           '&.Mui-checked': {
-                            color: '#4a90e2',
+                            color: colors.accent,
                           },
                         }}
                       />

@@ -17,6 +17,7 @@ import {
 } from '@mui/material';
 import { Save as SaveIcon } from '@mui/icons-material';
 import { observer } from 'mobx-react-lite';
+import { colors, fieldLabelSx } from '../../../theme';
 import Dialog from '../../../components/Dialog/Dialog';
 import { useModel } from '../../../model/Context';
 import BoundaryCondition from '../../../model/BoundaryCondition/BoundaryCondition';
@@ -269,44 +270,17 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
     <Box sx={{ display: 'flex', gap: 1 }}>
       <Button
         variant="outlined"
+        color="inherit"
         size="small"
         onClick={handleCancel}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: '#ffffff',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Cancel
       </Button>
       <Button
-        variant="outlined"
+        variant="contained"
         size="small"
         onClick={handleSave}
         startIcon={<SaveIcon sx={{ fontSize: '0.875rem' }} />}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: '#ffffff',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Save
       </Button>
@@ -342,7 +316,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
     >
         <Stack spacing={0}>
           {/* Tabs */}
-          <Box sx={{ borderBottom: '1px solid #1e1e1e', backgroundColor: '#2d2d2d' }}>
+          <Box sx={{ borderBottom: '1px solid ' + colors.border, backgroundColor: colors.surface }}>
             <Tabs
               value={currentTab}
               onChange={handleTabChange}
@@ -354,14 +328,14 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                   fontSize: '0.75rem',
                   textTransform: 'none',
                   fontWeight: 500,
-                  color: '#ffffff',
+                  color: colors.text,
                   '&.Mui-selected': {
-                    color: '#e0e0e0',
+                    color: colors.text,
                     fontWeight: 600,
                   },
                 },
                 '& .MuiTabs-indicator': {
-                  backgroundColor: '#b0b0b0',
+                  backgroundColor: colors.accent,
                   height: 2,
                 },
               }}
@@ -376,13 +350,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
               {/* Name */}
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#ffffff',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   Name
                 </Typography>
@@ -398,13 +366,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
               {/* Targets */}
               <Box>
                 <Typography
-                  sx={{
-                    fontSize: '0.75rem',
-                    color: '#ffffff',
-                    mb: 0.5,
-                    fontWeight: 500,
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                  }}
+                  sx={fieldLabelSx}
                 >
                   Nodes
                 </Typography>
@@ -426,12 +388,12 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                               label={getTargetLabel(id)}
                               size="small"
                               sx={{
-                                backgroundColor: '#1e1e1e',
-                                color: '#ffffff',
+                                backgroundColor: colors.surfaceAlt,
+                                color: colors.text,
                                 '& .MuiChip-deleteIcon': {
-                                  color: '#ffffff',
+                                  color: colors.text,
                                   '&:hover': {
-                                    color: '#f44336',
+                                    color: colors.danger,
                                   },
                                 },
                               }}
@@ -441,16 +403,16 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                       );
                     }}
                     sx={{
-                      backgroundColor: '#ffffff',
+                      backgroundColor: colors.surfaceAlt,
                       fontSize: '0.875rem',
                       '& .MuiOutlinedInput-notchedOutline': {
-                        borderColor: '#1e1e1e',
+                        borderColor: colors.border,
                       },
                       '&:hover .MuiOutlinedInput-notchedOutline': {
-                        borderColor: '#404040',
+                        borderColor: colors.borderDark,
                       },
                       '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                        borderColor: '#b0b0b0',
+                        borderColor: colors.accent,
                       },
                       '& .MuiSelect-select': {
                         display: 'flex',
@@ -458,23 +420,23 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                         gap: 0.5,
                         minHeight: '32px',
                         alignItems: 'center',
-                        color: '#e0e0e0',
+                        color: colors.text,
                       },
                     }}
                     MenuProps={{
                       PaperProps: {
                         sx: {
-                          backgroundColor: '#3f3f3f',
-                          border: '1px solid #1e1e1e',
+                          backgroundColor: colors.surface,
+                          border: '1px solid ' + colors.border,
                           maxHeight: 300,
                           '& .MuiMenuItem-root': {
                             fontSize: '0.85rem',
-                            color: '#e0e0e0',
+                            color: colors.text,
                             '&:hover': {
-                              backgroundColor: '#4a4a4a',
+                              backgroundColor: colors.hover,
                             },
                             '&.Mui-selected': {
-                              backgroundColor: '#5a5a5a',
+                              backgroundColor: colors.active,
                             },
                           },
                         },
@@ -500,13 +462,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                   {/* Type (quick presets) */}
                   <Box>
                     <Typography
-                      sx={{
-                        fontSize: '0.75rem',
-                        color: '#ffffff',
-                        mb: 0.5,
-                        fontWeight: 500,
-                        fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }}
+                      sx={fieldLabelSx}
                     >
                       Type
                     </Typography>
@@ -522,13 +478,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                   {/* Per-DOF restraints (Midas-Civil style DOF list) */}
                   <Box>
                     <Typography
-                      sx={{
-                        fontSize: '0.75rem',
-                        color: '#ffffff',
-                        mb: 0.5,
-                        fontWeight: 500,
-                        fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }}
+                      sx={fieldLabelSx}
                     >
                       Restraints
                     </Typography>
@@ -541,18 +491,18 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                               checked={bc[def.key] === '1'}
                               onChange={(e) => handleRestraintChange(def.key, e.target.checked)}
                               size="small"
-                              sx={{ color: '#b0b0b0', p: 0.25, '&.Mui-checked': { color: '#64b5f6' } }}
+                              sx={{ color: colors.textDim, p: 0.25, '&.Mui-checked': { color: colors.accent } }}
                             />
                           }
                           label={def.label}
                           sx={{
                             m: 0,
-                            '& .MuiFormControlLabel-label': { fontSize: '0.75rem', color: '#e0e0e0' },
+                            '& .MuiFormControlLabel-label': { fontSize: '0.75rem', color: colors.text },
                           }}
                         />
                       ))}
                     </Box>
-                    <Typography sx={{ fontSize: '0.65rem', color: '#9e9e9e', mt: 0.5 }}>
+                    <Typography sx={{ fontSize: '0.65rem', color: colors.textFaint, mt: 0.5 }}>
                       Checked = restrained (green sector) — Unchecked = free (red sector)
                     </Typography>
                   </Box>
@@ -560,13 +510,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                   {/* Rotation */}
                   <Box>
                     <Typography
-                      sx={{
-                        fontSize: '0.75rem',
-                        color: '#ffffff',
-                        mb: 0.5,
-                        fontWeight: 500,
-                        fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                      }}
+                      sx={fieldLabelSx}
                     >
                       Rotation
                     </Typography>

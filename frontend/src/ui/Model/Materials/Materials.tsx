@@ -24,6 +24,7 @@ import {
 } from '@mui/icons-material';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../model/Context';
+import { colors } from '../../../theme';
 import { ElasticIsotropicMaterial } from '../../../types';
 
 interface MaterialsProps {
@@ -143,7 +144,7 @@ const Materials = observer(({}: MaterialsProps) => {
               icon={<SaveIcon />}
               label="Save"
               sx={{
-                color: '#4caf50',
+                color: colors.success,
               }}
               onClick={handleSaveClick(id)}
             />,
@@ -151,7 +152,7 @@ const Materials = observer(({}: MaterialsProps) => {
               icon={<CancelIcon />}
               label="Cancel"
               sx={{
-                color: '#f44336',
+                color: colors.danger,
               }}
               onClick={handleCancelClick(id)}
             />,
@@ -177,7 +178,7 @@ const Materials = observer(({}: MaterialsProps) => {
   ];
 
   return (
-    <Box sx={{ height: '100%', width: '100%', p: 2, backgroundColor: '#000000', display: 'flex', flexDirection: 'column', gap: 2 }}>
+    <Box sx={{ height: '100%', width: '100%', p: 2, backgroundColor: colors.bg, display: 'flex', flexDirection: 'column', gap: 2 }}>
       <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button
           variant="outlined"
@@ -188,11 +189,11 @@ const Materials = observer(({}: MaterialsProps) => {
             height: '30px',
             padding: 0,
             borderRadius: '50%',
-            borderColor: '#ffffff',
-            color: '#ffffff',
+            borderColor: colors.borderDark,
+            color: colors.text,
             '&:hover': {
-              borderColor: '#ffffff',
-              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              borderColor: colors.borderDark,
+              backgroundColor: colors.hover,
             },
           }}
         >

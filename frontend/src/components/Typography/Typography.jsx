@@ -1,14 +1,15 @@
 import { Typography as MuiTypography } from '@mui/material';
+import { colors, fontFamily } from '../../theme';
 
 const Typography = ({ children, sx = {}, ...props }) => {
   return (
     <MuiTypography
       sx={{
         fontSize: '0.75rem',
-        color: '#555',
+        color: colors.textDim,
         mb: 0.5,
         fontWeight: 500,
-        fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily,
         ...sx,
       }}
       {...props}

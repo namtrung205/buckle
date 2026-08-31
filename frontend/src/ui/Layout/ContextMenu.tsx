@@ -3,6 +3,7 @@ import { Menu, MenuItem, ListItemIcon, ListItemText, Divider } from '@mui/materi
 import { Delete as DeleteIcon, OpenWith as MoveIcon } from '@mui/icons-material';
 import { useModel } from '../../model/Context';
 import { observer } from 'mobx-react-lite';
+import { colors } from '../../theme';
 
 const ContextMenu = observer(() => {
   const model = useModel();
@@ -57,27 +58,27 @@ const ContextMenu = observer(() => {
       anchorPosition={{ top: y, left: x }}
       sx={{
         '& .MuiPaper-root': {
-          backgroundColor: '#2d2d2d',
-          color: '#ffffff',
-          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.5)',
+          backgroundColor: colors.surface,
+          color: colors.text,
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
           minWidth: '180px',
         },
       }}
     >
-      <MenuItem onClick={handleTransform} sx={{ '&:hover': { backgroundColor: '#3f3f3f' } }}>
-        <ListItemIcon sx={{ color: '#e0e0e0', minWidth: '36px' }}>
+      <MenuItem onClick={handleTransform}>
+        <ListItemIcon sx={{ color: colors.text, minWidth: '36px' }}>
           <MoveIcon fontSize="small" />
         </ListItemIcon>
         <ListItemText primary="Transform Node(s)" primaryTypographyProps={{ fontSize: '0.85rem' }} />
       </MenuItem>
       
-      <Divider sx={{ borderColor: '#404040' }} />
+      <Divider />
       
-      <MenuItem onClick={handleDelete} sx={{ '&:hover': { backgroundColor: '#ff4d4f' } }}>
-        <ListItemIcon sx={{ color: '#ff7875', minWidth: '36px' }}>
+      <MenuItem onClick={handleDelete} sx={{ '&:hover': { backgroundColor: 'rgba(229, 72, 77, 0.18)' } }}>
+        <ListItemIcon sx={{ color: colors.danger, minWidth: '36px' }}>
           <DeleteIcon fontSize="small" />
         </ListItemIcon>
-        <ListItemText primary="Delete Node(s)" primaryTypographyProps={{ fontSize: '0.85rem', color: '#ff7875' }} />
+        <ListItemText primary="Delete Node(s)" primaryTypographyProps={{ fontSize: '0.85rem', color: colors.danger }} />
       </MenuItem>
     </Menu>
   );

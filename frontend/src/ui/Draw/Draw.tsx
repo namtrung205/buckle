@@ -16,6 +16,7 @@ import {
 } from '@mui/icons-material';
 
 import { useModel } from '../../model/Context';
+import { colors, fontFamily } from '../../theme';
 import Dialog from '../../components/Dialog/Dialog';
 import Select from '../../components/Select';
 import ElasticBeamColumnMember from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn'
@@ -199,9 +200,9 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
               variant="body2"
               sx={{
                 fontWeight: 500,
-                color: '#b0b0b0',
+                color: colors.textDim,
                 fontSize: '0.8rem',
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+                fontFamily
               }}
             >
               Section
@@ -230,17 +231,17 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
                 variant="outlined"
                 size="small"
                 sx={{
-                  backgroundColor: getToolState() !== 0 ? '#4caf50' : '#3f3f3f',
+                  backgroundColor: getToolState() !== 0 ? colors.success : colors.hover,
                   color: 'white',
-                  borderColor: getToolState() !== 0 ? '#388e3c' : '#1e1e1e',
+                  borderColor: getToolState() !== 0 ? colors.success : colors.border,
                   minWidth: '60px',
                   height: '28px',
                   fontSize: '0.75rem',
                   padding: '4px 12px',
                   '&:hover': {
-                    backgroundColor: getToolState() !== 0 ? '#45a049' : '#4a4a4a',
-                    borderColor: getToolState() !== 0 ? '#2e7d32' : '#404040',
-                    color: '#e0e0e0',
+                    backgroundColor: getToolState() !== 0 ? colors.success : colors.hover,
+                    borderColor: getToolState() !== 0 ? colors.success : colors.borderDark,
+                    color: colors.text,
                   },
                 }}
               >
@@ -257,9 +258,9 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
                   variant="body2"
                   sx={{
                     fontWeight: 500,
-                    color: '#b0b0b0',
+                    color: colors.textDim,
                     fontSize: '0.8rem',
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+                    fontFamily
                   }}
                 >
                   Node i
@@ -282,9 +283,9 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
                   variant="body2"
                   sx={{
                     fontWeight: 500,
-                    color: '#b0b0b0',
+                    color: colors.textDim,
                     fontSize: '0.8rem',
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+                    fontFamily
                   }}
                 >
                   Node j
@@ -307,9 +308,9 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
                   variant="body2"
                   sx={{
                     fontWeight: 500,
-                    color: '#b0b0b0',
+                    color: colors.textDim,
                     fontSize: '0.8rem',
-                    fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+                    fontFamily
                   }}
                 >
                   Gamma (°)
@@ -333,10 +334,10 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
                 onClick={handleDelete}
                 size="small"
                 sx={{
-                  color: '#555',
+                  color: colors.textDim,
                   '&:hover': {
-                    color: '#f44336',
-                    backgroundColor: 'rgba(244, 67, 54, 0.1)'
+                    color: colors.danger,
+                    backgroundColor: colors.hover
                   }
                 }}
               >
@@ -347,10 +348,10 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
                 onClick={createOrUpdate}
                 size="small"
                 sx={{
-                  color: '#555',
+                  color: colors.textDim,
                   '&:hover': {
-                    color: '#000',
-                    backgroundColor: 'rgba(0, 0, 0, 0.08)'
+                    color: colors.text,
+                    backgroundColor: colors.hover
                   }
                 }}
               >

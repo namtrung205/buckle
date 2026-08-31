@@ -17,6 +17,7 @@ import Node from '../../../model/Elements/Node/Node';
 import * as THREE from 'three';
 import Move from './Components/Move/Move';
 import TextField from '../../../components/TextField/TextField';
+import { fieldLabelSx } from '../../../theme';
 
 interface NodesProps {
   open: boolean;
@@ -91,44 +92,17 @@ const AddOrEdit = observer(({ open, onClose, selectedNode }: NodesProps) => {
     <Box sx={{ display: 'flex', gap: 1 }}>
       <Button
         variant="outlined"
+        color="inherit"
         size="small"
         onClick={handleCancel}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: '#ffffff',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Cancel
       </Button>
       <Button
-        variant="outlined"
+        variant="contained"
         size="small"
         onClick={handleSave}
         startIcon={<SaveIcon sx={{ fontSize: '0.875rem' }} />}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: '#ffffff',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         {selectedNode ? 'Save' : 'Add'}
       </Button>
@@ -150,15 +124,7 @@ const AddOrEdit = observer(({ open, onClose, selectedNode }: NodesProps) => {
     >
         <Stack spacing={1.5}>
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Name
             </Typography>
             <TextField
@@ -170,15 +136,7 @@ const AddOrEdit = observer(({ open, onClose, selectedNode }: NodesProps) => {
             />
           </Box>
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               X (m)
             </Typography>
             <TextField
@@ -190,15 +148,7 @@ const AddOrEdit = observer(({ open, onClose, selectedNode }: NodesProps) => {
             />
           </Box>
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Y (m)
             </Typography>
             <TextField
@@ -210,15 +160,7 @@ const AddOrEdit = observer(({ open, onClose, selectedNode }: NodesProps) => {
             />
           </Box>
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#ffffff',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily: '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Z (m)
             </Typography>
             <TextField

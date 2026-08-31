@@ -1,5 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { Box } from '@mui/material';
+import { colors } from '../../theme';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
 import BottomBar from '../BottomBar';
@@ -25,7 +26,7 @@ const Layout = ({ children }: LayoutProps) => {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        backgroundColor: '#f5f5f5',
+        backgroundColor: colors.bg,
       }}
     >
       {/* Top Bar (Ribbon) */}
@@ -48,7 +49,7 @@ const Layout = ({ children }: LayoutProps) => {
             flex: 1,
             position: 'relative',
             overflow: 'hidden',
-            backgroundColor: '#212830',
+            backgroundColor: colors.bg,
           }}
         >
           {children}

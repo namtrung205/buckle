@@ -9,6 +9,7 @@ import { Save as SaveIcon } from '@mui/icons-material';
 import { observer } from 'mobx-react-lite';
 import Dialog from '../../../components/Dialog/Dialog';
 import TextField from '../../../components/TextField/TextField';
+import { fieldLabelSx } from '../../../theme';
 import { useModel } from '../../../model/Context';
 import { ElasticIsotropicMaterial } from '../../../types';
 
@@ -81,44 +82,17 @@ const AddOrEdit = observer(({ open, onClose, selectedMaterial = null }: Material
     <Box sx={{ display: 'flex', gap: 1 }}>
       <Button
         variant="outlined"
+        color="inherit"
         size="small"
         onClick={handleCancel}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: 'white',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Cancel
       </Button>
       <Button
-        variant="outlined"
+        variant="contained"
         size="small"
         onClick={handleSave}
         startIcon={<SaveIcon sx={{ fontSize: '0.875rem' }} />}
-        sx={{
-          backgroundColor: '#3f3f3f',
-          color: 'white',
-          borderColor: '#1e1e1e',
-          minWidth: '60px',
-          height: '28px',
-          fontSize: '0.75rem',
-          padding: '4px 12px',
-          '&:hover': {
-            backgroundColor: '#4a4a4a',
-            borderColor: '#404040',
-            color: '#e0e0e0',
-          },
-        }}
       >
         Save
       </Button>
@@ -140,16 +114,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMaterial = null }: Material
     >
         <Stack spacing={1.5}>
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#b0b0b0',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               Name
             </Typography>
             <TextField
@@ -162,16 +127,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMaterial = null }: Material
           </Box>
 
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#b0b0b0',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               E (Pa)
             </Typography>
             <TextField
@@ -184,16 +140,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMaterial = null }: Material
           </Box>
 
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#b0b0b0',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               ν
             </Typography>
             <TextField
@@ -206,16 +153,7 @@ const AddOrEdit = observer(({ open, onClose, selectedMaterial = null }: Material
           </Box>
 
           <Box>
-            <Typography
-              sx={{
-                fontSize: '0.75rem',
-                color: '#b0b0b0',
-                mb: 0.5,
-                fontWeight: 500,
-                fontFamily:
-                  '"Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-              }}
-            >
+            <Typography sx={fieldLabelSx}>
               ρ (kg/m³)
             </Typography>
             <TextField

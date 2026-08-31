@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Box, Typography, Link, Dialog, IconButton } from '@mui/material';
 import { InfoOutlined, Close } from '@mui/icons-material';
 import Tutorials from '../Tutorials/Tutorials';
+import { colors } from '../../theme';
 
 const NewHere = () => {
   const [open, setOpen] = useState(false);
@@ -17,7 +18,7 @@ const NewHere = () => {
           top: 16,
           right: 120,
           backgroundColor: 'rgba(0, 0, 0, 0.85)',
-          color: '#ffffff',
+          color: colors.text,
           padding: '12px 20px',
           borderRadius: '8px',
           display: 'flex',
@@ -28,7 +29,7 @@ const NewHere = () => {
           border: '1px solid rgba(255, 255, 255, 0.1)',
         }}
       >
-        <InfoOutlined sx={{ fontSize: 20, color: '#2196f3' }} />
+        <InfoOutlined sx={{ fontSize: 20, color: colors.accent }} />
         <Typography
           variant="body2"
           sx={{
@@ -41,7 +42,7 @@ const NewHere = () => {
             component="button"
             onClick={handleOpen}
             sx={{
-              color: '#2196f3',
+              color: colors.accent,
               textDecoration: 'none',
               fontWeight: 500,
               cursor: 'pointer',
@@ -64,7 +65,7 @@ const NewHere = () => {
         maxWidth={false}
         PaperProps={{
           sx: {
-            backgroundColor: '#000000',
+            backgroundColor: colors.bg,
             maxWidth: '90vw',
             maxHeight: '90vh',
             width: '1200px',
@@ -80,7 +81,7 @@ const NewHere = () => {
             position: 'absolute',
             right: 16,
             top: 16,
-            color: '#ffffff',
+            color: colors.text,
             zIndex: 1,
             '&:hover': {
               backgroundColor: 'rgba(255, 255, 255, 0.1)',

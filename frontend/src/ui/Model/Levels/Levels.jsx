@@ -26,6 +26,7 @@ import {
   Add
 } from '@mui/icons-material';
 import { useModel } from '../../../model/Context';
+import { colors } from '../../../theme';
 import { observer } from 'mobx-react-lite';
 import TextField from '../../../components/TextField/TextField';
 
@@ -38,9 +39,9 @@ const PaperComponent = memo(({ children }) => (
       top: '20px',
       m: 0,
       width: 300,
-      backgroundColor: '#ffffff',
+      backgroundColor: colors.surface,
       borderRadius: '8px',
-      border: '1px solid #e0e0e0',
+      border: '1px solid ' + colors.border,
       boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
       zIndex: 1004,
     }}
@@ -131,8 +132,8 @@ const Levels = ({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          backgroundColor: '#ffffff',
-          borderBottom: '1px solid #e0e0e0',
+          backgroundColor: colors.surface,
+          borderBottom: '1px solid ' + colors.border,
           py: 1,
           px: 2
         }}
@@ -150,17 +151,17 @@ const Levels = ({
               '& .MuiOutlinedInput-root': {
                 fontSize: '0.875rem',
                 '& fieldset': {
-                  borderColor: '#e0e0e0',
+                  borderColor: colors.border,
                 },
                 '&:hover fieldset': {
-                  borderColor: '#bdbdbd',
+                  borderColor: colors.borderDark,
                 },
                 '&.Mui-focused fieldset': {
-                  borderColor: '#2196f3',
+                  borderColor: colors.accent,
                 }
               },
               '& .MuiInputBase-input': {
-                color: '#333333',
+                color: colors.text,
                 fontWeight: 500
               }
             }}
@@ -173,9 +174,9 @@ const Levels = ({
           }}
           size="small"
           sx={{
-            color: '#666666',
+            color: colors.textDim,
             '&:hover': {
-              backgroundColor: 'rgba(0, 0, 0, 0.04)'
+              backgroundColor: colors.hover
             }
           }}
         >
@@ -192,7 +193,7 @@ const Levels = ({
                 variant="body2"
                 sx={{
                   fontWeight: 500,
-                  color: '#333333',
+                  color: colors.text,
                   fontSize: '0.8rem'
                 }}
               >
@@ -214,10 +215,10 @@ const Levels = ({
               onClick={handleDelete}
               size="small"
               sx={{
-                color: '#666666',
+                color: colors.textDim,
                 '&:hover': {
-                  color: '#f44336',
-                  backgroundColor: 'rgba(244, 67, 54, 0.04)'
+                  color: colors.danger,
+                  backgroundColor: colors.hover
                 }
               }}
             >
@@ -228,10 +229,10 @@ const Levels = ({
               onClick={handleSave}
               size="small"
               sx={{
-                color: '#666666',
+                color: colors.textDim,
                 '&:hover': {
-                  color: '#2196f3',
-                  backgroundColor: 'rgba(33, 150, 243, 0.04)'
+                  color: colors.accent,
+                  backgroundColor: colors.hover
                 }
               }}
             >

@@ -5,6 +5,7 @@ import {
 } from '@mui/material'
 
 import TextField from '../../../../components/TextField';
+import { fieldLabelSx } from '../../../../theme';
 
 const HollowCircularSection = ({section, setSection, handleChange}) => {
 
@@ -13,11 +14,7 @@ const HollowCircularSection = ({section, setSection, handleChange}) => {
       <Grid item xs={6} md={6}>
         <Typography
           variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: '#333333',
-            fontSize: '0.8rem'
-          }}
+          sx={fieldLabelSx}
         >
           Diameter (mm)
         </Typography>
@@ -34,11 +31,7 @@ const HollowCircularSection = ({section, setSection, handleChange}) => {
       <Grid item xs={6} md={6}>
         <Typography
           variant="body2"
-          sx={{
-            fontWeight: 500,
-            color: '#333333',
-            fontSize: '0.8rem'
-          }}
+          sx={fieldLabelSx}
         >
           Thickness (mm)
         </Typography>
