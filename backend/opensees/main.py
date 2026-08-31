@@ -838,14 +838,104 @@ def extract_node_displacements():
         'ux': round(disp[0], 5),  
         'uy': round(disp[1], 5),    
         'uz': round(disp[2], 5),  
-        'rx': round(disp[3], 5),  
-        'ry': round(disp[4], 5),  
-        'rz': round(disp[5], 5),
+        'rx': round(disp[3], 9),  
+        'ry': round(disp[4], 9),  
+        'rz': round(disp[5], 9),
       }
 
       
     except Exception as e:
       print(f"Warning: Could not extract displacement for node {node_id}: {e}")
+
+def _hermite_displacement(d0, d1, r0, r1, L, fractions):
+  """Cubic Hermite interpolation of nodal displacements along a member axis.
+
+  d0, d1 : (3,) translation vectors at the two member end nodes (OpenSees Z-up)
+  r0, r1 : (3,) rotation vectors (rx, ry, rz) at the two end nodes (radians)
+  L      : member length (m)
+  fractions : list of normalized positions along the member in [0, 1]
+
+  Returns a list of (3,) translation vectors interpolated with beam cubic Hermite
+  shape functions. The end slopes are approximated from the nodal rotations:
+  the local slope is the small-angle rotation, i.e. for a member along +X the
+  slope is approximately (0, rz, -ry) (rotation about the transverse axes tilt
+  the neutral axis). This recovers the cubic deflection field of an Euler-Bernoulli
+  beam so interior points express the true sag even for a single-element member.
+  """
+  d0 = np.asarray(d0, dtype=float)
+  d1 = np.asarray(d1, dtype=float)
+  r0 = np.asarray(r0, dtype=float)
+  r1 = np.asarray(r1, dtype=float)
+  # Nodal slopes: for a beam primarily along X, the transverse displacement y,z
+  # has slope dy/dx = rz, dz/dx = -ry (small-angle linearization).
+  m0 = np.array([0.0, r0[2], -r0[1]])
+  m1 = np.array([0.0, r1[2], -r1[1]])
+  out = []
+  for s in fractions:
+    s = float(s)
+    H1 = 1 - 3*s*s + 2*s*s*s
+    H2 = s - 2*s*s + s*s*s
+    H3 = 3*s*s - 2*s*s*s
+    H4 = -s*s + s*s*s
+    u = H1*d0 + H2*L*m0 + H3*d1 + H4*L*m1
+    out.append(u.tolist())
+  return out
+
+def _build_displacement_stations(member, node_disp_map, n_subdiv=2):
+  """Build per-member displacement stations using the true nodal displacements.
+
+  The member mesh already contains interior nodes (one per OpenSees sub-element,
+  each <= 0.5 m). Each interior node carries a real `ops.nodeDisp` translation.
+  For a smooth deflected shape of short (single-element) members we additionally
+  Hermite-interpolate `n_subdiv` points between consecutive mesh nodes so the
+  curve expresses the cubic sag rather than a straight line.
+
+  Returns a list of {"coord": [x,y,z], "disp": {"ux","uy","uz"}} in the Z-up frame.
+  """
+  mesh_nodes = member.get('mesh', {}).get('nodes', [])
+  stations = []
+  for n in mesh_nodes:
+    d = node_disp_map.get(n['id'])
+    if d is None:
+      continue
+    stations.append({
+      "coord": [float(n['x']), float(n['y']), float(n['z'])],
+      "disp": {"ux": d['ux'], "uy": d['uy'], "uz": d['uz']},
+      "rot": {"rx": d.get('rx', 0.0), "ry": d.get('ry', 0.0), "rz": d.get('rz', 0.0)},
+    })
+
+  # Hermite-refine between consecutive stations that both carry data.
+  refined = []
+  for i in range(len(stations)):
+    if i > 0:
+      a = stations[i - 1]
+      b = stations[i]
+      ca = np.asarray(a['coord'], dtype=float)
+      cb = np.asarray(b['coord'], dtype=float)
+      L = float(np.linalg.norm(cb - ca))
+      if L > 1e-9:
+        na = a['disp']
+        nb = b['disp']
+        ra = a['rot']
+        rb = b['rot']
+        rot0 = [ra['rx'], ra['ry'], ra['rz']]
+        rot1 = [rb['rx'], rb['ry'], rb['rz']]
+        d0 = [na['ux'], na['uy'], na['uz']]
+        d1 = [nb['ux'], nb['uy'], nb['uz']]
+        for k in range(1, n_subdiv + 1):
+          f = k / (n_subdiv + 1)
+          interp = _hermite_displacement(d0, d1, rot0, rot1, L, [f])[0]
+          coord = ca + (cb - ca) * f
+          refined.append({
+            "coord": [float(c) for c in coord],
+            "disp": {"ux": interp[0], "uy": interp[1], "uz": interp[2]},
+          })
+    refined.append(stations[i])
+  # Drop the internal rotation helper field before exposing to the payload.
+  return [
+    {"coord": s["coord"], "disp": s["disp"]}
+    for s in refined
+  ]
 
 def extract_results(log_callback=None):
   """Extracts and processes results from the analysis."""
@@ -857,6 +947,12 @@ def extract_results(log_callback=None):
   
   _log(f"[ANALYSIS]   > Extracting displacements for {len(output['nodes'])} nodes...")
   extract_node_displacements()
+
+  # Map node id -> displacement for building per-member deflection stations.
+  node_disp_map = {
+    node['id']: node.get('displacements') or {}
+    for node in output['nodes']
+  }
 
   _log(f"[ANALYSIS]   > Extracting internal forces for {len(members)} structural members...")
   
@@ -872,6 +968,10 @@ def extract_results(log_callback=None):
     child_members = mesh['members']
     node_efforts_dict = {}
     stations_dict = {}
+
+    # True nodal (and Hermite-refined) displacement stations along the member,
+    # used by the frontend deflected-shape view in place of linear end-to-end lerp.
+    member['displacement_stations'] = _build_displacement_stations(member, node_disp_map)
 
     forces = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz']
     nep_stations = 11  # evaluation points per child element -> smooth diagrams + hover readouts
