@@ -391,10 +391,8 @@ class PostProcessing {
         this.buildOutline(data)
         if (this.showRefLine) this.buildRefLine(data)
       } else {
-        if (this.showRibbon) {
-          this.buildRibbon(data)
-          if (this.showHatch) this.buildHatch(data, this.showContour)
-        }
+        if (this.showRibbon) this.buildRibbon(data)
+        if (this.showHatch) this.buildHatch(data, this.showContour)
         this.buildBaseline(data)
         this.buildOutline(data, this.showContour)
       }
@@ -473,9 +471,11 @@ class PostProcessing {
     const positions: number[] = []
     const colors: number[] = []
     const stations = data.stations
-    const step = Math.max(1, Math.round(stations.length / 40))
     const color = new THREE.Color()
-    for (let i = 0; i < stations.length; i += step) {
+    // Five evenly spaced hatch lines per member (both ends included)
+    const count = Math.min(5, stations.length)
+    for (let k = 0; k < count; k++) {
+      const i = Math.round((k * (stations.length - 1)) / Math.max(1, count - 1))
       const { base, offset, value } = stations[i]
       positions.push(base.x, base.y, base.z, offset.x, offset.y, offset.z)
       if (colored) {
