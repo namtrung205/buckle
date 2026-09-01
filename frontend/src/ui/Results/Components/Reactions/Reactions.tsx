@@ -53,7 +53,12 @@ const Reactions = observer(() => {
           variant="contained"
           size="small"
           disabled={!hasReactions}
-          onClick={() => reactionViz.apply()}
+          onClick={() => {
+            // Result visualizations are exclusive: applying reactions clears
+            // any force diagram / deflected shape on screen
+            model.postProcessing.dispose();
+            reactionViz.apply();
+          }}
           sx={{
             fontFamily: UI.mono,
             textTransform: 'none', px: 3,

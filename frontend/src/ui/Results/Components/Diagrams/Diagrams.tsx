@@ -45,6 +45,8 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
 
   const applyForce = (type: string | null) => {
     if (!type) return;
+    // Result visualizations are exclusive: applying a diagram clears the reactions
+    model.reactionViz.dispose();
     post.scaleMultiplier = scale;
     post.showDiagram(type, selectedMembers);
     model.visibility.showOrHideLoads(false);
@@ -52,6 +54,8 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
   };
 
   const applyDeformation = () => {
+    // Result visualizations are exclusive: applying the deflected shape clears the reactions
+    model.reactionViz.dispose();
     post.deflectionMultiplier = deflScale;
     post.showContour = true;
     post.showRibbon = true;
