@@ -396,9 +396,12 @@ class PostProcessing {
           if (this.showHatch) this.buildHatch(data)
         }
         this.buildBaseline(data)
-        this.buildOutline(data)
+        this.buildOutline(data, this.showContour)
       }
-      if (this.showContour) this.colorMemberSolids(data)
+      if (this.showContour) {
+        if (type === DEFLECTION_TYPE) this.colorMemberSolids(data)
+        else this.colorMemberLine(type, data)
+      }
       if (this.showLabels) this.collectExtremes(data, type)
     }
 
@@ -512,10 +515,33 @@ class PostProcessing {
   }
 
   /** Light diagram curve on top of the filled area (smoothed like the sample). */
-  private buildOutline(data: MemberDiagramData) {
+  private buildOutline(data: MemberDiagramData, colored = false) {
     const stations = data.stations
     const curve = new THREE.CatmullRomCurve3(stations.map(s => s.offset))
     const curvePoints = curve.getPoints(stations.length * 3)
+    if (colored) {
+      // Forces contour mode: the curve inherits the station colormap
+      const axisStart = stations[0].base
+      const axisDir = new THREE.Vector3().subVectors(stations[stations.length - 1].base, axisStart)
+      const axisLength = axisDir.length() || 1
+      axisDir.normalize()
+      const colors: number[] = []
+      const color = new THREE.Color()
+      for (const point of curvePoints) {
+        const s = THREE.MathUtils.clamp(point.clone().sub(axisStart).dot(axisDir), 0, axisLength)
+        color.copy(this.stationColor(this.interpolateStationValue(stations, s)))
+        colors.push(color.r, color.g, color.b)
+      }
+      const geometry = new THREE.BufferGeometry().setFromPoints(curvePoints)
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+      const material = new THREE.LineBasicMaterial({ vertexColors: true })
+      const line = new THREE.Line(geometry, material)
+      line.renderOrder = 1001
+      line.userData.type = 'diagram'
+      this.model.scene.add(line)
+      this.meshes.push(line)
+      return
+    }
     const points = curvePoints.flatMap(p => [p.x, p.y, p.z])
     const lineGeometry = new LineGeometry().setPositions(points)
     const lineMaterial = new LineMaterial({
@@ -608,6 +634,50 @@ class PostProcessing {
       }
     }
     this.coloredSolids.clear()
+  }
+
+  /** Paint the member centreline with the per-station colormap (forces mode renders members as thin lines, not solids). */
+  private colorMemberLine(type: string, data: MemberDiagramData) {
+    const stations = data.stations
+    if (stations.length === 0) return
+    // Same diagram plane as the ribbon: N/Vy/T/Mz along local Y, Vz/My along local Z
+    const dir = type === 'Vz' || type === 'My' ? data.localZ : data.localY
+    const half = this.modelSize * 0.002
+    const vertices: number[] = []
+    const colors: number[] = []
+    const indices: number[] = []
+    const color = new THREE.Color()
+    for (const station of stations) {
+      vertices.push(station.base.x + dir.x * half, station.base.y + dir.y * half, station.base.z + dir.z * half)
+      color.copy(this.stationColor(station.value))
+      colors.push(color.r, color.g, color.b)
+    }
+    for (const station of stations) {
+      vertices.push(station.base.x - dir.x * half, station.base.y - dir.y * half, station.base.z - dir.z * half)
+      color.copy(this.stationColor(station.value))
+      colors.push(color.r, color.g, color.b)
+    }
+    const n = stations.length
+    for (let i = 0; i < n - 1; i++) {
+      indices.push(i, n + i, i + 1, i + 1, n + i, n + i + 1)
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    geometry.setIndex(indices)
+    const material = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    })
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.renderOrder = 20
+    this.addHoverable(mesh, data.memberId)
+    this.model.scene.add(mesh)
+    this.meshes.push(mesh)
   }
 
   /** Linear interpolation of the active value at an arc position along the member. */

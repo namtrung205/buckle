@@ -49,8 +49,11 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     model.reactionViz.dispose();
     post.scaleMultiplier = scale;
     post.showDiagram(type, selectedMembers);
+    // Forces render on the member centreline - hide the solid section; contour paints the
+    // centreline with the colormap (hiding the neutral grey line), otherwise keep it
+    model.visibility.showOrHideSections(false);
+    model.visibility.showOrHideMembers(!post.showContour);
     model.visibility.showOrHideLoads(false);
-    model.visibility.showOrHideSections(post.showContour);
   };
 
   const applyDeformation = () => {
@@ -72,7 +75,14 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
   const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine') =>
     (event: ChangeEvent<HTMLInputElement>) => {
       post[key] = event.target.checked;
-      if (key === 'showContour') model.visibility.showOrHideSections(post.showContour);
+      if (key === 'showContour') {
+        // Forces contour paints the centreline (sections stay hidden); deformation keeps the solid
+        if (isDefl) model.visibility.showOrHideSections(post.showContour);
+        else {
+          model.visibility.showOrHideSections(false);
+          model.visibility.showOrHideMembers(!post.showContour);
+        }
+      }
       renderActive();
     };
 
