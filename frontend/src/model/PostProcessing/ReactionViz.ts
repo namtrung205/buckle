@@ -18,9 +18,9 @@ const LABEL_COLOR = '#f472b6'
 // Screen-space sizing (CSS pixels): every symbol keeps a constant on-screen
 // size no matter how far the camera is or which zoom is active.
 const FORCE_ARROW_LENGTH_PIXELS = 54
-const MOMENT_ARROW_LENGTH_PIXELS = 44
+const MOMENT_ARROW_LENGTH_PIXELS = 54 // twice the previous 44px so moment double-arrows read clearly
 const FORCE_LABEL_GAP_PIXELS = 10
-const MOMENT_LABEL_GAP_PIXELS = 12
+const MOMENT_LABEL_GAP_PIXELS = 14
 
 // Unit vector of each reaction component in the three.js scene frame
 // (OpenSees Z-up -> three.js Y-up permutation: ops X -> three X,
@@ -63,6 +63,7 @@ type VizItem = {
   group: THREE.Group        // positioned at the support node
   pxLength: number          // desired on-screen length (CSS px)
   baseLength: number        // world-space length recorded at render time
+  baselineDir: THREE.Vector3 // unit world vector the value text runs along (arrow direction)
   outwardDir: THREE.Vector3 // unit world vector from node toward the label
   labelGapPx: number
   labelId?: string
@@ -187,6 +188,7 @@ class ReactionViz {
           group: symbol,
           pxLength,
           baseLength,
+          baselineDir: baselineDir.clone(),
           outwardDir,
           labelGapPx: isMoment ? MOMENT_LABEL_GAP_PIXELS : FORCE_LABEL_GAP_PIXELS,
         }
@@ -220,7 +222,8 @@ class ReactionViz {
     this.clearScene()
   }
 
-  /** Per-frame hook (Model.update): keep every symbol pixel-sized. */
+  /** Per-frame hook (Model.update): keep every symbol pixel-sized and the
+   *  value text rotating with the arrow even while the camera orbits. */
   onFrame() {
     if (!this.items.length) return
     for (const item of this.items) {
@@ -229,11 +232,13 @@ class ReactionViz {
       item.group.scale.setScalar(target / item.baseLength)
       if (item.labelId) {
         const gapWorld = this.model.pixelToWorld(origin, item.labelGapPx)
+        const rotationDeg = this.labelRotationDeg(origin, item.baselineDir)
         this.model.labeler.updateOne({
           id: item.labelId,
           position: origin.clone().addScaledVector(item.outwardDir, target + gapWorld),
           text: item.labelText ?? '',
           type: 'reaction',
+          rotation: rotationDeg,
         })
       }
     }

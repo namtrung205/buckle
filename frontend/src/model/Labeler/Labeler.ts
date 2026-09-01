@@ -349,15 +349,20 @@ class Labeler {
         this.create([label])
         return
       }
-      const childNodes = labelObj.element.childNodes
-      const child = childNodes[0] as HTMLElement
-      child.textContent = label.text;
+      const container = labelObj.element.childNodes[0] as HTMLElement
+      // Refresh the inner <p> text node so the label keeps its styled font/color
+      // (setting textContent on the container would wipe the <p> styling).
+      const p = container?.querySelector('p') as HTMLElement
+      if (p) p.textContent = label.text
+      else if (container) container.textContent = label.text
+      // Keep the label rotated along the symbol direction every frame so it
+      // still follows the arrow when the camera orbits / zooms.
+      if (container && label.rotation !== undefined) {
+        container.style.transform = `rotate(${label.rotation}deg)`
+      }
       labelObj.position.copy(label.position);
       const currentLayers = this.model.camera.cam.layers
       labelObj.layers = currentLayers
-      if(label.rotation) {
-        // child.style.transform = `rotate(${label.rotation}deg)`;
-      }
     }
   }
 
