@@ -1,6 +1,9 @@
 import Model from "../../Model"
 import * as THREE from "three"
 import { Label } from "../../../types"
+
+const NODE_SCREEN_RADIUS_PX = 7
+const _nodePos = new THREE.Vector3()
 class Node {
   id: number
   name? : string
@@ -31,7 +34,8 @@ class Node {
     mesh.visible = true
     mesh.layers.set(this.model.layer)
     this.model.scene.add(mesh);
-    this.mesh = mesh
+    this.mesh = mesh;
+    this.mesh.userData.baseRadius = (geometry as any).parameters?.radius ?? 0.05;
     
     if(!this.name) this.name = `Node ${this.model.nodes.length + 1 }`
 
@@ -126,6 +130,14 @@ class Node {
     if(this.mesh.parent){
       this.mesh.parent.remove(this.mesh)
     }
+  }
+
+  /** Keep the node sphere a constant on-screen size regardless of zoom. */
+  updateScreenScale() {
+    if (!this.model || !this.mesh) return
+    const baseRadius = (this.mesh.userData as any).baseRadius ?? 0.05
+    const target = this.model.pixelToWorld(_nodePos.set(this.x, this.y, this.z), NODE_SCREEN_RADIUS_PX)
+    this.mesh.scale.setScalar(target / baseRadius)
   }
 
   addLabel(){

@@ -34,7 +34,6 @@ const AXIS_BY_COMPONENT: Record<ReactionComponent, THREE.Vector3> = {
   Mz: new THREE.Vector3(0, 1, 0),
 }
 
-const SIZE_VECTOR = new THREE.Vector2()
 
 const fmt = (v: number) => {
   const a = Math.abs(v)
@@ -150,7 +149,7 @@ class ReactionViz {
         const color = isMoment ? MOMENT_COLOR : value >= 0 ? POS_COLOR : NEG_COLOR
 
         const pxLength = isMoment ? MOMENT_ARC_PIXEL_RADIUS : FORCE_ARROW_LENGTH_PIXELS
-        const baseLength = this.pixelToWorld(origin, pxLength)
+        const baseLength = this.model.pixelToWorld(origin, pxLength)
 
         const symbol = new THREE.Group()
         symbol.position.copy(origin)
@@ -189,7 +188,7 @@ class ReactionViz {
         }
 
         if (this.showLabels) {
-          const gapWorld = this.pixelToWorld(origin, item.labelGapPx)
+          const gapWorld = this.model.pixelToWorld(origin, item.labelGapPx)
           const labelId = `reaction-${component}-${reaction.id}`
           const text = `${component} ${fmt(value)}`
           item.labelId = labelId
@@ -222,10 +221,10 @@ class ReactionViz {
     if (!this.items.length) return
     for (const item of this.items) {
       const origin = item.group.position
-      const target = this.pixelToWorld(origin, item.pxLength)
+      const target = this.model.pixelToWorld(origin, item.pxLength)
       item.group.scale.setScalar(target / item.baseLength)
       if (item.labelId) {
-        const gapWorld = this.pixelToWorld(origin, item.labelGapPx)
+        const gapWorld = this.model.pixelToWorld(origin, item.labelGapPx)
         this.model.labeler.updateOne({
           id: item.labelId,
           position: origin.clone().addScaledVector(item.outwardDir, target + gapWorld),
@@ -292,19 +291,6 @@ class ReactionViz {
     head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent)
 
     group.add(line, head)
-  }
-
-  /** Convert an on-screen pixel length at a world position into world units. */
-  private pixelToWorld(position: THREE.Vector3, pixels: number): number {
-    const cam = this.model.camera.cam
-    const height = this.model.renderer.getSize(SIZE_VECTOR).y || 1
-    if ((cam as THREE.OrthographicCamera).isOrthographicCamera) {
-      const ortho = cam as THREE.OrthographicCamera
-      return (pixels * ((ortho.top - ortho.bottom) / (ortho.zoom || 1))) / height
-    }
-    const perspective = cam as THREE.PerspectiveCamera
-    const distance = Math.max(perspective.position.distanceTo(position), 1e-3)
-    return (pixels * 2 * distance * Math.tan((perspective.fov * Math.PI) / 360)) / height
   }
 }
 

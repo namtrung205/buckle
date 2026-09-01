@@ -33,6 +33,8 @@ export type PointerCoords = {
   z: number;
 };
 
+const SIZE_VECTOR = new THREE.Vector2()
+
 
 
 export class Model {
@@ -288,6 +290,19 @@ export class Model {
     }
   }
 
+  /** Convert an on-screen pixel length at a world position into world units. */
+  pixelToWorld(position: THREE.Vector3, pixels: number): number {
+    const cam = this.camera.cam
+    const height = this.renderer.getSize(SIZE_VECTOR).y || 1
+    if ((cam as THREE.OrthographicCamera).isOrthographicCamera) {
+      const ortho = cam as THREE.OrthographicCamera
+      return (pixels * ((ortho.top - ortho.bottom) / (ortho.zoom || 1))) / height
+    }
+    const perspective = cam as THREE.PerspectiveCamera
+    const distance = Math.max(perspective.position.distanceTo(position), 1e-3)
+    return (pixels * 2 * distance * Math.tan((perspective.fov * Math.PI) / 360)) / height
+  }
+
   private onResize = () => 
 
   {
@@ -301,6 +316,7 @@ export class Model {
     this.camera.updateDepthRange(); // keep near/far in sync with model growth (prevents culling)
     this.camera.cam.updateProjectionMatrix();
     this.reactionViz?.onFrame();
+    this.nodes?.forEach((node: any) => node.updateScreenScale?.());
     this.renderer.render(this.scene, this.camera.cam);
     this.camera.controls.update()
     this.camera.directionalLight.target.position.copy(this.camera.controls.target)
