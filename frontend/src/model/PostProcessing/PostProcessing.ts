@@ -770,8 +770,7 @@ class PostProcessing {
         values: station.values
       }))
     }))
-    const markerRadius = this.modelSize * 0.008
-    this.hover.setTargets(this.hoverMeshes, hoverMembers, this.activeType, markerRadius)
+    this.hover.setTargets(this.hoverMeshes, hoverMembers, this.activeType)
   }
 
   dispose() {

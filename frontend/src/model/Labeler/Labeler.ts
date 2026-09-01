@@ -127,25 +127,27 @@ class Labeler {
       wrapper.appendChild(pContainer)
 
       if (type === 'effort') {
-        // Effort styling — compact solid pill: no border, accent background, white mono value
-        const accent = label.backgroundColor || '#2f6fed';
-        pContainer.style.backgroundColor = accent;
+        // Effort value tags — same thin, background-free text as the reaction labels.
+        // Bright amber so the values pop against every diagram / model colour.
+        pContainer.style.backgroundColor = 'transparent';
         pContainer.style.border = 'none';
-        pContainer.style.borderRadius = '999px';
-        pContainer.style.padding = '1px 7px';
+        pContainer.style.borderRadius = '0';
+        pContainer.style.padding = '0';
         pContainer.style.height = 'auto';
         pContainer.style.width = 'auto';
         pContainer.style.minWidth = '0';
-        pContainer.style.boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
-        p.style.color = '#ffffff';
-        p.style.fontFamily = '"JetBrains Mono", ui-monospace, "SF Mono", monospace';
-        p.style.fontSize = '10.5px';
-        p.style.fontWeight = '700';
-        p.style.lineHeight = '1.5';
+        pContainer.style.boxShadow = 'none';
+        p.style.color = '#fbbf24';
+        p.style.fontFamily = '"Consolas", "Roboto Mono", ui-monospace, monospace';
+        p.style.fontSize = '12.5px';
+        p.style.fontWeight = '300';
+        p.style.lineHeight = '1.2';
+        p.style.letterSpacing = '0.4px';
         p.style.whiteSpace = 'nowrap';
+        p.style.textShadow = '0 1px 2px rgba(0,0,0,0.85)';
       }
       else if (type === 'reaction') {
-        // SHX-style stroked value text: thin font, no background, pink - like
+        // SHX-style stroked value text: thin font, no background - bright amber
         // the CAD "text" layer of Midas/Civil where value tags are readable
         // over the model without any box.
         pContainer.style.backgroundColor = 'transparent';
@@ -154,14 +156,14 @@ class Labeler {
         pContainer.style.boxShadow = 'none';
         pContainer.style.height = 'auto';
         pContainer.style.width = 'auto';
-        p.style.color = '#f472b6';
+        p.style.color = '#fbbf24';
         p.style.fontFamily = '"Consolas", "Roboto Mono", ui-monospace, monospace';
-        p.style.fontSize = '11px';
+        p.style.fontSize = '12.5px';
         p.style.fontWeight = '300';
         p.style.lineHeight = '1.2';
         p.style.letterSpacing = '0.4px';
         p.style.whiteSpace = 'nowrap';
-        p.style.textShadow = 'none';
+        p.style.textShadow = '0 1px 2px rgba(0,0,0,0.85)';
       }
       else if (type === 'length') {
         pContainer.style.backgroundColor = 'white';
@@ -303,7 +305,9 @@ class Labeler {
       pContainer.style.justifyContent = 'center';
       pContainer.appendChild(p);
 
-      pContainer.style.transform = `rotate(${label.rotation}deg)`;
+      // Keep upright unless the label explicitly asks for a rotation
+      if (label.rotation !== undefined) pContainer.style.transform = `rotate(${label.rotation}deg)`
+      else pContainer.style.transform = 'none';
   
       const cPointLabel = new CSS2DObject(wrapper);
       cPointLabel.position.copy(position);

@@ -12,7 +12,7 @@ const POS_COLOR = '#2f6fed'    // positive force
 const NEG_COLOR = '#e5484d'    // negative force
 const MOMENT_COLOR = '#f59e0b' // moment double arrows
 
-// Value labels are always pink (CAD "text" layer look).
+// Value labels are bright amber (CAD "text" layer look).
 const LABEL_COLOR = '#f472b6'
 
 // Screen-space sizing (CSS pixels): every symbol keeps a constant on-screen
