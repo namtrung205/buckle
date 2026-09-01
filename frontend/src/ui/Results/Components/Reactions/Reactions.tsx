@@ -57,6 +57,10 @@ const Reactions = observer(() => {
             // Result visualizations are exclusive: applying reactions clears
             // any force diagram / deflected shape on screen
             model.postProcessing.dispose();
+            // Line-only display: reactions draw at the nodes, members stay as
+            // centre lines (no solid sections)
+            model.visibility.showOrHideSections(false);
+            model.visibility.showOrHideMembers(true);
             reactionViz.apply();
           }}
           sx={{

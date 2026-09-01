@@ -63,8 +63,11 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     post.showContour = true;
     post.showRibbon = true;
     post.showDeflectedShape(selectedMembers);
+    // Line-only display: sections hidden; contour paints the displaced centreline
+    // strips, so the neutral grey line stays hidden while the colours are on
+    model.visibility.showOrHideSections(false);
+    model.visibility.showOrHideMembers(!post.showContour);
     model.visibility.showOrHideLoads(false);
-    model.visibility.showOrHideSections(post.showContour);
   };
 
   const renderActive = () => {
@@ -76,12 +79,10 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     (event: ChangeEvent<HTMLInputElement>) => {
       post[key] = event.target.checked;
       if (key === 'showContour') {
-        // Forces contour paints the centreline (sections stay hidden); deformation keeps the solid
-        if (isDefl) model.visibility.showOrHideSections(post.showContour);
-        else {
-          model.visibility.showOrHideSections(false);
-          model.visibility.showOrHideMembers(!post.showContour);
-        }
+        // Line-only display: sections always hidden; contour paints the centreline
+        // strips, so the neutral grey line only shows when the colours are off
+        model.visibility.showOrHideSections(false);
+        model.visibility.showOrHideMembers(!post.showContour);
       }
       renderActive();
     };

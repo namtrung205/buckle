@@ -388,7 +388,7 @@ class PostProcessing {
         station.offset.copy(this.stationOffset(type, data, station, scale))
       }
       if (type === DEFLECTION_TYPE) {
-        this.buildOutline(data)
+        this.buildOutline(data, this.showContour)
         if (this.showRefLine) this.buildRefLine(data)
       } else {
         if (this.showRibbon) this.buildRibbon(data)
@@ -396,10 +396,7 @@ class PostProcessing {
         this.buildBaseline(data)
         this.buildOutline(data, this.showContour)
       }
-      if (this.showContour) {
-        if (type === DEFLECTION_TYPE) this.colorMemberSolids(data)
-        else this.colorMemberLine(type, data)
-      }
+      if (this.showContour) this.colorMemberLine(type, data)
       if (this.showLabels) this.collectExtremes(data, type)
     }
 
@@ -648,24 +645,28 @@ class PostProcessing {
     this.coloredSolids.clear()
   }
 
-  /** Paint the member centreline with the per-station colormap (forces mode renders members as thin lines, not solids). */
+  /** Paint the member centreline with the per-station colormap. Forces use the
+  * undeformed axis; deflection paints the displaced axis (line-only display). */
   private colorMemberLine(type: string, data: MemberDiagramData) {
     const stations = data.stations
     if (stations.length === 0) return
     // Same diagram plane as the ribbon: N/Vy/T/Mz along local Y, Vz/My along local Z
     const dir = type === 'Vz' || type === 'My' ? data.localZ : data.localY
     const half = this.modelSize * 0.002
+    const at = (station: StationPoint) => (type === DEFLECTION_TYPE ? station.offset : station.base)
     const vertices: number[] = []
     const colors: number[] = []
     const indices: number[] = []
     const color = new THREE.Color()
     for (const station of stations) {
-      vertices.push(station.base.x + dir.x * half, station.base.y + dir.y * half, station.base.z + dir.z * half)
+      const p = at(station)
+      vertices.push(p.x + dir.x * half, p.y + dir.y * half, p.z + dir.z * half)
       color.copy(this.stationColor(station.value))
       colors.push(color.r, color.g, color.b)
     }
     for (const station of stations) {
-      vertices.push(station.base.x - dir.x * half, station.base.y - dir.y * half, station.base.z - dir.z * half)
+      const p = at(station)
+      vertices.push(p.x - dir.x * half, p.y - dir.y * half, p.z - dir.z * half)
       color.copy(this.stationColor(station.value))
       colors.push(color.r, color.g, color.b)
     }
