@@ -10,7 +10,7 @@ export type ReactionComponent = (typeof REACTION_COMPONENTS)[number]
 
 const POS_COLOR = '#2f6fed'    // positive force
 const NEG_COLOR = '#e5484d'    // negative force
-const MOMENT_COLOR = '#f59e0b' // moment arcs
+const MOMENT_COLOR = '#f59e0b' // moment double arrows
 
 // Value labels are always pink (CAD "text" layer look).
 const LABEL_COLOR = '#f472b6'
@@ -18,7 +18,7 @@ const LABEL_COLOR = '#f472b6'
 // Screen-space sizing (CSS pixels): every symbol keeps a constant on-screen
 // size no matter how far the camera is or which zoom is active.
 const FORCE_ARROW_LENGTH_PIXELS = 54
-const MOMENT_ARC_PIXEL_RADIUS = 20
+const MOMENT_ARROW_LENGTH_PIXELS = 44
 const FORCE_LABEL_GAP_PIXELS = 10
 const MOMENT_LABEL_GAP_PIXELS = 12
 
@@ -72,9 +72,10 @@ type VizItem = {
 /**
  * Renders support reactions in the 3D scene, Midas-Civil style: one thin
  * arrow (same language as the load arrows) per checked force component
- * (Fx/Fy/Fz) and one thin arc per checked moment component (Mx/My/Mz) at
- * every restrained node. Every arrow points INTO its node - it starts
- * outside and the head lands on the node. All symbols are sized in screen
+ * (Fx/Fy/Fz) and one double-headed arrow (------>->) along the moment axis
+ * per checked moment component (Mx/My/Mz) at every restrained node. Force
+ * arrows point INTO their node; moment double arrows point along the
+ * right-hand-rule direction of the reaction. All symbols are sized in screen
  * pixels (constant on-screen size when zooming) and the value text is a thin
  * SHX-style pink label without a background that follows the arrow direction.
  */
@@ -148,7 +149,7 @@ class ReactionViz {
         const dir = AXIS_BY_COMPONENT[component].clone().multiplyScalar(value >= 0 ? 1 : -1)
         const color = isMoment ? MOMENT_COLOR : value >= 0 ? POS_COLOR : NEG_COLOR
 
-        const pxLength = isMoment ? MOMENT_ARC_PIXEL_RADIUS : FORCE_ARROW_LENGTH_PIXELS
+        const pxLength = isMoment ? MOMENT_ARROW_LENGTH_PIXELS : FORCE_ARROW_LENGTH_PIXELS
         const baseLength = this.model.pixelToWorld(origin, pxLength)
 
         const symbol = new THREE.Group()
@@ -157,10 +158,11 @@ class ReactionViz {
         let baselineDir: THREE.Vector3
         let outwardDir: THREE.Vector3
         if (isMoment) {
-          this.buildMomentArc(symbol, dir, baseLength, color)
-          const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir)
-          baselineDir = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion)
-          outwardDir = baselineDir
+          // Double-headed arrow (------->->) along the moment axis: both heads
+          // point in the right-hand-rule direction of the reaction moment.
+          this.buildMomentAxisArrow(symbol, dir, baseLength, color)
+          baselineDir = dir.clone()
+          outwardDir = dir.clone()
         } else {
           // Thin ArrowHelper (same language as the load arrows): it starts
           // outside the node and the head lands on the node, pointing into it.
@@ -258,39 +260,32 @@ class ReactionViz {
     this.model.labeler.deleteAll('reaction')
   }
 
-  private buildMomentArc(group: THREE.Group, dir: THREE.Vector3, radius: number, color: string) {
-    const arc = 4.9 // ~280 degree sweep
+  private buildMomentAxisArrow(group: THREE.Group, dir: THREE.Vector3, length: number, color: string) {
+    const axis = dir.clone().normalize()
 
-    // The arc sweeps in the plane perpendicular to the moment axis, in the
-    // right-hand-rule sense (plane normal mapped onto the moment axis).
-    const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.clone().normalize())
-
-    const points: THREE.Vector3[] = []
-    const segments = 48
-    for (let i = 0; i <= segments; i++) {
-      const angle = (i / segments) * arc
-      points.push(
-        new THREE.Vector3(Math.cos(angle), Math.sin(angle), 0)
-          .applyQuaternion(quaternion)
-          .multiplyScalar(radius),
-      )
-    }
-    const line = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(points),
+    // Thin shaft from the node along the moment axis.
+    const shaft = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0),
+        axis.clone().multiplyScalar(length * 0.55),
+      ]),
       new THREE.LineBasicMaterial({ color }),
     )
+    group.add(shaft)
 
-    // Cone head at the end of the sweep, oriented along the local tangent.
-    const tangent = new THREE.Vector3(-Math.sin(arc), Math.cos(arc), 0).applyQuaternion(quaternion).normalize()
-    const headLength = radius * 0.5
-    const head = new THREE.Mesh(
-      new THREE.ConeGeometry(headLength * 0.4, headLength, 12),
-      new THREE.MeshBasicMaterial({ color }),
-    )
-    head.position.copy(points[points.length - 1]).addScaledVector(tangent, headLength * 0.4)
-    head.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent)
-
-    group.add(line, head)
+    // Two nested arrowheads at the tip (------->-> double barbs), both
+    // pointing out along the axis (right-hand-rule direction). ConeGeometry
+    // points +Y, so rotate +Y onto the axis and slide each cone along it.
+    const headMaterial = new THREE.MeshBasicMaterial({ color })
+    const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis)
+    const makeHead = (tipAt: number, size: number) => {
+      const head = new THREE.Mesh(new THREE.ConeGeometry(size * 0.5, size, 12), headMaterial)
+      head.position.copy(axis.clone().multiplyScalar(tipAt - size / 2))
+      head.quaternion.copy(quaternion)
+      group.add(head)
+    }
+    makeHead(length * 0.78, length * 0.23) // inner barb (starts where the shaft ends)
+    makeHead(length, length * 0.22)        // outer barb at the tip
   }
 }
 

@@ -2,7 +2,7 @@ import Model from "../../Model"
 import * as THREE from "three"
 import { Label } from "../../../types"
 
-const NODE_SCREEN_RADIUS_PX = 7
+const NODE_SCREEN_RADIUS_PX = 3
 const _nodePos = new THREE.Vector3()
 class Node {
   id: number
