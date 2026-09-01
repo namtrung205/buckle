@@ -186,6 +186,7 @@ def main():
     print()
 
     output = run_analysis(model)
+    reactions = output.get("reactions", [])
 
     mid_mm = max_abs_deflection_mm(output)
     expected_mm = exp["delta_max_m"] * 1000.0
@@ -201,6 +202,14 @@ def main():
     print(f"  |uz| max        = {mid_mm:.4f} mm   (expected {expected_mm:.4f} mm)")
     print(f"  reaction R      = {R_kN:.4f} kN    (expected {R_exp_kN:.4f} kN)")
     print(f"  moment M_mid    = {M_kNm:.4f} kN.m  (expected {M_exp_kNm:.4f} kN.m)")
+
+    print(f"  reactions payload: {len(reactions)} support node(s)")
+    for r in reactions:
+        print(
+            f"    node {r['id']}: Fx={r['Fx']:.4f} Fy={r['Fy']:.4f} Fz={r['Fz']:.4f} kN | "
+            f"Mx={r['Mx']:.4f} My={r['My']:.4f} Mz={r['Mz']:.4f} kN.m"
+        )
+    print(f"  sum Fz          = {sum(r['Fz'] for r in reactions):.4f} kN   (applied load = {-w * L / 1000.0:.4f} kN)")
 
     rel_d = abs(mid_mm - expected_mm) / expected_mm
     print(f"  deflection rel err = {rel_d*100:.3f} %")
@@ -218,17 +227,23 @@ def main():
     tol_r = 0.02
     ok_r = abs(R_kN - R_exp_kN) <= abs(R_exp_kN) * tol_r
 
+    # --- reactions payload check (ops.nodeReaction via extract_node_reactions)
+    ok_rx = len(reactions) == 2 and all(
+        abs(abs(r["Fz"]) - R_exp_kN) <= abs(R_exp_kN) * tol_r for r in reactions
+    )
+
     # --- moment check -----------------------------------------------------
     # Mid-span moment is also quantised to 2 decimal places of kN.m: 0.125
     # kN.m -> 0.12/0.13 (5% bin). Allow 6% to absorb the 2-dp rounding.
     tol_m = 0.06
     ok_m = abs(M_kNm - M_exp_kNm) <= abs(M_exp_kNm) * tol_m
 
-    ok = ok_d and ok_r and ok_m
+    ok = ok_d and ok_r and ok_m and ok_rx
 
     print("-" * 72)
     print(f"  deflection {'PASS' if ok_d else 'FAIL'}  (tol {tol_d*100:.0f}%)")
     print(f"  reaction   {'PASS' if ok_r else 'FAIL'}  (tol {tol_r*100:.0f}%)")
+    print(f"  reactions payload {'PASS' if ok_rx else 'FAIL'}")
     print(f"  moment     {'PASS' if ok_m else 'FAIL'}  (tol {tol_m*100:.0f}%)")
     print("-" * 72)
     print(f"{'PASS' if ok else 'FAIL'}: all simply-supported beam checks vs analytical solution")

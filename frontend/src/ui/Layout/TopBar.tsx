@@ -13,6 +13,7 @@ import {
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
 import Results from '../Results/Results';
+import Reactions from '../Results/Components/Reactions/Reactions';
 import Move from '../Model/Nodes/Components/Move/Move';
 import Draw from '../Draw/Draw';
 import Docs from '../Docs/Docs';
@@ -165,6 +166,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   const dialogs = {
     settings: activeDialog === 'settings',
     results: activeDialog === 'results',
+    reactions: activeDialog === 'reactions',
     move: activeDialog === 'move',
     draw: activeDialog === 'draw',
     docs: activeDialog === 'docs',
@@ -191,6 +193,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   const runAnalysis = async () => {
     try {
       model.postProcessing.dispose();
+      model.reactionViz.dispose();
       
       // Validate that required data is present
       if (!model.nodes || model.nodes.length === 0) {
@@ -242,6 +245,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);
       console.log('RES', res);
       model.output = res.data.output;
+      model.reactionViz.apply();
       model.lockResults();
       
       model.console.setFinished(true);
@@ -514,6 +518,13 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             <RibbonPanel label="Results">
               <RibbonButton title="View results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
               <RibbonButton
+                title="View support reactions"
+                label="Reactions"
+                onClick={() => open('reactions')}
+                iconImage={{ src: '/supports.png', alt: 'Reactions', size: 15 }}
+                disabled={!hasResults}
+              />
+              <RibbonButton
                 title="Download analysis results"
                 label="Download"
                 onClick={downloadResults}
@@ -527,6 +538,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
 
       <Settings open={dialogs.settings} onClose={close} />
       <Results open={dialogs.results} onClose={close} />
+      <Reactions open={dialogs.reactions} onClose={close} />
       <Move open={dialogs.move} onClose={close} selectedNode={null} />
       <Draw open={dialogs.draw} onClose={close} freeMode={true} />
       <Docs open={dialogs.docs} onClose={close} />

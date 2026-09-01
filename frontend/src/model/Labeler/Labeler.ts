@@ -144,6 +144,24 @@ class Labeler {
         p.style.lineHeight = '1.5';
         p.style.whiteSpace = 'nowrap';
       }
+      else if (type === 'reaction') {
+        // Reaction styling - same compact pill as 'effort', tinted per sign
+        const accent = label.backgroundColor || '#2f6fed';
+        pContainer.style.backgroundColor = accent;
+        pContainer.style.border = 'none';
+        pContainer.style.borderRadius = '999px';
+        pContainer.style.padding = '1px 7px';
+        pContainer.style.height = 'auto';
+        pContainer.style.width = 'auto';
+        pContainer.style.minWidth = '0';
+        pContainer.style.boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
+        p.style.color = '#ffffff';
+        p.style.fontFamily = '"JetBrains Mono", ui-monospace, "SF Mono", monospace';
+        p.style.fontSize = '10.5px';
+        p.style.fontWeight = '700';
+        p.style.lineHeight = '1.5';
+        p.style.whiteSpace = 'nowrap';
+      }
       else if (type === 'length') {
         pContainer.style.backgroundColor = 'white';
         pContainer.style.height = '30px';
@@ -296,13 +314,13 @@ class Labeler {
       // Result min/max tags ('effort') must always paint above support
       // hexagons sharing the same node; support symbols stay below every
       // other annotation.
-      cPointLabel.renderOrder = label.type === 'effort' ? 10 : (label.type === 'support' ? 0 : 5);
+      cPointLabel.renderOrder = (label.type === 'effort' || label.type === 'reaction') ? 10 : (label.type === 'support' ? 0 : 5);
       this.model.scene.add(cPointLabel);
       this.labelObjects.push(cPointLabel);
     }
   }
 
-  deleteAll(type : 'effort' | 'load') {
+  deleteAll(type : 'effort' | 'load' | 'reaction') {
     this.labelObjects.forEach(label => {
       if(label.userData.type === type) {
         label.element.remove();
