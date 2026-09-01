@@ -12,7 +12,6 @@ import {
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
-import Results from '../Results/Results';
 import Move from '../Model/Nodes/Components/Move/Move';
 import Draw from '../Draw/Draw';
 import Docs from '../Docs/Docs';
@@ -536,8 +535,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       </Box>
 
       <Settings open={dialogs.settings} onClose={close} />
-      <Results open={dialogs.results} onClose={close} />
-      <Move open={dialogs.move} onClose={close} selectedNode={null} />
+            <Move open={dialogs.move} onClose={close} selectedNode={null} />
       <Draw open={dialogs.draw} onClose={close} freeMode={true} />
       <Docs open={dialogs.docs} onClose={close} />
       <AddOrEditSection open={dialogs.sections} onClose={close} section={null} />

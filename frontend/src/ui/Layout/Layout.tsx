@@ -5,7 +5,7 @@ import { colors } from '../../theme';
 import { useModel } from '../../model/Context';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
-import Reactions from '../Results/Components/Reactions/Reactions';
+import ResultPanel from '../Results/ResultPanel';
 import BottomBar from '../BottomBar';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
@@ -58,9 +58,9 @@ const Layout = observer(({ children }: LayoutProps) => {
         >
           {children}
 
-          {/* Support reactions dock panel (left edge of the viewer, closes with ✕) */}
-          {model?.activeDialog === 'reactions' && (
-            <Reactions open onClose={() => model.closeDialog()} />
+          {/* Results dock panel (Reactions / Forces / Deformation tabs) */}
+          {(model?.activeDialog === 'results' || model?.activeDialog === 'reactions') && (
+            <ResultPanel onClose={() => model.closeDialog()} />
           )}
 
           {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
@@ -76,4 +76,3 @@ const Layout = observer(({ children }: LayoutProps) => {
 });
 
 export default Layout;
-

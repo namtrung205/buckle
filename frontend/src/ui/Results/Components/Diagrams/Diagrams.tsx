@@ -1,66 +1,72 @@
-import { useState } from 'react';
+import { ChangeEvent, useState } from 'react';
 import {
   Box,
   Button,
-  Select,
-  MenuItem,
-  FormControl,
   Checkbox,
+  FormControl,
+  FormControlLabel,
+  MenuItem,
+  Radio,
+  RadioGroup,
+  Select,
   Slider,
   Switch,
-  ToggleButton,
-  ToggleButtonGroup,
-  FormControlLabel,
   Typography,
 } from '@mui/material';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../../model/Context';
+import { DEFLECTION_TYPE, DIAGRAM_TYPES } from '../../../../model/PostProcessing/PostProcessing';
 import Legend from '../Legend/Legend';
 import SummaryTable from '../SummaryTable/SummaryTable';
 import StationTable from '../StationTable/StationTable';
-import { DIAGRAM_TYPES, DEFLECTION_TYPE } from '../../../../model/PostProcessing/PostProcessing';
 import { UI, SecTitle } from '../ui';
 
-const TYPE_LABELS: Record<string, string> = {
-  N: 'N', Vy: 'Vy', Vz: 'Vz', T: 'T', My: 'My', Mz: 'Mz', defl: 'Chuyển vị',
-};
+interface DiagramsProps {
+  variant: 'forces' | 'deformation';
+}
 
-const Diagrams = observer(() => {
+/**
+ * Forces / Deformation tab of the Results dock panel. Both variants share the
+ * member filter, legend and summary tables;the forces variant additionally
+ * exposes the N..Mz radios + ribbon/hatch toggles, whilethe deformation variant
+ * exposes the exaggeration slider + reference-line toggle.Apply pushes the current
+ * selection to the viewer post-processing.
+ */
+const Diagrams = observer(({ variant }: DiagramsProps) => {
   const model = useModel();
   const post = model.postProcessing;
+  const isDefl = variant === 'deformation';
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
   const [scale, setScale] = useState<number>(1);
   const [deflScale, setDeflScale] = useState<number>(5);
+  const [forceType, setForceType] = useState<string | null>(
+    post.activeType && !isDefl && post.activeType !== DEFLECTION_TYPE ? post.activeType : null,
+  );
 
-  const isDefl = post.activeType === DEFLECTION_TYPE;
-
-  const applyView = (type: string | null) => {
-    if (!type) {
-      post.dispose();
-      return;
-    }
-    if (type === DEFLECTION_TYPE) {
-      post.deflectionMultiplier = deflScale;
-      post.showContour = true;
-      post.showRibbon = true;
-      post.showDeflectedShape(selectedMembers);
-    } else {
-      post.scaleMultiplier = scale;
-      post.showDiagram(type, selectedMembers);
-    }
+  const applyForce = (type: string | null) => {
+    if (!type) return;
+    post.scaleMultiplier = scale;
+    post.showDiagram(type, selectedMembers);
     model.visibility.showOrHideLoads(false);
     model.visibility.showOrHideSections(post.showContour);
   };
 
-  const renderActive = () => applyView(post.activeType);
+  const applyDeformation = () => {
+    post.deflectionMultiplier = deflScale;
+    post.showContour = true;
+    post.showRibbon = true;
+    post.showDeflectedShape(selectedMembers);
+    model.visibility.showOrHideLoads(false);
+    model.visibility.showOrHideSections(post.showContour);
+  };
 
-  const handleModeChange = (_event: any, value: string | null) => {
-    setSelectedMembers(selectedMembers); // keep selection across mode switches
-    applyView(value);
+  const renderActive = () => {
+    if (isDefl) applyDeformation();
+    else if (post.activeType) applyForce(post.activeType);
   };
 
   const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine') =>
-    (event: any) => {
+    (event: ChangeEvent<HTMLInputElement>) => {
       post[key] = event.target.checked;
       if (key === 'showContour') model.visibility.showOrHideSections(post.showContour);
       renderActive();
@@ -72,7 +78,7 @@ const Diagrams = observer(() => {
   } as const;
 
   return (
-    <Box sx={{ mt: 2, mb: 2, width: '340px' }}>
+    <Box>
       <SecTitle>Members</SecTitle>
       <FormControl fullWidth size="small">
         <Select
@@ -89,16 +95,6 @@ const Diagrams = observer(() => {
             '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: UI.accent },
             '& .MuiSelect-select': { py: 0.9, color: UI.text },
           }}
-          MenuProps={{
-            PaperProps: {
-              sx: {
-                backgroundColor: UI.panel,
-                border: `1px solid ${UI.border}`,
-                maxHeight: 300,
-                '& .MuiMenuItem-root': { fontFamily: UI.mono, fontSize: '0.8rem', color: UI.text },
-              },
-            },
-          }}
         >
           {model.members?.map((member: any) => (
             <MenuItem key={member.id} value={member.id}>
@@ -109,63 +105,28 @@ const Diagrams = observer(() => {
         </Select>
       </FormControl>
 
-      <Box sx={{ mt: 2 }}><SecTitle>Result type</SecTitle></Box>
-      <ToggleButtonGroup
-        value={post.activeType}
-        exclusive
-        onChange={handleModeChange}
-        size="small"
-        fullWidth
-        sx={{
-          mt: 0.5,
-          flexWrap: 'wrap',
-          gap: 0.5,
-          // MUI joins buttons by hiding the left border of every :not(:first-of-type)
-          // button — this breaks once the group wraps. Restore a complete edge
-          // on every button so no cell loses its border.
-          '& .MuiToggleButtonGroup-grouped': {
-            '&:not(:first-of-type)': {
-              marginLeft: 0,
-              borderLeft: `1px solid ${UI.borderDark}`,
-              borderTopLeftRadius: '6px',
-              borderBottomLeftRadius: '6px',
-            },
-            '&:not(:last-of-type)': {
-              borderTopRightRadius: '6px',
-              borderBottomRightRadius: '6px',
-            },
-            '&:first-of-type': {
-              borderTopLeftRadius: '6px',
-              borderBottomLeftRadius: '6px',
-            },
-            '&:last-of-type': {
-              borderTopRightRadius: '6px',
-              borderBottomRightRadius: '6px',
-            },
-          },
-        }}
-      >
-        {[...DIAGRAM_TYPES, DEFLECTION_TYPE].map((type) => (
-          <ToggleButton
-            key={type}
-            value={type}
-            sx={{
-              py: 0.5, px: 1, flex: '1 1 30%',
-              fontSize: '0.72rem', fontFamily: UI.mono, textTransform: 'none',
-              color: UI.text, borderColor: UI.borderDark,
-              '&:hover': { backgroundColor: UI.panel2 },
-              '&.Mui-selected': {
-                backgroundColor: UI.accent, color: '#fff',
-                '&:hover': { backgroundColor: UI.accentDark },
-              },
-            }}
+      {!isDefl && (
+        <>
+          <Box sx={{ mt: 2 }}><SecTitle>Result type</SecTitle></Box>
+          <RadioGroup
+            value={forceType ?? ''}
+            onChange={(e) => setForceType(e.target.value)}
+            sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', rowGap: 0.25 }}
           >
-            {TYPE_LABELS[type]}
-          </ToggleButton>
-        ))}
-      </ToggleButtonGroup>
+            {DIAGRAM_TYPES.map((type) => (
+              <FormControlLabel
+                key={type}
+                value={type}
+                control={<Radio size="small" sx={{ color: UI.dim, '&.Mui-checked': { color: UI.accent } }} />}
+                label={<Typography sx={{ fontSize: '0.78rem', color: UI.text, fontFamily: UI.mono }}>{type}</Typography>}
+                sx={{ margin: 0 }}
+              />
+            ))}
+          </RadioGroup>
+        </>
+      )}
 
-      {!isDefl && post.activeType && (
+      {!isDefl && (
         <Box sx={{ mt: 2 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
             <Typography sx={{ fontFamily: UI.mono, fontSize: '11px', color: UI.dim }}>Diagram scale</Typography>
@@ -174,7 +135,6 @@ const Diagrams = observer(() => {
           <Slider
             value={scale}
             onChange={(_, v) => setScale(v as number)}
-            onChangeCommitted={renderActive}
             min={0.2} max={3} step={0.1} size="small"
             sx={{ color: UI.accent }}
           />
@@ -190,31 +150,27 @@ const Diagrams = observer(() => {
           <Slider
             value={deflScale}
             onChange={(_, v) => setDeflScale(v as number)}
-            onChangeCommitted={renderActive}
             min={1} max={100} step={1} size="small"
             sx={{ color: UI.accent }}
           />
         </Box>
       )}
 
-      {post.activeType && (
-        <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-          {!isDefl && (
-            <>
-              <FormControlLabel control={<Switch size="small" checked={post.showRibbon} onChange={handleToggle('showRibbon')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Filled ribbon</Typography>} sx={{ margin: 0 }} />
-              <FormControlLabel control={<Switch size="small" checked={post.showHatch} onChange={handleToggle('showHatch')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Hatch lines</Typography>} sx={{ margin: 0 }} />
-            </>
-          )}
-          <FormControlLabel control={<Switch size="small" checked={post.showContour} onChange={handleToggle('showContour')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Contour trên thanh</Typography>} sx={{ margin: 0 }} />
-          <FormControlLabel control={<Switch size="small" checked={post.showLabels} onChange={handleToggle('showLabels')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Max / Min tags</Typography>} sx={{ margin: 0 }} />
-          {isDefl && (
-            <FormControlLabel control={<Switch size="small" checked={post.showRefLine} onChange={handleToggle('showRefLine')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Reference line (dashed)</Typography>} sx={{ margin: 0 }} />
-          )}
-        </Box>
-      )}
+      <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+        {!isDefl && (
+          <>
+            <FormControlLabel control={<Switch size="small" checked={post.showRibbon} onChange={handleToggle('showRibbon')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Filled ribbon</Typography>} sx={{ margin: 0 }} />
+            <FormControlLabel control={<Switch size="small" checked={post.showHatch} onChange={handleToggle('showHatch')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Hatch lines</Typography>} sx={{ margin: 0 }} />
+          </>
+        )}
+        <FormControlLabel control={<Switch size="small" checked={post.showContour} onChange={handleToggle('showContour')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Contour trên thanh</Typography>} sx={{ margin: 0 }} />
+        <FormControlLabel control={<Switch size="small" checked={post.showLabels} onChange={handleToggle('showLabels')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Max / Min tags</Typography>} sx={{ margin: 0 }} />
+        {isDefl && (
+          <FormControlLabel control={<Switch size="small" checked={post.showRefLine} onChange={handleToggle('showRefLine')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Reference line (dashed)</Typography>} sx={{ margin: 0 }} />
+        )}
+      </Box>
 
       <Legend />
-
       {post.activeType && (
         <Box sx={{ mt: 1.5 }}>
           <SummaryTable />
@@ -223,20 +179,29 @@ const Diagrams = observer(() => {
       )}
 
       <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
-        <Button
-          variant="contained"
-          size="small"
-          onClick={renderActive}
-          sx={{
-            fontFamily: UI.mono, textTransform: 'none', px: 3,
-            backgroundColor: UI.panel, color: UI.text,
-            border: `1px solid ${UI.borderDark}`,
-            boxShadow: 'none',
-            '&:hover': { backgroundColor: UI.panel2, boxShadow: 'none' },
-          }}
-        >
-          Apply
-        </Button>
+        {isDefl ? (
+          <Button variant="contained" size="small" onClick={applyDeformation} sx={{ fontFamily: UI.mono, textTransform: 'none', px: 3, backgroundColor: UI.panel, color: UI.text, border: `1px solid ${UI.borderDark}`, boxShadow: 'none', '&:hover': { backgroundColor: UI.panel2, boxShadow: 'none' } }}>
+            Apply
+          </Button>
+        ) : (
+          <Button
+            variant="contained"
+            size="small"
+            disabled={!forceType}
+            onClick={() => applyForce(forceType)}
+            sx={{
+              fontFamily: UI.mono,
+              textTransform: 'none', px: 3,
+              backgroundColor: UI.panel, color: UI.text,
+              border: `1px solid ${UI.borderDark}`,
+              boxShadow: 'none',
+              '&:hover': { backgroundColor: UI.panel2, boxShadow: 'none' },
+              '&.Mui-disabled': { color: UI.dim, backgroundColor: UI.panel },
+            }}
+          >
+            Apply
+          </Button>
+        )}
       </Box>
     </Box>
   );
