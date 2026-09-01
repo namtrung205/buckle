@@ -8,13 +8,18 @@ import type { Label } from '../Labeler/Labeler'
 export const REACTION_COMPONENTS = ['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const
 export type ReactionComponent = (typeof REACTION_COMPONENTS)[number]
 
-const POS_COLOR = '#2f6fed'    // positive force - same accent as the effort labels
+const POS_COLOR = '#2f6fed'    // positive force
 const NEG_COLOR = '#e5484d'    // negative force
 const MOMENT_COLOR = '#f59e0b' // moment arcs
 
-// Screen-space sizing of the moment symbol: constant on-screen radius (in
-// CSS pixels) no matter how far the camera is, plus a small pill gap.
+// Value labels are always pink (CAD "text" layer look).
+const LABEL_COLOR = '#f472b6'
+
+// Screen-space sizing (CSS pixels): every symbol keeps a constant on-screen
+// size no matter how far the camera is or which zoom is active.
+const FORCE_ARROW_LENGTH_PIXELS = 54
 const MOMENT_ARC_PIXEL_RADIUS = 20
+const FORCE_LABEL_GAP_PIXELS = 10
 const MOMENT_LABEL_GAP_PIXELS = 12
 
 // Unit vector of each reaction component in the three.js scene frame
@@ -52,29 +57,32 @@ type ReactionEntry = {
   Mz?: number
 }
 
+/** A live symbol (force arrow or moment arc) rescaled every frame to keep a
+ *  constant on-screen size; its value label is kept just outside the symbol
+ *  and rotates along the symbol direction. */
+type VizItem = {
+  group: THREE.Group        // positioned at the support node
+  pxLength: number          // desired on-screen length (CSS px)
+  baseLength: number        // world-space length recorded at render time
+  outwardDir: THREE.Vector3 // unit world vector from node toward the label
+  labelGapPx: number
+  labelId?: string
+  labelText?: string
+}
+
 /**
  * Renders support reactions in the 3D scene, Midas-Civil style: one thin
  * arrow (same language as the load arrows) per checked force component
  * (Fx/Fy/Fz) and one thin arc per checked moment component (Mx/My/Mz) at
  * every restrained node. Every arrow points INTO its node - it starts
- * outside and the head lands on the node - with optional CSS2D value pills.
- * Arrow sizes auto-normalize between the smallest and largest shown value.
- * Nothing is drawn until the dialog hits Apply.
+ * outside and the head lands on the node. All symbols are sized in screen
+ * pixels (constant on-screen size when zooming) and the value text is a thin
+ * SHX-style pink label without a background that follows the arrow direction.
  */
 class ReactionViz {
   model: Model
   private group: THREE.Group | null = null
-
-  // Live moment arcs, rescaled every frame so they keep a constant on-screen
-  // size regardless of zoom / pan / camera switches (ortho <-> perspective).
-  private arcs: {
-    group: THREE.Group
-    origin: THREE.Vector3
-    startDir: THREE.Vector3
-    baseRadius: number
-    labelId?: string
-    labelText?: string
-  }[] = []
+  private items: VizItem[] = []
 
   // Which components are requested at the supports (applied on Apply)
   show: Record<ReactionComponent, boolean> = {
@@ -92,6 +100,7 @@ class ReactionViz {
     makeAutoObservable(this, {
       model: false,
       group: false,
+      items: false,
     } as any)
   }
 
@@ -119,7 +128,6 @@ class ReactionViz {
     this.apply()
   }
 
-  /** (Re)build the arrows + labels from the current analysis output. */
   render() {
     this.clearScene()
 
@@ -127,97 +135,76 @@ class ReactionViz {
     if (!reactions.length || !this.isAnyActive) return
 
     const active = REACTION_COMPONENTS.filter((component) => this.show[component])
-
-    // Magnitude range of the shown values - Load-style min/max normalization.
-    let maxValue = 0
-    let minValue = Infinity
-    for (const reaction of reactions) {
-      for (const component of active) {
-        const value = Math.abs(reaction[component] ?? 0)
-        if (value < 1e-9) continue
-        if (value > maxValue) maxValue = value
-        if (value < minValue) minValue = value
-      }
-    }
-    if (maxValue <= 0) return
-    if (!isFinite(minValue) || maxValue === minValue) minValue = maxValue
-
-    const modelSize = this.computeModelSize()
-    const sizeMin = modelSize * 0.08
-    const sizeMax = modelSize * 0.18
-
     const group = new THREE.Group()
     const labels: Label[] = []
 
     for (const reaction of reactions) {
       const origin = jsonArrayToThree([reaction.x ?? 0, reaction.y ?? 0, reaction.z ?? 0])
-      let labelIndex = 0
+
       for (const component of active) {
         const value = reaction[component] ?? 0
         if (Math.abs(value) < 1e-9) continue
 
         const isMoment = component[0] === 'M'
-        const normalized = (Math.abs(value) - minValue) / (maxValue - minValue)
-        const size = sizeMin + normalized * (sizeMax - sizeMin)
         const dir = AXIS_BY_COMPONENT[component].clone().multiplyScalar(value >= 0 ? 1 : -1)
-        const color = isMoment ? MOMENT_COLOR : (value >= 0 ? POS_COLOR : NEG_COLOR)
+        const color = isMoment ? MOMENT_COLOR : value >= 0 ? POS_COLOR : NEG_COLOR
 
+        const pxLength = isMoment ? MOMENT_ARC_PIXEL_RADIUS : FORCE_ARROW_LENGTH_PIXELS
+        const baseLength = this.pixelToWorld(origin, pxLength)
+
+        const symbol = new THREE.Group()
+        symbol.position.copy(origin)
+
+        let baselineDir: THREE.Vector3
+        let outwardDir: THREE.Vector3
         if (isMoment) {
-          // Screen-sized symbol: the arc keeps a constant on-screen radius
-          // (rescaled every frame) and hugs the support node.
-          const arcRadius = this.pixelToWorld(origin, MOMENT_ARC_PIXEL_RADIUS)
-          const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.clone().normalize())
-          const arcGroup = new THREE.Group()
-          arcGroup.position.copy(origin)
-          this.buildMomentArc(arcGroup, dir, arcRadius, color)
-          group.add(arcGroup)
-          this.arcs.push({
-            group: arcGroup,
-            origin,
-            startDir: new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion),
-            baseRadius: arcRadius,
-            labelId: this.showLabels ? `reaction-${component}-${reaction.id}` : undefined,
-            labelText: `${component} ${fmt(value)}`,
-          })
-          if (this.showLabels) {
-            labels.push({
-              id: `reaction-${component}-${reaction.id}`,
-              position: origin.clone().addScaledVector(
-                new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion),
-                arcRadius + this.pixelToWorld(origin, MOMENT_LABEL_GAP_PIXELS),
-              ),
-              text: `${component} ${fmt(value)}`,
-              type: 'reaction',
-              backgroundColor: color,
-            })
-          }
+          this.buildMomentArc(symbol, dir, baseLength, color)
+          const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir)
+          baselineDir = new THREE.Vector3(1, 0, 0).applyQuaternion(quaternion)
+          outwardDir = baselineDir
         } else {
-          // Thin ArrowHelper like the load arrows: it starts outside and the
-          // head lands on the node, pointing into it.
-          const arrow = new THREE.ArrowHelper(
-            dir,
-            origin.clone().addScaledVector(dir, -size),
-            size,
-            new THREE.Color(color),
-            size * 0.28,
-            size * 0.18,
+          // Thin ArrowHelper (same language as the load arrows): it starts
+          // outside the node and the head lands on the node, pointing into it.
+          symbol.add(
+            new THREE.ArrowHelper(
+              dir,
+              dir.clone().multiplyScalar(-baseLength),
+              baseLength,
+              new THREE.Color(color),
+              baseLength * 0.28,
+              baseLength * 0.16,
+            ),
           )
-          group.add(arrow)
-
-          if (this.showLabels) {
-            // Stack the pills of a shared node outward along their own axis so
-            // several checked components never overlap on the same anchor.
-            const stackOffset = labelIndex * modelSize * 0.022
-            labels.push({
-              id: `reaction-${component}-${reaction.id}`,
-              position: origin.clone().addScaledVector(dir, -(size * 1.15 + stackOffset)),
-              text: `${component} ${fmt(value)}`,
-              type: 'reaction',
-              backgroundColor: color,
-            })
-            labelIndex += 1
-          }
+          baselineDir = dir
+          outwardDir = dir.clone().negate()
         }
+
+        group.add(symbol)
+        const item: VizItem = {
+          group: symbol,
+          pxLength,
+          baseLength,
+          outwardDir,
+          labelGapPx: isMoment ? MOMENT_LABEL_GAP_PIXELS : FORCE_LABEL_GAP_PIXELS,
+        }
+
+        if (this.showLabels) {
+          const gapWorld = this.pixelToWorld(origin, item.labelGapPx)
+          const labelId = `reaction-${component}-${reaction.id}`
+          const text = `${component} ${fmt(value)}`
+          item.labelId = labelId
+          item.labelText = text
+          labels.push({
+            id: labelId,
+            position: origin.clone().addScaledVector(outwardDir, baseLength + gapWorld),
+            text,
+            type: 'reaction',
+            backgroundColor: LABEL_COLOR,
+            rotation: this.labelRotationDeg(origin, baselineDir),
+          })
+        }
+
+        this.items.push(item)
       }
     }
 
@@ -226,41 +213,36 @@ class ReactionViz {
     this.group = group
   }
 
-  /** Remove every arrow/label of this visualisation from the scene. */
   dispose() {
     this.clearScene()
   }
 
-  /** Per-frame hook (Model.update): keep the moment arcs pixel-sized. */
+  /** Per-frame hook (Model.update): keep every symbol pixel-sized. */
   onFrame() {
-    if (!this.arcs.length) return
-    for (const arc of this.arcs) {
-      const target = this.pixelToWorld(arc.origin, MOMENT_ARC_PIXEL_RADIUS)
-      arc.group.scale.setScalar(target / arc.baseRadius)
-      if (arc.labelId) {
+    if (!this.items.length) return
+    for (const item of this.items) {
+      const origin = item.group.position
+      const target = this.pixelToWorld(origin, item.pxLength)
+      item.group.scale.setScalar(target / item.baseLength)
+      if (item.labelId) {
+        const gapWorld = this.pixelToWorld(origin, item.labelGapPx)
         this.model.labeler.updateOne({
-          id: arc.labelId,
-          position: arc.origin
-            .clone()
-            .addScaledVector(arc.startDir, target + this.pixelToWorld(arc.origin, MOMENT_LABEL_GAP_PIXELS)),
-          text: arc.labelText ?? '',
+          id: item.labelId,
+          position: origin.clone().addScaledVector(item.outwardDir, target + gapWorld),
+          text: item.labelText ?? '',
           type: 'reaction',
         })
       }
     }
   }
 
-  /** Convert an on-screen pixel length at a world position into world units. */
-  private pixelToWorld(position: THREE.Vector3, pixels: number): number {
+  /** Screen-clockwise angle (CSS rotate) of a world direction at a point. */
+  private labelRotationDeg(origin: THREE.Vector3, baselineDir: THREE.Vector3): number {
     const cam = this.model.camera.cam
-    const height = this.model.renderer.getSize(SIZE_VECTOR).y || 1
-    if ((cam as THREE.OrthographicCamera).isOrthographicCamera) {
-      const ortho = cam as THREE.OrthographicCamera
-      return (pixels * ((ortho.top - ortho.bottom) / (ortho.zoom || 1))) / height
-    }
-    const perspective = cam as THREE.PerspectiveCamera
-    const distance = Math.max(perspective.position.distanceTo(position), 1e-3)
-    return (pixels * 2 * distance * Math.tan((perspective.fov * Math.PI) / 360)) / height
+    const start = origin.clone().project(cam)
+    const end = origin.clone().add(baselineDir).project(cam)
+    // NDC y is up, CSS rotate is clockwise-positive -> negate dy.
+    return (Math.atan2(-(end.y - start.y), end.x - start.x) * 180) / Math.PI
   }
 
   private clearScene() {
@@ -273,15 +255,15 @@ class ReactionViz {
       this.model.scene.remove(this.group)
       this.group = null
     }
+    this.items = []
     this.model.labeler.deleteAll('reaction')
-    this.arcs = []
   }
 
   private buildMomentArc(group: THREE.Group, dir: THREE.Vector3, radius: number, color: string) {
     const arc = 4.9 // ~280 degree sweep
 
     // The arc sweeps in the plane perpendicular to the moment axis, in the
-    // right-hand-rule sense (mapping the arc plane normal onto the axis).
+    // right-hand-rule sense (plane normal mapped onto the moment axis).
     const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.clone().normalize())
 
     const points: THREE.Vector3[] = []
@@ -312,21 +294,17 @@ class ReactionViz {
     group.add(line, head)
   }
 
-  /** Largest extent of the analysed model, used to auto-scale the arrows. */
-  private computeModelSize(): number {
-    const box = new THREE.Box3()
-    const v = new THREE.Vector3()
-    const members = this.model.output?.members ?? []
-    for (const member of members) {
-      const coords = member.stations?.length
-        ? member.stations.map((s: any) => s.coord)
-        : (member.node_efforts ?? []).map((n: any) => n.coord)
-      for (const c of coords) box.expandByPoint(v.set(c[0], c[1], c[2]))
+  /** Convert an on-screen pixel length at a world position into world units. */
+  private pixelToWorld(position: THREE.Vector3, pixels: number): number {
+    const cam = this.model.camera.cam
+    const height = this.model.renderer.getSize(SIZE_VECTOR).y || 1
+    if ((cam as THREE.OrthographicCamera).isOrthographicCamera) {
+      const ortho = cam as THREE.OrthographicCamera
+      return (pixels * ((ortho.top - ortho.bottom) / (ortho.zoom || 1))) / height
     }
-    if (box.isEmpty()) return 10
-    const size = new THREE.Vector3()
-    box.getSize(size)
-    return Math.max(size.x, size.y, size.z) || 10
+    const perspective = cam as THREE.PerspectiveCamera
+    const distance = Math.max(perspective.position.distanceTo(position), 1e-3)
+    return (pixels * 2 * distance * Math.tan((perspective.fov * Math.PI) / 360)) / height
   }
 }
 

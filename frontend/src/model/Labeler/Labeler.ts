@@ -145,22 +145,23 @@ class Labeler {
         p.style.whiteSpace = 'nowrap';
       }
       else if (type === 'reaction') {
-        // Reaction styling - same compact pill as 'effort', tinted per sign
-        const accent = label.backgroundColor || '#2f6fed';
-        pContainer.style.backgroundColor = accent;
+        // SHX-style stroked value text: thin font, no background, pink - like
+        // the CAD "text" layer of Midas/Civil where value tags are readable
+        // over the model without any box.
+        pContainer.style.backgroundColor = 'transparent';
         pContainer.style.border = 'none';
-        pContainer.style.borderRadius = '999px';
-        pContainer.style.padding = '1px 7px';
+        pContainer.style.padding = '0';
+        pContainer.style.boxShadow = 'none';
         pContainer.style.height = 'auto';
         pContainer.style.width = 'auto';
-        pContainer.style.minWidth = '0';
-        pContainer.style.boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
-        p.style.color = '#ffffff';
-        p.style.fontFamily = '"JetBrains Mono", ui-monospace, "SF Mono", monospace';
-        p.style.fontSize = '10.5px';
-        p.style.fontWeight = '700';
-        p.style.lineHeight = '1.5';
+        p.style.color = '#f472b6';
+        p.style.fontFamily = '"Consolas", "Roboto Mono", ui-monospace, monospace';
+        p.style.fontSize = '11px';
+        p.style.fontWeight = '300';
+        p.style.lineHeight = '1.2';
+        p.style.letterSpacing = '0.4px';
         p.style.whiteSpace = 'nowrap';
+        p.style.textShadow = 'none';
       }
       else if (type === 'length') {
         pContainer.style.backgroundColor = 'white';
