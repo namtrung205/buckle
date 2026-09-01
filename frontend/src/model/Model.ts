@@ -300,6 +300,7 @@ export class Model {
   private update = () => {
     this.camera.updateDepthRange(); // keep near/far in sync with model growth (prevents culling)
     this.camera.cam.updateProjectionMatrix();
+    this.reactionViz?.onFrame();
     this.renderer.render(this.scene, this.camera.cam);
     this.camera.controls.update()
     this.camera.directionalLight.target.position.copy(this.camera.controls.target)
