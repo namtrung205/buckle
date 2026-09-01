@@ -1,8 +1,9 @@
-import { Box, Button, FormControlLabel, Switch, Typography } from '@mui/material';
+import { Box, Button, FormControlLabel, IconButton, Switch, Typography } from '@mui/material';
 import { observer } from 'mobx-react-lite';
-import Dialog from '../../../../components/Dialog/Dialog';
+import CloseIcon from '@mui/icons-material/Close';
 import { useModel } from '../../../../model/Context';
 import { REACTION_COMPONENTS } from '../../../../model/PostProcessing/ReactionViz';
+import { colors, fontFamily } from '../../../../theme';
 import { UI, SecTitle } from '../ui';
 
 interface ReactionsProps {
@@ -16,9 +17,12 @@ const switchSx = {
 } as const;
 
 /**
- * Support reactions dialog - pure settings panel: check the components to
- * render (Fx..Mz), toggle the value pills, then hit Apply to draw them on
- * the model, Midas-Civil style.
+ * Support reactions dock panel - docked to the left edge of the viewer instead
+ * of a floating dialog: check the components to render (Fx..Mz), toggle the
+ * value pills, then hit Apply to draw them on the model, Midas-Civil style.
+ *
+ * The header close button (✕) hides the panel (model.closeDialog(); the
+ * "Reactions" ribbon button re-opens it.
  */
 const Reactions = observer(({ open, onClose }: ReactionsProps) => {
   const model = useModel();
@@ -27,23 +31,68 @@ const Reactions = observer(({ open, onClose }: ReactionsProps) => {
   // created in an effect after the first paint) - bail out like
   // AnalysisProgress does until it becomes available.
   if (!model) return null;
+  // Dock panel: hidden until the ribbon "Reactions" button opens it
+  if (!open) return null;
+
   const reactionViz = model.reactionViz;
   const hasReactions = (model.output?.reactions ?? []).length > 0;
 
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      maxWidth="md"
-      fullWidth={false}
-      draggable
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
-      disableRestoreFocus
-      title="Support Reactions"
+    <Box
+      sx={{
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        bottom: 0,
+        width: 300,
+        zIndex: 40,
+        display: 'flex',
+        flexDirection: 'column',
+        pointerEvents: 'auto',
+        backgroundColor: colors.surface,
+        borderRight: `1px solid ${colors.border}`,
+        boxShadow: '4px 0 16px rgba(0, 0, 0, 0.35)',
+      }}
     >
-      <Box sx={{ width: '320px' }}>
+      {/* Header + close */}
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexShrink: 0,
+          px: 1.5,
+          py: 1,
+          borderBottom: `1px solid ${colors.border}`,
+          backgroundColor: colors.surface,
+        }}
+      >
+        <Typography
+          sx={{
+            color: colors.text,
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            fontFamily,
+          }}
+        >
+          Support Reactions
+        </Typography>
+        <IconButton
+          aria-label="close"
+          onClick={onClose}
+          size="small"
+          sx={{
+            color: colors.textDim,
+            '&:hover': { color: colors.text, backgroundColor: colors.hover },
+          }}
+        >
+          <CloseIcon fontSize="small" />
+        </IconButton>
+      </Box>
+
+      {/* Scrollable settings body */}
+      <Box sx={{ p: 2, overflowY: 'auto', flex: 1 }}>
+        <Box sx={{ width: '320px' }}>
         <SecTitle>Visualization</SecTitle>
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', rowGap: 0.25, mb: 0.75 }}>
           {REACTION_COMPONENTS.map((comp) => (
@@ -100,7 +149,8 @@ const Reactions = observer(({ open, onClose }: ReactionsProps) => {
           </Button>
         </Box>
       </Box>
-    </Dialog>
+      </Box>
+    </Box>
   );
 });
 

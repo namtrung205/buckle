@@ -1,8 +1,11 @@
 import { ReactNode, useState } from 'react';
+import { observer } from 'mobx-react-lite';
 import { Box } from '@mui/material';
 import { colors } from '../../theme';
+import { useModel } from '../../model/Context';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
+import Reactions from '../Results/Components/Reactions/Reactions';
 import BottomBar from '../BottomBar';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
@@ -11,8 +14,9 @@ interface LayoutProps {
   children: ReactNode;
 }
 
-const Layout = ({ children }: LayoutProps) => {
+const Layout = observer(({ children }: LayoutProps) => {
   const [isLeftBarCollapsed, setIsLeftBarCollapsed] = useState(false);
+  const model = useModel();
 
   const handleMenuClick = () => {
     setIsLeftBarCollapsed(!isLeftBarCollapsed);
@@ -54,6 +58,11 @@ const Layout = ({ children }: LayoutProps) => {
         >
           {children}
 
+          {/* Support reactions dock panel (left edge of the viewer, closes with ✕) */}
+          {model?.activeDialog === 'reactions' && (
+            <Reactions open onClose={() => model.closeDialog()} />
+          )}
+
           {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
           <BottomBar />
         </Box>
@@ -64,7 +73,7 @@ const Layout = ({ children }: LayoutProps) => {
       <ContextMenu />
     </Box>
   );
-};
+});
 
 export default Layout;
 
