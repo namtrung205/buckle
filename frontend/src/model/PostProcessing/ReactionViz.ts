@@ -158,11 +158,13 @@ class ReactionViz {
         let baselineDir: THREE.Vector3
         let outwardDir: THREE.Vector3
         if (isMoment) {
-          // Double-headed arrow (------->->) along the moment axis: both heads
-          // point in the right-hand-rule direction of the reaction moment.
+          // Double-headed arrow along the moment axis: both head tips point
+          // INTO the node (right-hand-rule direction of the reaction moment),
+          // with the thin shaft trailing away outside the node.
+
           this.buildMomentAxisArrow(symbol, dir, baseLength, color)
           baselineDir = dir.clone()
-          outwardDir = dir.clone()
+          outwardDir = dir.clone().negate()
         } else {
           // Thin ArrowHelper (same language as the load arrows): it starts
           // outside the node and the head lands on the node, pointing into it.
@@ -263,19 +265,20 @@ class ReactionViz {
   private buildMomentAxisArrow(group: THREE.Group, dir: THREE.Vector3, length: number, color: string) {
     const axis = dir.clone().normalize()
 
-    // Thin shaft from the node along the moment axis.
+    // Thin shaft trailing outside the node, behind the barbs.
     const shaft = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(0, 0, 0),
-        axis.clone().multiplyScalar(length * 0.55),
+        axis.clone().multiplyScalar(-length*0.78),
+        axis.clone().multiplyScalar(-length*0.22),
       ]),
       new THREE.LineBasicMaterial({ color }),
     )
     group.add(shaft)
 
-    // Two nested arrowheads at the tip (------->-> double barbs), both
-    // pointing out along the axis (right-hand-rule direction). ConeGeometry
-    // points +Y, so rotate +Y onto the axis and slide each cone along it.
+    // Two nested arrowheads whose tips point INTO the node (<--------<<),
+    // both pointing in the right-hand-rule direction. ConeGeometry
+    // points +Y, so rotate +Y onto the axis and slide each cone along it;
+    // tipAt is the offset from the node, tip lands ON the node when 0.
     const headMaterial = new THREE.MeshBasicMaterial({ color })
     const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis)
     const makeHead = (tipAt: number, size: number) => {
@@ -284,8 +287,8 @@ class ReactionViz {
       head.quaternion.copy(quaternion)
       group.add(head)
     }
-    makeHead(length * 0.78, length * 0.23) // inner barb (starts where the shaft ends)
-    makeHead(length, length * 0.22)        // outer barb at the tip
+    makeHead(-length * 0.22, length *  0.23) // inner barb tip just behind the node
+    makeHead(0, length * 0.22)            // outer barb - tip lands ON the node
   }
 }
 
