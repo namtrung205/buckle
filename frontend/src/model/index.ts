@@ -9,6 +9,7 @@ import Axes from './Geometry/Helpers/Axes'
 import Light from './Light/Light'
 import Levels from './Geometry/Levels/Levels'
 import PostProcessing from './PostProcessing/PostProcessing'
+import ReactionViz from './PostProcessing/ReactionViz'
 import Snapper from './Geometry/Helpers/Snapper'
 import Sections from './Section/Section'
 import Console from './Console/Console'
@@ -31,6 +32,7 @@ export {
   Light,
   Levels,
   PostProcessing,
+  ReactionViz,
   Snapper,
   Sections, 
   Line,

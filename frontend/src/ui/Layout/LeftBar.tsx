@@ -38,9 +38,11 @@ interface TreeItemProps {
   children?: React.ReactNode;
   level?: number;
   onAdd?: () => void;
+  /** Disable the add button (e.g. while the results lock is active). */
+  disabled?: boolean;
 }
 
-const TreeItem = ({ id, label, icon, children, level = 0, onAdd }: TreeItemProps) => {
+const TreeItem = ({ id, label, icon, children, level = 0, onAdd, disabled }: TreeItemProps) => {
   const [expanded, setExpanded] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
 
@@ -102,6 +104,7 @@ const TreeItem = ({ id, label, icon, children, level = 0, onAdd }: TreeItemProps
         {onAdd && (
           <IconButton
             size="small"
+            disabled={disabled}
             onClick={(e) => {
               e.stopPropagation();
               onAdd();
@@ -115,6 +118,9 @@ const TreeItem = ({ id, label, icon, children, level = 0, onAdd }: TreeItemProps
                 backgroundColor: colors.hover,
                 color: colors.text,
                 opacity: 1,
+              },
+              '&.Mui-disabled': {
+                color: colors.textFaint,
               },
             }}
           >
@@ -133,6 +139,8 @@ const TreeItem = ({ id, label, icon, children, level = 0, onAdd }: TreeItemProps
 
 const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
   const model = useModel();
+  // Results lock: while locked, every tree editing action is disabled
+  const isLocked = model?.isLocked ?? false;
   const [addOrEditNode, setAddOrEditNode] = useState(false);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
@@ -193,6 +201,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           id="materials"
           label="Materials"
           icon={<MaterialsIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
           onAdd={() => {
             setSelectedMaterial(null);
             setAddOrEditMaterial(true);
@@ -220,17 +229,19 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               <Box sx={{ display: 'flex', gap: 0.5 }}>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedMaterial(material);
                     setAddOrEditMaterial(true);
                   }}
-                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     const index = model?.materials.findIndex((m) => m.id === material.id);
@@ -238,7 +249,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                       model.materials.splice(index, 1);
                     }
                   }}
-                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -252,6 +263,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           id="sections"
           label="Sections"
           icon={<SectionsIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
           onAdd={() => setAddOrEditSection(true)}
         >
           {model?.sections?.map((section: SectionType) => (
@@ -276,22 +288,24 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               <Box sx={{ display: 'flex', gap: 0.5 }}>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedSection(section)
                     setAddOrEditSection(true)
                   }}
-                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     console.log('Delete section', section.id);
                   }}
-                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -305,6 +319,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           id="nodes"
           label="Nodes"
           icon={<NodesIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
           onAdd={() => {
             setSelectedNode(null);
             setAddOrEditNode(true);
@@ -332,22 +347,24 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               <Box sx={{ display: 'flex', gap: 0.5 }}>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                       e.stopPropagation();                    
                       setSelectedNode(node);
                       setAddOrEditNode(true); 
                   }}
-                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     node.delete()
                   }}
-                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -368,6 +385,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           id="members"
           label="Members"
           icon={<MembersIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
           onAdd={() => {
             setSelectedMember(null);
             setAddOrEditMember(true);
@@ -395,23 +413,25 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               <Box sx={{ display: 'flex', gap: 0.5 }}>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedMember(member);
                     setAddOrEditMember(true);
                   }}
-                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     console.log('Delete member', member.id);
                     member.remove()
                   }}
-                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -432,6 +452,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           id="boundaryConditions"
           label="Supports"
           icon={<BoundaryConditionsIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
           onAdd={() => {
             setSelectedBoundaryCondition(null);
             setAddOrEditBoundaryCondition(true);
@@ -459,17 +480,19 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               <Box sx={{ display: 'flex', gap: 0.5 }}>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedBoundaryCondition(bc);
                     setAddOrEditBoundaryCondition(true);
                   }}
-                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     const support = model.boundaryConditions.find((b) => b.id === bc.id);
@@ -478,7 +501,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                       support.delete();
                     }
                   }}
-                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>
@@ -492,6 +515,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           id="loads"
           label="Loads"
           icon={<LoadsIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
           onAdd={() => {
             setSelectedLoad(null);
             setAddOrEditLoad(true);
@@ -519,24 +543,26 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               <Box sx={{ display: 'flex', gap: 0.5 }}>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     console.log('load to edit', load)
                     e.stopPropagation();
                     setSelectedLoad(load)
                     setAddOrEditLoad(true)
                   }}
-                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <EditIcon sx={{ fontSize: 14 }} />
                 </IconButton>
                 <IconButton
                   size="small"
+                    disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
                     console.log('Delete load', load.id);
                     load.delete()
                   }}
-                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger } }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
                   <DeleteIcon sx={{ fontSize: 14 }} />
                 </IconButton>

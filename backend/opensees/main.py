@@ -75,6 +75,8 @@ def run_analysis(model: dict, log_callback=None):
     output = {}
     output['nodes'] = []
     output['members'] = []
+    output['reactions'] = []
+    output['nodal_loads'] = {}
     nodes = model['nodes']
     members = model['members']
     # materials = model['materials']
@@ -484,6 +486,10 @@ def create_shells(shells):
 
 def apply_boundary_conditions(boundary_conditions):
   """Applies boundary conditions to the model."""
+  # Map each supported model node to the OpenSees node that carries its
+  # reaction: the fixed node itself for rigid supports, or the spring ground
+  # node for elastic supports. Consumed later by extract_node_reactions().
+  output['supported_nodes'] = {}
   for (i, boundary_condition) in enumerate(boundary_conditions):
     targets = boundary_condition['targets']
     bdc_type = boundary_condition['type']
@@ -522,10 +528,14 @@ def apply_boundary_conditions(boundary_conditions):
         
         # Fix the support node (ground)
         ops.fix(support_node, 1, 1, 1, 1, 1, 1)
+        # The spring ground node carries the elastic support reaction
+        output['supported_nodes'][target] = support_node
     else:      
         # Standard engineering axis convention (X horizontal, Y horizontal,
         # Z vertical) is identical to OpenSees — no coordinate swap needed.
         ops.fix(target, dx, dy, dz, rx, ry, rz)
+        # The fixed node itself carries the rigid support reaction
+        output['supported_nodes'][target] = target
 
 def calculate_quad_area_and_normal(node_coords):
     """
@@ -659,6 +669,26 @@ def check_rigid_body_stability(members, shells, boundary_conditions, nodes, log_
       _log("[ANALYSIS] Warning: some parts rely on elastic (spring) supports for stability — verify results carefully.")
       warned = True
 
+def record_nodal_load(node_id, fx, fy, fz, mx=0.0, my=0.0, mz=0.0):
+  """Accumulates an applied nodal load for the reaction assembly.
+
+  Member UDL and shell pressure loads are applied as equivalent nodal loads,
+  so the reaction at a support must subtract whatever nodal load is applied
+  directly at that node: reaction = sum of connected element end forces
+  minus the applied nodal load.
+  """
+  loads = output.setdefault('nodal_loads', {})
+  entry = loads.get(node_id)
+  if entry is None:
+    loads[node_id] = [fx, fy, fz, mx, my, mz]
+  else:
+    entry[0] += fx
+    entry[1] += fy
+    entry[2] += fz
+    entry[3] += mx
+    entry[4] += my
+    entry[5] += mz
+
 def apply_loads(loads):
     """Applies loads to the model."""
     ops.timeSeries("Linear", 1)
@@ -699,6 +729,7 @@ def apply_loads(loads):
               fy = value['y'] * nDelta * 1E3
               fz = value['z'] * nDelta * 1E3
               ops.load(node_id, fx, fy, fz, 0.0, 0.0, 0.0)
+              record_nodal_load(node_id, fx, fy, fz)
       elif(load['type'] == 'nodal'):
         for id in targets:
           node = next((e for e in nodes if e['id'] == id), None)
@@ -707,6 +738,7 @@ def apply_loads(loads):
             fy = value['y'] * 1E3
             fz = value['z'] * 1E3
             ops.load(id, fx, fy, fz, 0.0, 0.0, 0.0)
+            record_nodal_load(id, fx, fy, fz)
       elif(load['type'] == 'pressure'):
         # Pressure load: kN/m2 on shell elements
         # Axis convention (X/Y horizontal, Z up) is identical to OpenSees.
@@ -742,6 +774,7 @@ def apply_loads(loads):
             # Distribute equally to 4 corner nodes
             for node_id in shell_nodes:
                 ops.load(node_id, fx_total/4.0, fy_total/4.0, fz_total/4.0, 0.0, 0.0, 0.0)
+                record_nodal_load(node_id, fx_total/4.0, fy_total/4.0, fz_total/4.0)
                 
           except Exception as e:
             print(f"Warning: Failed to apply pressure load to shell {shell_id}: {e}")
@@ -847,6 +880,63 @@ def extract_node_displacements():
     except Exception as e:
       print(f"Warning: Could not extract displacement for node {node_id}: {e}")
 
+def extract_node_reactions():
+  """Assembles support reactions (kN, kN.m) at every restrained node.
+
+  The pinned OpenSeesPy build (3.5.1.x) returns zeros from the built-in
+  reaction command, so reactions are assembled manually from nodal
+  equilibrium: the reaction at a node equals the sum of the global end
+  forces of the connected elements minus the nodal load applied directly at
+  that node (member UDL and shell pressure loads are applied as equivalent
+  nodal loads, recorded in `output['nodal_loads']`). OpenSees base units
+  (N, N.m) are converted to kN / kN.m to match the internal-force payload.
+  """
+  supported = output.get('supported_nodes') or {}
+  if not supported:
+    return
+
+  nodal_loads = output.get('nodal_loads') or {}
+
+  # Sum the global end forces of every element per node (6 DOF per node).
+  forces_by_node = {}
+  for ele_tag in ops.getEleTags():
+    try:
+      ele_nodes = ops.eleNodes(ele_tag)
+      ele_forces = ops.eleResponse(ele_tag, 'force')
+      if not ele_nodes or not ele_forces or len(ele_forces) < 6 * len(ele_nodes):
+        continue
+      for k, nid in enumerate(ele_nodes):
+        base = k * 6
+        entry = forces_by_node.setdefault(nid, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        for i in range(6):
+          entry[i] += float(ele_forces[base + i] or 0.0)
+    except Exception as e:
+      print(f"Warning: Could not read end forces of element {ele_tag}: {e}")
+
+  nodes_by_id = {node['id']: node for node in output['nodes']}
+  for target_id in supported:
+    try:
+      reaction = forces_by_node.get(target_id, [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+      applied = nodal_loads.get(target_id)
+      if applied:
+        for i in range(6):
+          reaction[i] -= float(applied[i] or 0.0)
+      node = nodes_by_id.get(target_id, {})
+      output['reactions'].append({
+        'id': target_id,
+        'x': node.get('x', 0.0),
+        'y': node.get('y', 0.0),
+        'z': node.get('z', 0.0),
+        'Fx': round(reaction[0] / 1E3, 4),
+        'Fy': round(reaction[1] / 1E3, 4),
+        'Fz': round(reaction[2] / 1E3, 4),
+        'Mx': round(reaction[3] / 1E3, 4),
+        'My': round(reaction[4] / 1E3, 4),
+        'Mz': round(reaction[5] / 1E3, 4),
+      })
+    except Exception as e:
+      print(f"Warning: Could not assemble reaction for node {target_id}: {e}")
+
 def _hermite_displacement(d0, d1, r0, r1, L, fractions):
   """Cubic Hermite interpolation of nodal displacements along a member axis.
 
@@ -947,6 +1037,9 @@ def extract_results(log_callback=None):
   
   _log(f"[ANALYSIS]   > Extracting displacements for {len(output['nodes'])} nodes...")
   extract_node_displacements()
+
+  _log(f"[ANALYSIS]   > Extracting reactions for {len(output.get('supported_nodes') or {})} support node(s)...")
+  extract_node_reactions()
 
   # Map node id -> displacement for building per-member deflection stations.
   node_disp_map = {

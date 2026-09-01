@@ -12,7 +12,6 @@ import {
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
-import Results from '../Results/Results';
 import Move from '../Model/Nodes/Components/Move/Move';
 import Draw from '../Draw/Draw';
 import Docs from '../Docs/Docs';
@@ -165,6 +164,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   const dialogs = {
     settings: activeDialog === 'settings',
     results: activeDialog === 'results',
+    reactions: activeDialog === 'reactions',
     move: activeDialog === 'move',
     draw: activeDialog === 'draw',
     docs: activeDialog === 'docs',
@@ -191,6 +191,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   const runAnalysis = async () => {
     try {
       model.postProcessing.dispose();
+      model.reactionViz.dispose();
       
       // Validate that required data is present
       if (!model.nodes || model.nodes.length === 0) {
@@ -242,6 +243,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);
       console.log('RES', res);
       model.output = res.data.output;
+      model.reactionViz.apply();
       model.lockResults();
       
       model.console.setFinished(true);
@@ -456,6 +458,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             <Tab value="model" label="Model" />
             <Tab value="view" label="View" />
             <Tab value="analysis" label="Analysis" />
+            <Tab value="result" label="Result" />
           </Tabs>
         </Box>
         <RibbonButton
@@ -477,25 +480,44 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         {activeTab === 'model' && (
           <>
             <RibbonPanel label="Define">
-              <RibbonButton title="Materials" label="Materials" onClick={() => open('materials')} iconImage={{ src: '/construction.png', alt: 'Materials', size: 15 }} />
-              <RibbonButton title="Sections" label="Sections" onClick={() => open('sections')} iconImage={{ src: '/sections.png', alt: 'Sections', size: 15 }} />
+              <RibbonButton title="Materials" label="Materials" onClick={() => open('materials')} disabled={isLocked} iconImage={{ src: '/construction.png', alt: 'Materials', size: 15 }} />
+              <RibbonButton title="Sections" label="Sections" onClick={() => open('sections')} disabled={isLocked} iconImage={{ src: '/sections.png', alt: 'Sections', size: 15 }} />
             </RibbonPanel>
             <RibbonPanel label="Assign">
-              <RibbonButton title="Loads" label="Loads" onClick={() => open('loads')} iconImage={{ src: '/loads.png', alt: 'Loads', size: 15 }} />
-              <RibbonButton title="Supports" label="Supports" onClick={() => open('supports')} iconImage={{ src: '/supports.png', alt: 'Supports', size: 15 }} />
+              <RibbonButton title="Loads" label="Loads" onClick={() => open('loads')} disabled={isLocked} iconImage={{ src: '/loads.png', alt: 'Loads', size: 15 }} />
+              <RibbonButton title="Supports" label="Supports" onClick={() => open('supports')} disabled={isLocked} iconImage={{ src: '/supports.png', alt: 'Supports', size: 15 }} />
             </RibbonPanel>
             <RibbonPanel label="Modify">
-              <RibbonButton title="Draw" label="Draw" onClick={() => open('draw')} iconImage={{ src: '/pencil.png', alt: 'Draw', size: 15 }} />
-              <RibbonButton title="Move" label="Move" onClick={() => open('move')} icon={<MoveIcon sx={{ fontSize: 15 }} />} />
+              <RibbonButton title="Draw" label="Draw" onClick={() => open('draw')} disabled={isLocked} iconImage={{ src: '/pencil.png', alt: 'Draw', size: 15 }} />
+              <RibbonButton title="Move" label="Move" onClick={() => open('move')} disabled={isLocked} icon={<MoveIcon sx={{ fontSize: 15 }} />} />
             </RibbonPanel>
             <RibbonPanel label="Generate">
-              <RibbonButton title="Warehouse generator" label="Warehouse" onClick={() => open('warehouseWizard')} iconImage={{ src: '/warehouse.png', alt: 'Generator', size: 15 }} />
+              <RibbonButton title="Warehouse generator" label="Warehouse" onClick={() => open('warehouseWizard')} disabled={isLocked} iconImage={{ src: '/warehouse.png', alt: 'Generator', size: 15 }} />
             </RibbonPanel>
           </>
         )}
         {activeTab === 'view' && (
           <RibbonPanel label="View">
             <RibbonButton title="Settings" label="Settings" onClick={() => open('settings')} iconImage={{ src: '/engrenage.png', alt: 'Settings', size: 15 }} />
+          </RibbonPanel>
+        )}
+        {activeTab === 'result' && (
+          <RibbonPanel label="Results">
+            <RibbonButton title="View results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
+            <RibbonButton
+              title="View support reactions"
+              label="Reactions"
+              onClick={() => open('reactions')}
+              iconImage={{ src: '/supports.png', alt: 'Reactions', size: 15 }}
+              disabled={!hasResults}
+            />
+            <RibbonButton
+              title="Download analysis results"
+              label="Download"
+              onClick={downloadResults}
+              icon={<DownloadIcon sx={{ fontSize: 15 }} />}
+              disabled={!hasResults}
+            />
           </RibbonPanel>
         )}
         {activeTab === 'analysis' && (
@@ -511,23 +533,12 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
                 disabled={!isLocked && !hasResults}
               />
             </RibbonPanel>
-            <RibbonPanel label="Results">
-              <RibbonButton title="View results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
-              <RibbonButton
-                title="Download analysis results"
-                label="Download"
-                onClick={downloadResults}
-                icon={<DownloadIcon sx={{ fontSize: 15 }} />}
-                disabled={!hasResults}
-              />
-            </RibbonPanel>
           </>
         )}
       </Box>
 
       <Settings open={dialogs.settings} onClose={close} />
-      <Results open={dialogs.results} onClose={close} />
-      <Move open={dialogs.move} onClose={close} selectedNode={null} />
+            <Move open={dialogs.move} onClose={close} selectedNode={null} />
       <Draw open={dialogs.draw} onClose={close} freeMode={true} />
       <Docs open={dialogs.docs} onClose={close} />
       <AddOrEditSection open={dialogs.sections} onClose={close} section={null} />

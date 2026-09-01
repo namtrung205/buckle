@@ -1,8 +1,11 @@
 import { ReactNode, useState } from 'react';
+import { observer } from 'mobx-react-lite';
 import { Box } from '@mui/material';
 import { colors } from '../../theme';
+import { useModel } from '../../model/Context';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
+import ResultPanel from '../Results/ResultPanel';
 import BottomBar from '../BottomBar';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
@@ -11,8 +14,9 @@ interface LayoutProps {
   children: ReactNode;
 }
 
-const Layout = ({ children }: LayoutProps) => {
+const Layout = observer(({ children }: LayoutProps) => {
   const [isLeftBarCollapsed, setIsLeftBarCollapsed] = useState(false);
+  const model = useModel();
 
   const handleMenuClick = () => {
     setIsLeftBarCollapsed(!isLeftBarCollapsed);
@@ -54,6 +58,11 @@ const Layout = ({ children }: LayoutProps) => {
         >
           {children}
 
+          {/* Results dock panel (Reactions / Forces / Deformation tabs) */}
+          {(model?.activeDialog === 'results' || model?.activeDialog === 'reactions') && (
+            <ResultPanel onClose={() => model.closeDialog()} />
+          )}
+
           {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
           <BottomBar />
         </Box>
@@ -64,7 +73,6 @@ const Layout = ({ children }: LayoutProps) => {
       <ContextMenu />
     </Box>
   );
-};
+});
 
 export default Layout;
-

@@ -46,7 +46,7 @@ class DiagramHover {
   private members: HoverMember[] = []
   private activeType: string | null = null
   private tooltip: HTMLDivElement | null = null
-  private marker: THREE.Mesh | null = null
+  private marker: THREE.Sprite | null = null
   private rayCaster = new THREE.Raycaster()
   private pointer = new THREE.Vector2()
 
@@ -57,7 +57,7 @@ class DiagramHover {
   }
 
   /** Provide the hoverable meshes + per-member station data for tooltip lookup. */
-  setTargets(targets: THREE.Mesh[], members: HoverMember[], activeType: string | null, markerRadius: number) {
+  setTargets(targets: THREE.Mesh[], members: HoverMember[], activeType: string | null) {
     this.targets = targets
     this.members = members
     this.activeType = activeType
@@ -66,7 +66,7 @@ class DiagramHover {
       this.hide()
       return
     }
-    this.ensureMarker(markerRadius)
+    this.ensureMarker()
   }
 
   clearTargets() {
@@ -76,17 +76,41 @@ class DiagramHover {
     this.hide()
   }
 
-  private ensureMarker(markerRadius: number) {
+  private ensureMarker() {
     if (!this.marker) {
-      const geometry = new THREE.SphereGeometry(1, 12, 12)
-      const material = new THREE.MeshBasicMaterial({ color: 0xf0f4f8, depthTest: false, transparent: true })
-      this.marker = new THREE.Mesh(geometry, material)
+      // Screen-space dot (canvas circle) instead of a 3D sphere: constant pixel
+      // size at any zoom, drawn on top of the diagram.
+      const canvas = document.createElement('canvas')
+      canvas.width = 64
+      canvas.height = 64
+      const ctx = canvas.getContext('2d')!
+      ctx.beginPath()
+      ctx.arc(32, 32, 24, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(240, 244, 248, 0.95)'
+      ctx.fill()
+      ctx.lineWidth = 6
+      ctx.strokeStyle = 'rgba(18, 22, 26, 0.9)'
+      ctx.stroke()
+      const material = new THREE.SpriteMaterial({
+        map: new THREE.CanvasTexture(canvas),
+        depthTest: false,
+        transparent: true
+      })
+      this.marker = new THREE.Sprite(material)
       this.marker.renderOrder = 2000
       this.marker.visible = false
       this.marker.userData.type = 'diagram'
       this.model.scene.add(this.marker)
     }
-    this.marker.scale.setScalar(markerRadius)
+    this.updateMarkerScale()
+  }
+
+  /** Keep the marker at a constant pixel size regardless of zoom / camera distance. */
+  private updateMarkerScale() {
+    if (!this.marker) return
+    // Model helper covers both the orthographic (default) and perspective cameras,
+    // so the dot stays ~10 CSS px at any zoom level.
+    this.marker.scale.setScalar(this.model.pixelToWorld(this.marker.position, 10))
   }
 
   private ensureTooltip(): HTMLDivElement {
@@ -161,6 +185,7 @@ class DiagramHover {
     // Marker on the diagram at the nearest station
     if (this.marker) {
       this.marker.position.copy(nearest.offset)
+      this.updateMarkerScale()
       this.marker.visible = true
     }
 
@@ -212,8 +237,10 @@ class DiagramHover {
     this.model.renderer.domElement.removeEventListener('pointerleave', this.onPointerLeave)
     this.clearTargets()
     if (this.marker) {
-      this.marker.geometry.dispose()
-      ;(this.marker.material as THREE.Material).dispose()
+      const material = this.marker.material as THREE.SpriteMaterial
+      material.map?.dispose()
+      material.dispose()
+      // NB: Sprite.geometry is shared by three.js - do not dispose it here
       this.model.scene.remove(this.marker)
       this.marker = null
     }

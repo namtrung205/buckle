@@ -65,7 +65,7 @@ class PostProcessing {
   max = 0
   unit = ''
   scaleMultiplier = 1
-  deflectionMultiplier = 100
+  deflectionMultiplier = 5
   showRibbon = true
   showHatch = true
   showContour = false
@@ -388,17 +388,15 @@ class PostProcessing {
         station.offset.copy(this.stationOffset(type, data, station, scale))
       }
       if (type === DEFLECTION_TYPE) {
-        this.buildOutline(data)
+        this.buildOutline(data, this.showContour)
         if (this.showRefLine) this.buildRefLine(data)
       } else {
-        if (this.showRibbon) {
-          this.buildRibbon(data)
-          if (this.showHatch) this.buildHatch(data)
-        }
+        if (this.showRibbon) this.buildRibbon(data)
+        if (this.showHatch) this.buildHatch(data, this.showContour)
         this.buildBaseline(data)
-        this.buildOutline(data)
+        this.buildOutline(data, this.showContour)
       }
-      if (this.showContour) this.colorMemberSolids(data)
+      if (this.showContour) this.colorMemberLine(type, data)
       if (this.showLabels) this.collectExtremes(data, type)
     }
 
@@ -466,17 +464,31 @@ class PostProcessing {
   }
 
   /** Thin hatching lines between the axis and the diagram curve. */
-  private buildHatch(data: MemberDiagramData) {
+  private buildHatch(data: MemberDiagramData, colored = false) {
     const positions: number[] = []
+    const colors: number[] = []
     const stations = data.stations
-    const step = Math.max(1, Math.round(stations.length / 40))
-    for (let i = 0; i < stations.length; i += step) {
-      const { base, offset } = stations[i]
+    const color = new THREE.Color()
+    // Five evenly spaced hatch lines per member (both ends included)
+    const count = Math.min(5, stations.length)
+    for (let k = 0; k < count; k++) {
+      const i = Math.round((k * (stations.length - 1)) / Math.max(1, count - 1))
+      const { base, offset, value } = stations[i]
       positions.push(base.x, base.y, base.z, offset.x, offset.y, offset.z)
+      if (colored) {
+        // Both vertices of a hatch share its station colour (forces contour mode)
+        color.copy(this.stationColor(value))
+        colors.push(color.r, color.g, color.b, color.r, color.g, color.b)
+      }
     }
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    const material = new THREE.LineBasicMaterial({ color: 0xaeb9c4, transparent: true, opacity: 0.5 })
+    if (colored) geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    const material = new THREE.LineBasicMaterial(
+      colored
+        ? { vertexColors: true, transparent: true, opacity: 0.5 }
+        : { color: 0xaeb9c4, transparent: true, opacity: 0.5 }
+    )
     const lines = new THREE.LineSegments(geometry, material)
     lines.userData.type = 'diagram'
     this.model.scene.add(lines)
@@ -512,10 +524,33 @@ class PostProcessing {
   }
 
   /** Light diagram curve on top of the filled area (smoothed like the sample). */
-  private buildOutline(data: MemberDiagramData) {
+  private buildOutline(data: MemberDiagramData, colored = false) {
     const stations = data.stations
     const curve = new THREE.CatmullRomCurve3(stations.map(s => s.offset))
     const curvePoints = curve.getPoints(stations.length * 3)
+    if (colored) {
+      // Forces contour mode: the curve inherits the station colormap
+      const axisStart = stations[0].base
+      const axisDir = new THREE.Vector3().subVectors(stations[stations.length - 1].base, axisStart)
+      const axisLength = axisDir.length() || 1
+      axisDir.normalize()
+      const colors: number[] = []
+      const color = new THREE.Color()
+      for (const point of curvePoints) {
+        const s = THREE.MathUtils.clamp(point.clone().sub(axisStart).dot(axisDir), 0, axisLength)
+        color.copy(this.stationColor(this.interpolateStationValue(stations, s)))
+        colors.push(color.r, color.g, color.b)
+      }
+      const geometry = new THREE.BufferGeometry().setFromPoints(curvePoints)
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+      const material = new THREE.LineBasicMaterial({ vertexColors: true })
+      const line = new THREE.Line(geometry, material)
+      line.renderOrder = 1001
+      line.userData.type = 'diagram'
+      this.model.scene.add(line)
+      this.meshes.push(line)
+      return
+    }
     const points = curvePoints.flatMap(p => [p.x, p.y, p.z])
     const lineGeometry = new LineGeometry().setPositions(points)
     const lineMaterial = new LineMaterial({
@@ -610,6 +645,54 @@ class PostProcessing {
     this.coloredSolids.clear()
   }
 
+  /** Paint the member centreline with the per-station colormap. Forces use the
+  * undeformed axis; deflection paints the displaced axis (line-only display). */
+  private colorMemberLine(type: string, data: MemberDiagramData) {
+    const stations = data.stations
+    if (stations.length === 0) return
+    // Same diagram plane as the ribbon: N/Vy/T/Mz along local Y, Vz/My along local Z
+    const dir = type === 'Vz' || type === 'My' ? data.localZ : data.localY
+    const half = this.modelSize * 0.002
+    const at = (station: StationPoint) => (type === DEFLECTION_TYPE ? station.offset : station.base)
+    const vertices: number[] = []
+    const colors: number[] = []
+    const indices: number[] = []
+    const color = new THREE.Color()
+    for (const station of stations) {
+      const p = at(station)
+      vertices.push(p.x + dir.x * half, p.y + dir.y * half, p.z + dir.z * half)
+      color.copy(this.stationColor(station.value))
+      colors.push(color.r, color.g, color.b)
+    }
+    for (const station of stations) {
+      const p = at(station)
+      vertices.push(p.x - dir.x * half, p.y - dir.y * half, p.z - dir.z * half)
+      color.copy(this.stationColor(station.value))
+      colors.push(color.r, color.g, color.b)
+    }
+    const n = stations.length
+    for (let i = 0; i < n - 1; i++) {
+      indices.push(i, n + i, i + 1, i + 1, n + i, n + i + 1)
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    geometry.setIndex(indices)
+    const material = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
+    })
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.renderOrder = 20
+    this.addHoverable(mesh, data.memberId)
+    this.model.scene.add(mesh)
+    this.meshes.push(mesh)
+  }
+
   /** Linear interpolation of the active value at an arc position along the member. */
   private interpolateStationValue(stations: StationPoint[], s: number): number {
     const n = stations.length
@@ -688,8 +771,7 @@ class PostProcessing {
         values: station.values
       }))
     }))
-    const markerRadius = this.modelSize * 0.008
-    this.hover.setTargets(this.hoverMeshes, hoverMembers, this.activeType, markerRadius)
+    this.hover.setTargets(this.hoverMeshes, hoverMembers, this.activeType)
   }
 
   dispose() {

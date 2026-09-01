@@ -99,6 +99,10 @@ class Labeler {
     this.renderer.domElement.style.height = '100vh';
     this.renderer.domElement.style.overflow = 'hidden';
     this.renderer.domElement.style.pointerEvents = 'none';
+    // Own stacking context BELOW the UI panels (ResultPanel z=40, BottomBar z=1200):
+    // CSS2DRenderer assigns each label a large depth-based z-index - without this
+    // context those values escape and paint the labels over the docked panels.
+    this.renderer.domElement.style.zIndex = '10';
     document.getElementById('app-container')?.appendChild(this.renderer.domElement);
     this.setupEvent = true
   }
@@ -127,22 +131,43 @@ class Labeler {
       wrapper.appendChild(pContainer)
 
       if (type === 'effort') {
-        // Effort styling — compact solid pill: no border, accent background, white mono value
-        const accent = label.backgroundColor || '#2f6fed';
-        pContainer.style.backgroundColor = accent;
+        // Effort value tags — same thin, background-free text as the reaction labels.
+        // Bright amber so the values pop against every diagram / model colour.
+        pContainer.style.backgroundColor = 'transparent';
         pContainer.style.border = 'none';
-        pContainer.style.borderRadius = '999px';
-        pContainer.style.padding = '1px 7px';
+        pContainer.style.borderRadius = '0';
+        pContainer.style.padding = '0';
         pContainer.style.height = 'auto';
         pContainer.style.width = 'auto';
         pContainer.style.minWidth = '0';
-        pContainer.style.boxShadow = '0 1px 3px rgba(0,0,0,0.3)';
-        p.style.color = '#ffffff';
-        p.style.fontFamily = '"JetBrains Mono", ui-monospace, "SF Mono", monospace';
-        p.style.fontSize = '10.5px';
-        p.style.fontWeight = '700';
-        p.style.lineHeight = '1.5';
+        pContainer.style.boxShadow = 'none';
+        p.style.color = '#fbbf24';
+        p.style.fontFamily = '"Consolas", "Roboto Mono", ui-monospace, monospace';
+        p.style.fontSize = '12.5px';
+        p.style.fontWeight = '300';
+        p.style.lineHeight = '1.2';
+        p.style.letterSpacing = '0.4px';
         p.style.whiteSpace = 'nowrap';
+        p.style.textShadow = '0 1px 2px rgba(0,0,0,0.85)';
+      }
+      else if (type === 'reaction') {
+        // SHX-style stroked value text: thin font, no background - bright amber
+        // the CAD "text" layer of Midas/Civil where value tags are readable
+        // over the model without any box.
+        pContainer.style.backgroundColor = 'transparent';
+        pContainer.style.border = 'none';
+        pContainer.style.padding = '0';
+        pContainer.style.boxShadow = 'none';
+        pContainer.style.height = 'auto';
+        pContainer.style.width = 'auto';
+        p.style.color = '#fbbf24';
+        p.style.fontFamily = '"Consolas", "Roboto Mono", ui-monospace, monospace';
+        p.style.fontSize = '12.5px';
+        p.style.fontWeight = '300';
+        p.style.lineHeight = '1.2';
+        p.style.letterSpacing = '0.4px';
+        p.style.whiteSpace = 'nowrap';
+        p.style.textShadow = '0 1px 2px rgba(0,0,0,0.85)';
       }
       else if (type === 'length') {
         pContainer.style.backgroundColor = 'white';
@@ -284,7 +309,9 @@ class Labeler {
       pContainer.style.justifyContent = 'center';
       pContainer.appendChild(p);
 
-      pContainer.style.transform = `rotate(${label.rotation}deg)`;
+      // Keep upright unless the label explicitly asks for a rotation
+      if (label.rotation !== undefined) pContainer.style.transform = `rotate(${label.rotation}deg)`
+      else pContainer.style.transform = 'none';
   
       const cPointLabel = new CSS2DObject(wrapper);
       cPointLabel.position.copy(position);
@@ -296,13 +323,13 @@ class Labeler {
       // Result min/max tags ('effort') must always paint above support
       // hexagons sharing the same node; support symbols stay below every
       // other annotation.
-      cPointLabel.renderOrder = label.type === 'effort' ? 10 : (label.type === 'support' ? 0 : 5);
+      cPointLabel.renderOrder = (label.type === 'effort' || label.type === 'reaction') ? 10 : (label.type === 'support' ? 0 : 5);
       this.model.scene.add(cPointLabel);
       this.labelObjects.push(cPointLabel);
     }
   }
 
-  deleteAll(type : 'effort' | 'load') {
+  deleteAll(type : 'effort' | 'load' | 'reaction') {
     this.labelObjects.forEach(label => {
       if(label.userData.type === type) {
         label.element.remove();
@@ -330,15 +357,20 @@ class Labeler {
         this.create([label])
         return
       }
-      const childNodes = labelObj.element.childNodes
-      const child = childNodes[0] as HTMLElement
-      child.textContent = label.text;
+      const container = labelObj.element.childNodes[0] as HTMLElement
+      // Refresh the inner <p> text node so the label keeps its styled font/color
+      // (setting textContent on the container would wipe the <p> styling).
+      const p = container?.querySelector('p') as HTMLElement
+      if (p) p.textContent = label.text
+      else if (container) container.textContent = label.text
+      // Keep the label rotated along the symbol direction every frame so it
+      // still follows the arrow when the camera orbits / zooms.
+      if (container && label.rotation !== undefined) {
+        container.style.transform = `rotate(${label.rotation}deg)`
+      }
       labelObj.position.copy(label.position);
       const currentLayers = this.model.camera.cam.layers
       labelObj.layers = currentLayers
-      if(label.rotation) {
-        // child.style.transform = `rotate(${label.rotation}deg)`;
-      }
     }
   }
 
