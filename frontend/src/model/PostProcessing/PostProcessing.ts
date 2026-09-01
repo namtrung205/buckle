@@ -393,7 +393,7 @@ class PostProcessing {
       } else {
         if (this.showRibbon) {
           this.buildRibbon(data)
-          if (this.showHatch) this.buildHatch(data)
+          if (this.showHatch) this.buildHatch(data, this.showContour)
         }
         this.buildBaseline(data)
         this.buildOutline(data, this.showContour)
@@ -469,17 +469,29 @@ class PostProcessing {
   }
 
   /** Thin hatching lines between the axis and the diagram curve. */
-  private buildHatch(data: MemberDiagramData) {
+  private buildHatch(data: MemberDiagramData, colored = false) {
     const positions: number[] = []
+    const colors: number[] = []
     const stations = data.stations
     const step = Math.max(1, Math.round(stations.length / 40))
+    const color = new THREE.Color()
     for (let i = 0; i < stations.length; i += step) {
-      const { base, offset } = stations[i]
+      const { base, offset, value } = stations[i]
       positions.push(base.x, base.y, base.z, offset.x, offset.y, offset.z)
+      if (colored) {
+        // Both vertices of a hatch share its station colour (forces contour mode)
+        color.copy(this.stationColor(value))
+        colors.push(color.r, color.g, color.b, color.r, color.g, color.b)
+      }
     }
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    const material = new THREE.LineBasicMaterial({ color: 0xaeb9c4, transparent: true, opacity: 0.5 })
+    if (colored) geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    const material = new THREE.LineBasicMaterial(
+      colored
+        ? { vertexColors: true, transparent: true, opacity: 0.5 }
+        : { color: 0xaeb9c4, transparent: true, opacity: 0.5 }
+    )
     const lines = new THREE.LineSegments(geometry, material)
     lines.userData.type = 'diagram'
     this.model.scene.add(lines)
