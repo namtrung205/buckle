@@ -99,6 +99,10 @@ class Labeler {
     this.renderer.domElement.style.height = '100vh';
     this.renderer.domElement.style.overflow = 'hidden';
     this.renderer.domElement.style.pointerEvents = 'none';
+    // Own stacking context BELOW the UI panels (ResultPanel z=40, BottomBar z=1200):
+    // CSS2DRenderer assigns each label a large depth-based z-index - without this
+    // context those values escape and paint the labels over the docked panels.
+    this.renderer.domElement.style.zIndex = '10';
     document.getElementById('app-container')?.appendChild(this.renderer.domElement);
     this.setupEvent = true
   }
