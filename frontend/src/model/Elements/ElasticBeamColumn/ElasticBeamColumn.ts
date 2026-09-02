@@ -13,6 +13,8 @@ import {
   ChannelSection,
   AngleSection,
   TeeSection,
+  IPNSection,
+  UPNSection,
  } from "../../../types";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
@@ -83,7 +85,15 @@ class ElasticBeamColumn {
         geometry = this.iSection(this.section, length);
         edges = new THREE.EdgesGeometry(geometry);
         break;
+      case 'IPN':
+        geometry = this.iSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
       case 'Channel':
+        geometry = this.channelSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
+      case 'UPN':
         geometry = this.channelSection(this.section, length);
         edges = new THREE.EdgesGeometry(geometry);
         break;
@@ -288,9 +298,10 @@ class ElasticBeamColumn {
     return vecz
   }
 
-  iSection(section: ISection, L: number): THREE.ExtrudeGeometry {
+  iSection(section: ISection | IPNSection, L: number): THREE.ExtrudeGeometry {
     const shape = new THREE.Shape();
-    const { depth, width, tw, tf, r } = section
+    const { depth, width, tw, tf } = section
+    const r = (section as ISection).r ?? 0
 
     // Half-dimensions
     const H = depth / 2, B = width / 2, TW = tw / 2, TF = tf;
@@ -426,7 +437,7 @@ class ElasticBeamColumn {
     return geom;
   }
 
-  channelSection(section: ChannelSection, L: number): THREE.ExtrudeGeometry {
+  channelSection(section: ChannelSection | UPNSection, L: number): THREE.ExtrudeGeometry {
     const shape = new THREE.Shape();
     const { depth, width, tw, tf } = section;
     const H = depth / 2;

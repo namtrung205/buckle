@@ -101,6 +101,9 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         case 'I':
             areaMm2 = 2 * section.width * section.tf + (section.depth - 2 * section.tf) * section.tw;
             break;
+        case 'IPN':
+            areaMm2 = 2 * section.width * section.tf + (section.depth - 2 * section.tf) * section.tw;
+            break;
         case 'HollowCircular': {
             const r_ext = section.diameter / 2;
             const r_int = r_ext - section.thickness;
@@ -116,6 +119,9 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             areaMm2 = section.width * section.height - (section.width - 2 * section.thickness) * (section.height - 2 * section.thickness);
             break;
         case 'Channel':
+            areaMm2 = 2 * section.width * section.tf + (section.depth - 2 * section.tf) * section.tw;
+            break;
+        case 'UPN':
             areaMm2 = 2 * section.width * section.tf + (section.depth - 2 * section.tf) * section.tw;
             break;
         case 'Tee':

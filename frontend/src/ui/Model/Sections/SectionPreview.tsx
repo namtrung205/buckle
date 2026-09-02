@@ -108,6 +108,37 @@ function outline(section: Section): Outline {
         w: b, h,
       };
     }
+    case 'UPN': {
+      // Tapered channel (DIN 1026-1): flange slope 8 %, tf quoted at b/2.
+      const h = section.depth, b = section.width, tf = section.tf, tw = section.tw;
+      const m = 0.08;
+      // inner face line measured from outer face: thickness at x = tf - m*(x - b/2)
+      const thinAt = (x: number) => tf - m * (x - b / 2);
+      const tWeb = thinAt(tw);
+      const tTip = thinAt(b);
+      return {
+        d:
+          `M 0 0 L ${b} 0 L ${b} ${tTip} L ${tw} ${tWeb} L ${tw} ${h - tWeb} ` +
+          `L ${b} ${h - tTip} L ${b} ${h} L 0 ${h} Z`,
+        w: b, h,
+      };
+    }
+    case 'IPN': {
+      // Tapered I-beam (DIN 1025-1): flange slope 14 %, tf quoted at b/4.
+      const h = section.depth, b = section.width, tf = section.tf, tw = section.tw;
+      const m = 0.14;
+      const B = b / 2, TW = tw / 2;
+      const thinAt = (x: number) => tf - m * (x - b / 4);
+      const tWeb = thinAt(TW);
+      const tTip = thinAt(B);
+      return {
+        d:
+          `M 0 0 L ${b} 0 L ${b} ${tTip} L ${B + TW} ${tWeb} L ${B + TW} ${h - tWeb} ` +
+          `L ${b} ${h - tTip} L ${b} ${h} L 0 ${h} L 0 ${h - tTip} ` +
+          `L ${B - TW} ${h - tWeb} L ${B - TW} ${tWeb} L 0 ${tTip} Z`,
+        w: b, h,
+      };
+    }
     default:
       return { d: `M 0 100 L 0 0 L 100 0 L 100 100 Z`, w: 100, h: 100 };
   }

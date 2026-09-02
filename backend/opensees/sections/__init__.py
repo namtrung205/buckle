@@ -1,4 +1,4 @@
-﻿"""
+"""
 Sections Module
 
 Provides analytic geometric properties for common structural cross-sections
@@ -11,10 +11,14 @@ from .ISection import ISection
 from .HollowCircularSection import HollowCircularSection
 from .RectangularSection import RectangularSection
 from . import properties
+from . import geometry
+from . import catalogue
 
 __all__ = [
     'ISection',
     'HollowCircularSection',
     'RectangularSection',
     'properties',
+    'geometry',
+    'catalogue',
 ]

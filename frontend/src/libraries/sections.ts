@@ -141,39 +141,67 @@ const HEM: StandardSection[] = [
 ];
 
 // --------------------------------------------------------------------------- //
-// European channels UPN (DIN 1026-1)
+// Tapered I-beams IPN (DIN 1025-1). tf is quoted at b/4; the flange slope
+// (14 %) and root/toe radii (tw, 0.6 tw) are rules, applied in the backend.
 // --------------------------------------------------------------------------- //
-const UPN: StandardSection[] = [
-  { family: 'Channel', name: 'UPN80', standard: 'DIN 1026', depth: 80, width: 45, tw: 6, tf: 8, r: 8 },
-  { family: 'Channel', name: 'UPN100', standard: 'DIN 1026', depth: 100, width: 50, tw: 6, tf: 8.5, r: 8.5 },
-  { family: 'Channel', name: 'UPN120', standard: 'DIN 1026', depth: 120, width: 55, tw: 7, tf: 9, r: 9 },
-  { family: 'Channel', name: 'UPN140', standard: 'DIN 1026', depth: 140, width: 60, tw: 7, tf: 10, r: 10 },
-  { family: 'Channel', name: 'UPN160', standard: 'DIN 1026', depth: 160, width: 65, tw: 7.5, tf: 10.5, r: 10.5 },
-  { family: 'Channel', name: 'UPN180', standard: 'DIN 1026', depth: 180, width: 70, tw: 8, tf: 11, r: 11 },
-  { family: 'Channel', name: 'UPN200', standard: 'DIN 1026', depth: 200, width: 75, tw: 8.5, tf: 11.5, r: 11.5 },
-  { family: 'Channel', name: 'UPN220', standard: 'DIN 1026', depth: 220, width: 80, tw: 9, tf: 12.5, r: 12.5 },
-  { family: 'Channel', name: 'UPN240', standard: 'DIN 1026', depth: 240, width: 85, tw: 9.5, tf: 13, r: 13 },
-  { family: 'Channel', name: 'UPN260', standard: 'DIN 1026', depth: 260, width: 90, tw: 10, tf: 14, r: 14 },
-  { family: 'Channel', name: 'UPN280', standard: 'DIN 1026', depth: 280, width: 95, tw: 10, tf: 15, r: 15 },
-  { family: 'Channel', name: 'UPN300', standard: 'DIN 1026', depth: 300, width: 100, tw: 10, tf: 16, r: 16 },
-  { family: 'Channel', name: 'UPN320', standard: 'DIN 1026', depth: 320, width: 100, tw: 14, tf: 17.5, r: 17.5 },
-  { family: 'Channel', name: 'UPN350', standard: 'DIN 1026', depth: 350, width: 100, tw: 14, tf: 16, r: 16 },
-  { family: 'Channel', name: 'UPN400', standard: 'DIN 1026', depth: 400, width: 110, tw: 14, tf: 18, r: 18 },
+const IPN: StandardSection[] = [
+  { family: 'IPN', name: 'IPN80', standard: 'DIN 1025-1', depth: 80, width: 42, tw: 3.9, tf: 5.9 },
+  { family: 'IPN', name: 'IPN100', standard: 'DIN 1025-1', depth: 100, width: 50, tw: 4.5, tf: 6.8 },
+  { family: 'IPN', name: 'IPN120', standard: 'DIN 1025-1', depth: 120, width: 58, tw: 5.1, tf: 7.7 },
+  { family: 'IPN', name: 'IPN140', standard: 'DIN 1025-1', depth: 140, width: 66, tw: 5.7, tf: 8.6 },
+  { family: 'IPN', name: 'IPN160', standard: 'DIN 1025-1', depth: 160, width: 74, tw: 6.3, tf: 9.5 },
+  { family: 'IPN', name: 'IPN180', standard: 'DIN 1025-1', depth: 180, width: 82, tw: 6.9, tf: 10.4 },
+  { family: 'IPN', name: 'IPN200', standard: 'DIN 1025-1', depth: 200, width: 90, tw: 7.5, tf: 11.3 },
+  { family: 'IPN', name: 'IPN220', standard: 'DIN 1025-1', depth: 220, width: 98, tw: 8.1, tf: 12.2 },
+  { family: 'IPN', name: 'IPN240', standard: 'DIN 1025-1', depth: 240, width: 106, tw: 8.7, tf: 13.1 },
+  { family: 'IPN', name: 'IPN260', standard: 'DIN 1025-1', depth: 260, width: 113, tw: 9.4, tf: 14.1 },
+  { family: 'IPN', name: 'IPN280', standard: 'DIN 1025-1', depth: 280, width: 119, tw: 10.1, tf: 15.2 },
+  { family: 'IPN', name: 'IPN300', standard: 'DIN 1025-1', depth: 300, width: 125, tw: 10.8, tf: 16.2 },
+  { family: 'IPN', name: 'IPN320', standard: 'DIN 1025-1', depth: 320, width: 131, tw: 11.5, tf: 17.3 },
+  { family: 'IPN', name: 'IPN340', standard: 'DIN 1025-1', depth: 340, width: 137, tw: 12.2, tf: 18.3 },
+  { family: 'IPN', name: 'IPN360', standard: 'DIN 1025-1', depth: 360, width: 143, tw: 13.0, tf: 19.5 },
+  { family: 'IPN', name: 'IPN380', standard: 'DIN 1025-1', depth: 380, width: 149, tw: 13.7, tf: 20.5 },
+  { family: 'IPN', name: 'IPN400', standard: 'DIN 1025-1', depth: 400, width: 155, tw: 14.4, tf: 21.6 },
+  { family: 'IPN', name: 'IPN450', standard: 'DIN 1025-1', depth: 450, width: 170, tw: 16.2, tf: 24.3 },
+  { family: 'IPN', name: 'IPN500', standard: 'DIN 1025-1', depth: 500, width: 185, tw: 18.0, tf: 27.0 },
+  { family: 'IPN', name: 'IPN550', standard: 'DIN 1025-1', depth: 550, width: 200, tw: 19.0, tf: 30.0 },
+  { family: 'IPN', name: 'IPN600', standard: 'DIN 1025-1', depth: 600, width: 215, tw: 21.6, tf: 32.4 },
 ];
 
 // --------------------------------------------------------------------------- //
-// Equal-leg angles (EN 10056-1)
+// European channels UPN (DIN 1026-1) — tapered flanges: slope 8 %,
+// root radius = tf, toe radius = 0.5 tf, tf quoted at b/2 (backend rules).
+// --------------------------------------------------------------------------- //
+const UPN: StandardSection[] = [
+  { family: 'UPN', name: 'UPN80', standard: 'DIN 1026-1', depth: 80, width: 45, tw: 6.0, tf: 8.0 },
+  { family: 'UPN', name: 'UPN100', standard: 'DIN 1026-1', depth: 100, width: 50, tw: 6.0, tf: 8.5 },
+  { family: 'UPN', name: 'UPN120', standard: 'DIN 1026-1', depth: 120, width: 55, tw: 7.0, tf: 9.0 },
+  { family: 'UPN', name: 'UPN140', standard: 'DIN 1026-1', depth: 140, width: 60, tw: 7.0, tf: 10.0 },
+  { family: 'UPN', name: 'UPN160', standard: 'DIN 1026-1', depth: 160, width: 65, tw: 7.5, tf: 10.5 },
+  { family: 'UPN', name: 'UPN180', standard: 'DIN 1026-1', depth: 180, width: 70, tw: 8.0, tf: 11.0 },
+  { family: 'UPN', name: 'UPN200', standard: 'DIN 1026-1', depth: 200, width: 75, tw: 8.5, tf: 11.5 },
+  { family: 'UPN', name: 'UPN220', standard: 'DIN 1026-1', depth: 220, width: 80, tw: 9.0, tf: 12.5 },
+  { family: 'UPN', name: 'UPN240', standard: 'DIN 1026-1', depth: 240, width: 85, tw: 9.5, tf: 13.0 },
+  { family: 'UPN', name: 'UPN260', standard: 'DIN 1026-1', depth: 260, width: 90, tw: 10.0, tf: 14.0 },
+  { family: 'UPN', name: 'UPN280', standard: 'DIN 1026-1', depth: 280, width: 95, tw: 10.0, tf: 15.0 },
+  { family: 'UPN', name: 'UPN300', standard: 'DIN 1026-1', depth: 300, width: 100, tw: 10.0, tf: 16.0 },
+];
+
+// --------------------------------------------------------------------------- //
+// Equal-leg angles (EN 10056-1) — with tabulated root radius (r) and toe radius
+// r2 = r/2. Iy/Iz come from the filleted outline, not a sharp angle.
 // --------------------------------------------------------------------------- //
 const ANGLE_EU: StandardSection[] = [
-  { family: 'Angle', name: 'L50x50x5', standard: 'EN 10056', width: 50, thickness: 5 },
-  { family: 'Angle', name: 'L50x50x6', standard: 'EN 10056', width: 50, thickness: 6 },
-  { family: 'Angle', name: 'L60x60x6', standard: 'EN 10056', width: 60, thickness: 6 },
-  { family: 'Angle', name: 'L70x70x7', standard: 'EN 10056', width: 70, thickness: 7 },
-  { family: 'Angle', name: 'L80x80x8', standard: 'EN 10056', width: 80, thickness: 8 },
-  { family: 'Angle', name: 'L90x90x9', standard: 'EN 10056', width: 90, thickness: 9 },
-  { family: 'Angle', name: 'L100x100x10', standard: 'EN 10056', width: 100, thickness: 10 },
-  { family: 'Angle', name: 'L120x120x12', standard: 'EN 10056', width: 120, thickness: 12 },
-  { family: 'Angle', name: 'L150x150x15', standard: 'EN 10056', width: 150, thickness: 15 },
+  { family: 'Angle', name: 'L30x30x3', standard: 'EN 10056-1', width: 30, thickness: 3, r: 5 },
+  { family: 'Angle', name: 'L40x40x4', standard: 'EN 10056-1', width: 40, thickness: 4, r: 6 },
+  { family: 'Angle', name: 'L50x50x5', standard: 'EN 10056-1', width: 50, thickness: 5, r: 7 },
+  { family: 'Angle', name: 'L60x60x6', standard: 'EN 10056-1', width: 60, thickness: 6, r: 8 },
+  { family: 'Angle', name: 'L70x70x7', standard: 'EN 10056-1', width: 70, thickness: 7, r: 9 },
+  { family: 'Angle', name: 'L80x80x8', standard: 'EN 10056-1', width: 80, thickness: 8, r: 10 },
+  { family: 'Angle', name: 'L90x90x9', standard: 'EN 10056-1', width: 90, thickness: 9, r: 11 },
+  { family: 'Angle', name: 'L100x100x10', standard: 'EN 10056-1', width: 100, thickness: 10, r: 12 },
+  { family: 'Angle', name: 'L120x120x12', standard: 'EN 10056-1', width: 120, thickness: 12, r: 13 },
+  { family: 'Angle', name: 'L150x150x15', standard: 'EN 10056-1', width: 150, thickness: 15, r: 16 },
 ];
 
 // --------------------------------------------------------------------------- //
@@ -192,6 +220,7 @@ import {
 // --------------------------------------------------------------------------- //
 export const SECTION_STANDARDS: StandardSection[] = [
   ...IPE,
+  ...IPN,
   ...HEA,
   ...HEB,
   ...HEM,

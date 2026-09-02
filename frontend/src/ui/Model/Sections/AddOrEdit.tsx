@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -35,7 +35,9 @@ const TYPE_OPTIONS: { id: SectionType; name: string }[] = [
   { id: 'HollowCircular', name: 'Circular hollow (pipe / CHS)' },
   { id: 'RectangularHollow', name: 'Rectangular hollow (box / HSS / RHS)' },
   { id: 'I', name: 'I / H section' },
-  { id: 'Channel', name: 'Channel (C / UPN)' },
+  { id: 'IPN', name: 'Tapered I-beam (IPN)' },
+  { id: 'Channel', name: 'Channel (C / UPE)' },
+  { id: 'UPN', name: 'Tapered channel (UPN)' },
   { id: 'Angle', name: 'Angle (L)' },
   { id: 'Tee', name: 'Tee (T)' },
 ];
@@ -71,6 +73,18 @@ const FIELD_DEFS: Record<SectionType, FieldDef[]> = {
     { key: 'tw', label: 'Web thickness tw (mm)', placeholder: 'tw' },
     { key: 'tf', label: 'Flange thickness tf (mm)', placeholder: 'tf' },
     { key: 'r', label: 'Root radius r (mm)', placeholder: 'r' },
+  ],
+  IPN: [
+    { key: 'depth', label: 'Depth h (mm)', placeholder: 'Depth' },
+    { key: 'width', label: 'Flange width b (mm)', placeholder: 'Width' },
+    { key: 'tw', label: 'Web thickness tw (mm)', placeholder: 'tw' },
+    { key: 'tf', label: 'Flange thickness tf (mm, at b/4)', placeholder: 'tf' },
+  ],
+  UPN: [
+    { key: 'depth', label: 'Depth h (mm)', placeholder: 'Depth' },
+    { key: 'width', label: 'Flange width b (mm)', placeholder: 'Width' },
+    { key: 'tw', label: 'Web thickness tw (mm)', placeholder: 'tw' },
+    { key: 'tf', label: 'Flange thickness tf (mm, at b/2)', placeholder: 'tf' },
   ],
   Angle: [
     { key: 'width', label: 'Leg width b (mm)', placeholder: 'Leg' },
@@ -173,6 +187,10 @@ const EditSection = observer(({ open, onClose, section }: EditSectionProps) => {
         return { id: 0, name: '', type: 'I', depth: n(f.depth), width: n(f.width), tw: n(f.tw), tf: n(f.tf), r: n(f.r), material: mat } as Section;
       case 'Channel':
         return { id: 0, name: '', type: 'Channel', depth: n(f.depth), width: n(f.width), tw: n(f.tw), tf: n(f.tf), r: n(f.r), material: mat } as Section;
+      case 'IPN':
+        return { id: 0, name: '', type: 'IPN', depth: n(f.depth), width: n(f.width), tw: n(f.tw), tf: n(f.tf), material: mat } as Section;
+      case 'UPN':
+        return { id: 0, name: '', type: 'UPN', depth: n(f.depth), width: n(f.width), tw: n(f.tw), tf: n(f.tf), material: mat } as Section;
       case 'Angle':
         return { id: 0, name: '', type: 'Angle', width: n(f.width), thickness: n(f.thickness), material: mat } as Section;
       case 'Tee':

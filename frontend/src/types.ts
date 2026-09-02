@@ -96,6 +96,33 @@ export type TeeSection = {
   properties?: SectionProperties
 }
 
+/** Tapered rolled I-beam (DIN 1025-1). Flange slope / root+toe radii are rules
+ *  of the profile's own dimensions, computed in the backend. */
+export type IPNSection = {
+  id: number
+  name: string
+  type: 'IPN'
+  depth: number
+  width: number
+  tw: number
+  tf: number
+  material: Material
+  properties?: SectionProperties
+}
+
+/** Tapered rolled channel (DIN 1026-1). */
+export type UPNSection = {
+  id: number
+  name: string
+  type: 'UPN'
+  depth: number
+  width: number
+  tw: number
+  tf: number
+  material: Material
+  properties?: SectionProperties
+}
+
 export type SectionProperties = {
   A: number;
   Iz: number;
@@ -139,6 +166,8 @@ export type Section =
   | ChannelSection
   | AngleSection
   | TeeSection
+  | IPNSection
+  | UPNSection
 
 /** Union of all supported section type discriminants. */
 export type SectionType =
@@ -150,6 +179,8 @@ export type SectionType =
   | 'Channel'
   | 'Angle'
   | 'Tee'
+  | 'IPN'
+  | 'UPN'
 
 
 // Nodes 
