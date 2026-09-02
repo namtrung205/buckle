@@ -27,11 +27,21 @@ class Member(BaseModel):
   vecxz: Optional[List[float]] = Field(None, description="Local x-z vector")
 
 class Material(BaseModel):
-  """Represents material properties"""
+  """Represents material properties (elastic constants + optional design values)"""
   id: int = Field(..., description="Material ID")
   name: str = Field(..., description="Material name")
-  E: float = Field(..., description="Young's modulus (MPa)")
+  category: Optional[str] = Field(None, description="Material family: concrete|steel|aluminum|timber|rebar|other")
+  code: Optional[str] = Field(None, description="Design code/standard (EN, ACI, ASTM, NDS, ...)")
+  E: float = Field(..., description="Young's modulus (Pa)")
   nu: float = Field(..., description="Poisson's ratio")
+  rho: Optional[float] = Field(None, description="Mass density (kg/m^3)")
+  alpha: Optional[float] = Field(None, description="Thermal expansion coefficient (1/K)")
+  fy: Optional[float] = Field(None, description="Yield / characteristic strength (Pa)")
+  fc: Optional[float] = Field(None, description="Compressive design strength (Pa)")
+  fu: Optional[float] = Field(None, description="Ultimate tensile strength (Pa)")
+  ft: Optional[float] = Field(None, description="Tensile strength (Pa)")
+  grade: Optional[str] = Field(None, description="Grade designation (e.g. S355, C30/37)")
+  preset: Optional[str] = Field(None, description="Library preset key used to populate defaults")
 
 class SupportType(str, Enum):
   """Enumeration of support types for boundary conditions"""

@@ -8,6 +8,13 @@ import {
   ISection, 
   HollowCircularSection, 
   RectangularSection,
+  CircularSection,
+  RectangularHollowSection,
+  ChannelSection,
+  AngleSection,
+  TeeSection,
+  IPNSection,
+  UPNSection,
  } from "../../../types";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
@@ -62,12 +69,40 @@ class ElasticBeamColumn {
         geometry = this.hollowCircularSection(this.section, length);
         edges = new THREE.EdgesGeometry(geometry);
         break;
+      case 'Circular':
+        geometry = this.circularSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
       case 'Rectangular':
         geometry = this.rectangularSection(this.section, length);
         edges = new THREE.EdgesGeometry(geometry);
         break;
+      case 'RectangularHollow':
+        geometry = this.rectangularHollowSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
       case 'I':
         geometry = this.iSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
+      case 'IPN':
+        geometry = this.iSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
+      case 'Channel':
+        geometry = this.channelSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
+      case 'UPN':
+        geometry = this.channelSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
+      case 'Angle':
+        geometry = this.angleSection(this.section, length);
+        edges = new THREE.EdgesGeometry(geometry);
+        break;
+      case 'Tee':
+        geometry = this.teeSection(this.section, length);
         edges = new THREE.EdgesGeometry(geometry);
         break;
       default:
@@ -263,9 +298,10 @@ class ElasticBeamColumn {
     return vecz
   }
 
-  iSection(section: ISection, L: number): THREE.ExtrudeGeometry {
+  iSection(section: ISection | IPNSection, L: number): THREE.ExtrudeGeometry {
     const shape = new THREE.Shape();
-    const { depth, width, tw, tf, r } = section
+    const { depth, width, tw, tf } = section
+    const r = (section as ISection).r ?? 0
 
     // Half-dimensions
     const H = depth / 2, B = width / 2, TW = tw / 2, TF = tf;
@@ -354,6 +390,120 @@ class ElasticBeamColumn {
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
 
+    const mmToM = 0.001;
+    geom.scale(mmToM, mmToM, mmToM);
+    return geom;
+  }
+
+  circularSection(section: CircularSection, L: number): THREE.ExtrudeGeometry {
+    const shape = new THREE.Shape();
+    const r = section.diameter / 2;
+    shape.absarc(0, 0, r, 0, Math.PI * 2, false);
+
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 24 });
+    geom.translate(0, 0, -L * 1E3 / 2);
+    const mmToM = 0.001;
+    geom.scale(mmToM, mmToM, mmToM);
+    return geom;
+  }
+
+  rectangularHollowSection(section: RectangularHollowSection, L: number): THREE.ExtrudeGeometry {
+    const shape = new THREE.Shape();
+    const { width, height, thickness } = section;
+    const W = width / 2;
+    const H = height / 2;
+    const wi = W - thickness;
+    const hi = H - thickness;
+
+    shape.moveTo(-W, -H);
+    shape.lineTo(W, -H);
+    shape.lineTo(W, H);
+    shape.lineTo(-W, H);
+    shape.lineTo(-W, -H);
+
+    // inner hole (clockwise to create a hole)
+    const hole = new THREE.Path();
+    hole.moveTo(-wi, -hi);
+    hole.lineTo(wi, -hi);
+    hole.lineTo(wi, hi);
+    hole.lineTo(-wi, hi);
+    hole.lineTo(-wi, -hi);
+    shape.holes.push(hole);
+
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    geom.translate(0, 0, -L * 1E3 / 2);
+    const mmToM = 0.001;
+    geom.scale(mmToM, mmToM, mmToM);
+    return geom;
+  }
+
+  channelSection(section: ChannelSection | UPNSection, L: number): THREE.ExtrudeGeometry {
+    const shape = new THREE.Shape();
+    const { depth, width, tw, tf } = section;
+    const H = depth / 2;
+    const W = width / 2;
+
+    // C-shape: back of web on left (-W), flanges open toward +W
+    shape.moveTo(-W, -H);
+    shape.lineTo(W, -H);
+    shape.lineTo(W, -H + tf);
+    shape.lineTo(-W + tw, -H + tf);
+    shape.lineTo(-W + tw, H - tf);
+    shape.lineTo(W, H - tf);
+    shape.lineTo(W, H);
+    shape.lineTo(-W, H);
+    shape.lineTo(-W, -H);
+
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    geom.translate(0, 0, -L * 1E3 / 2);
+    const mmToM = 0.001;
+    geom.scale(mmToM, mmToM, mmToM);
+    return geom;
+  }
+
+  angleSection(section: AngleSection, L: number): THREE.ExtrudeGeometry {
+    const shape = new THREE.Shape();
+    const { width, thickness } = section;
+    const b = width;
+
+    // Equal-leg angle with the heel at the outer corner (bottom-right),
+    // vertical leg up and horizontal leg to the left.
+    shape.moveTo(0, -b);
+    shape.lineTo(0, 0);
+    shape.lineTo(b, 0);
+    shape.lineTo(b, -thickness);
+    shape.lineTo(thickness, -thickness);
+    shape.lineTo(thickness, -b);
+    shape.lineTo(0, -b);
+
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    // Recentre so the centroid sits on the member axis (approx at b/3).
+    geom.translate(-b / 3, -b / 3, -L * 1E3 / 2);
+    const mmToM = 0.001;
+    geom.scale(mmToM, mmToM, mmToM);
+    return geom;
+  }
+
+  teeSection(section: TeeSection, L: number): THREE.ExtrudeGeometry {
+    const shape = new THREE.Shape();
+    const { depth, width, tw, tf } = section;
+    const H = depth;
+    const W = width / 2;
+    const TW = tw / 2;
+
+    // Flange at top (y=+H/2 half), stem down the middle.
+    shape.moveTo(-W, H / 2);
+    shape.lineTo(W, H / 2);
+    shape.lineTo(W, H / 2 - tf);
+    shape.lineTo(TW, H / 2 - tf);
+    shape.lineTo(TW, -H / 2);
+    shape.lineTo(-TW, -H / 2);
+    shape.lineTo(-TW, H / 2 - tf);
+    shape.lineTo(-W, H / 2 - tf);
+    shape.lineTo(-W, H / 2);
+
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    geom.translate(0, 0, -L * 1E3 / 2);
     const mmToM = 0.001;
     geom.scale(mmToM, mmToM, mmToM);
     return geom;

@@ -1,0 +1,27 @@
+{
+  "_meta": {
+    "description": "European channels UPN (taper-flange channels)",
+    "source": "DIN 1026-1 / EN 10365 (Euronorm 19-57)",
+    "units": "mm",
+    "fields": { "name": "designation", "h": "section depth", "b": "flange width", "tw": "web thickness", "tf": "flange thickness (at fillet)", "r": "root fillet radius (r1)" },
+    "note": "UPN flanges are tapered on the inside face (approx. 8% slope); tf quoted at the fillet line."
+  },
+  "UPN": [
+    {"name":"UPN80","h":80,"b":45,"tw":6,"tf":8,"r":8},
+    {"name":"UPN100","h":100,"b":50,"tw":6,"tf":8.5,"r":8.5},
+    {"name":"UPN120","h":120,"b":55,"tw":7,"tf":9,"r":9},
+    {"name":"UPN140","h":140,"b":60,"tw":7,"tf":10,"r":10},
+    {"name":"UPN160","h":160,"b":65,"tw":7.5,"tf":10.5,"r":10.5},
+    {"name":"UPN180","h":180,"b":70,"tw":8,"tf":11,"r":11},
+    {"name":"UPN200","h":200,"b":75,"tw":8.5,"tf":11.5,"r":11.5},
+    {"name":"UPN220","h":220,"b":80,"tw":9,"tf":12.5,"r":12.5},
+    {"name":"UPN240","h":240,"b":85,"tw":9.5,"tf":13,"r":13},
+    {"name":"UPN260","h":260,"b":90,"tw":10,"tf":14,"r":14},
+    {"name":"UPN280","h":280,"b":95,"tw":10,"tf":15,"r":15},
+    {"name":"UPN300","h":300,"b":100,"tw":10,"tf":16,"r":16},
+    {"name":"UPN320","h":320,"b":100,"tw":14,"tf":17.5,"r":17.5},
+    {"name":"UPN350","h":350,"b":100,"tw":14,"tf":16,"r":16},
+    {"name":"UPN380","h":380,"b":102,"tw":13.5,"tf":16,"r":16},
+    {"name":"UPN400","h":400,"b":110,"tw":14,"tf":18,"r":18}
+  ]
+}

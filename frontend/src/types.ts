@@ -48,6 +48,80 @@ export type ISection = {
   properties?: SectionProperties
 }
 
+export type RectangularHollowSection = {
+  id: number
+  name: string
+  type: 'RectangularHollow'
+  height: number
+  width: number
+  thickness: number
+  ri?: number
+  material: Material
+  properties?: SectionProperties
+}
+
+export type ChannelSection = {
+  id: number
+  name: string
+  type: 'Channel'
+  depth: number
+  width: number
+  tw: number
+  tf: number
+  r?: number
+  material: Material
+  properties?: SectionProperties
+}
+
+export type AngleSection = {
+  id: number
+  name: string
+  type: 'Angle'
+  width: number
+  thickness: number
+  material: Material
+  properties?: SectionProperties
+}
+
+export type TeeSection = {
+  id: number
+  name: string
+  type: 'Tee'
+  depth: number
+  width: number
+  tw: number
+  tf: number
+  r?: number
+  material: Material
+  properties?: SectionProperties
+}
+
+/** Tapered rolled I-beam (DIN 1025-1). Flange slope / root+toe radii are rules
+ *  of the profile's own dimensions, computed in the backend. */
+export type IPNSection = {
+  id: number
+  name: string
+  type: 'IPN'
+  depth: number
+  width: number
+  tw: number
+  tf: number
+  material: Material
+  properties?: SectionProperties
+}
+
+/** Tapered rolled channel (DIN 1026-1). */
+export type UPNSection = {
+  id: number
+  name: string
+  type: 'UPN'
+  depth: number
+  width: number
+  tw: number
+  tf: number
+  material: Material
+  properties?: SectionProperties
+}
 
 export type SectionProperties = {
   A: number;
@@ -57,19 +131,56 @@ export type SectionProperties = {
   G: number;
   E: number;
   v: number;
+  Sy?: number;
+  Sz?: number;
+  ry?: number;
+  rz?: number;
 }
+
+export type MaterialCategory = 'steel' | 'concrete' | 'aluminum' | 'timber' | 'rebar' | 'other'
 
 export type ElasticIsotropicMaterial = {
   id : number; 
   name : string; 
+  category?: MaterialCategory;
+  code?: string;
   E : number ;
   nu : number;
   rho? : number
-
+  alpha?: number;
+  fy?: number;
+  fc?: number;
+  fu?: number;
+  ft?: number;
+  grade?: string;
+  preset?: string;
 }
 export type Material  =  ElasticIsotropicMaterial
 
-export type Section = RectangularSection | CircularSection | HollowCircularSection | ISection
+export type Section =
+  | RectangularSection
+  | CircularSection
+  | HollowCircularSection
+  | ISection
+  | RectangularHollowSection
+  | ChannelSection
+  | AngleSection
+  | TeeSection
+  | IPNSection
+  | UPNSection
+
+/** Union of all supported section type discriminants. */
+export type SectionType =
+  | 'Rectangular'
+  | 'Circular'
+  | 'HollowCircular'
+  | 'I'
+  | 'RectangularHollow'
+  | 'Channel'
+  | 'Angle'
+  | 'Tee'
+  | 'IPN'
+  | 'UPN'
 
 
 // Nodes 
