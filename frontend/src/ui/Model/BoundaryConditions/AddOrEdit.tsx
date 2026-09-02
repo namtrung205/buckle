@@ -307,9 +307,6 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
       onClose={handleCancel}
       maxWidth="xs"
       fullWidth={false}
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
       draggable
       title={selectedBoundaryCondition ? 'Edit Support' : 'Add Support'}
       actions={actions}

@@ -16,16 +16,12 @@ import Move from '../Model/Nodes/Components/Move/Move';
 import Draw from '../Draw/Draw';
 import Docs from '../Docs/Docs';
 import AddOrEditSection from '../Model/Sections/AddOrEdit';
-import AddOrEditLoad from '../Model/Loads';
-import AddOrEditBoundaryCondition from '../Model/BoundaryConditions';
 import AddOrEditMaterial from '../Model/Materials/AddOrEdit';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
 import axios from 'axios';
 import Node from '../../model/Elements/Node/Node';
 import ElasticBeamColumnClass from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
-import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
-import Load from '../../model/Load/Load';
 import Shell from '../../model/Elements/Shell/Shell';
 import { exportModelJson, buildModelFromJson } from '../../helpers';
 import * as THREE from 'three';
@@ -484,8 +480,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
               <RibbonButton title="Sections" label="Sections" onClick={() => open('sections')} disabled={isLocked} iconImage={{ src: '/sections.png', alt: 'Sections', size: 15 }} />
             </RibbonPanel>
             <RibbonPanel label="Assign">
-              <RibbonButton title="Loads" label="Loads" onClick={() => open('loads')} disabled={isLocked} iconImage={{ src: '/loads.png', alt: 'Loads', size: 15 }} />
-              <RibbonButton title="Supports" label="Supports" onClick={() => open('supports')} disabled={isLocked} iconImage={{ src: '/supports.png', alt: 'Supports', size: 15 }} />
+              <RibbonButton title="New Load" label="Loads" onClick={() => model?.addNewLoad()} disabled={isLocked} iconImage={{ src: '/loads.png', alt: 'Loads', size: 15 }} />
+              <RibbonButton title="New Support" label="Supports" onClick={() => model?.addNewSupport()} disabled={isLocked} iconImage={{ src: '/supports.png', alt: 'Supports', size: 15 }} />
             </RibbonPanel>
             <RibbonPanel label="Modify">
               <RibbonButton title="Draw" label="Draw" onClick={() => open('draw')} disabled={isLocked} iconImage={{ src: '/pencil.png', alt: 'Draw', size: 15 }} />
@@ -543,8 +539,6 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       <Docs open={dialogs.docs} onClose={close} />
       <AddOrEditSection open={dialogs.sections} onClose={close} section={null} />
       <AddOrEditMaterial open={dialogs.materials} onClose={close} selectedMaterial={null} />
-      <AddOrEditLoad open={dialogs.loads} onClose={close} selectedLoad={null} />
-      <AddOrEditBoundaryCondition open={dialogs.supports} onClose={close} selectedBoundaryCondition={null} />
       <Copy open={dialogs.copy} onClose={close} />
       <WarehouseWizard open={dialogs.warehouseWizard} onClose={close} />
       <AnalysisProgress 

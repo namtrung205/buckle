@@ -18,9 +18,7 @@ import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
 import AddOrEditNode from '../Model/Nodes/AddOrEdit';
 import AddOrEditSection from '../Model/Sections/AddOrEdit'
-import AddOrEditLoad from '../Model/Loads'
 import AddOrEditMember from '../Model/Members/AddOrEdit';
-import AddOrEditBoundaryCondition from '../Model/BoundaryConditions';
 import Node from '../../model/Elements/Node/Node';
 import { Load } from '../../model';
 import { ElasticIsotropicMaterial, Section as SectionType } from '../../types';
@@ -150,14 +148,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
   const [addOrEditMaterial, setAddOrEditMaterial] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState<ElasticIsotropicMaterial | null>(null);
 
-  const [addOrEditLoad, setAddOrEditLoad] = useState(false);
-  const [selectedLoad, setSelectedLoad] = useState<Load | null>(null);
-
   const [addOrEditMember, setAddOrEditMember] = useState(false);
   const [selectedMember, setSelectedMember] = useState<ElasticBeamColumn | null>(null);
-
-  const [addOrEditBoundaryCondition, setAddOrEditBoundaryCondition] = useState(false);
-  const [selectedBoundaryCondition, setSelectedBoundaryCondition] = useState<BoundaryCondition | null>(null);
 
   
 
@@ -321,8 +313,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           icon={<NodesIcon sx={{ fontSize: 20 }} />}
           disabled={isLocked}
           onAdd={() => {
-            setSelectedNode(null);
-            setAddOrEditNode(true);
+            model.addNewNode();
           }}
         >
           {model?.nodes?.slice(0, 50).map((node: Node) => (
@@ -454,8 +445,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           icon={<BoundaryConditionsIcon sx={{ fontSize: 20 }} />}
           disabled={isLocked}
           onAdd={() => {
-            setSelectedBoundaryCondition(null);
-            setAddOrEditBoundaryCondition(true);
+            model.addNewSupport();
           }}
         >
           {model?.boundaryConditions?.map((bc: BoundaryCondition) => (
@@ -484,8 +474,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setSelectedBoundaryCondition(bc);
-                    setAddOrEditBoundaryCondition(true);
+                    model.focusBoundaryCondition(bc.id);
                   }}
                   sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -518,8 +507,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           icon={<LoadsIcon sx={{ fontSize: 20 }} />}
           disabled={isLocked}
           onAdd={() => {
-            setSelectedLoad(null);
-            setAddOrEditLoad(true);
+            model.addNewLoad();
           }}
         >
           {model?.loads?.map((load: Load) => (
@@ -547,10 +535,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                   size="small"
                     disabled={isLocked}
                   onClick={(e) => {
-                    console.log('load to edit', load)
                     e.stopPropagation();
-                    setSelectedLoad(load)
-                    setAddOrEditLoad(true)
+                    model.focusLoad(load.id)
                   }}
                   sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -595,15 +581,6 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
         selectedMaterial={selectedMaterial}
       />
 
-      <AddOrEditLoad
-        open={addOrEditLoad}
-        onClose={() => {
-          setAddOrEditLoad(false);
-          setSelectedLoad(null);
-        }}
-        selectedLoad={selectedLoad}
-      />
-
       <AddOrEditMember
         open={addOrEditMember}
         onClose={() => {
@@ -611,15 +588,6 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           setSelectedMember(null);
         }}
         selectedMember={selectedMember}
-      />
-
-      <AddOrEditBoundaryCondition
-        open={addOrEditBoundaryCondition}
-        onClose={() => {
-          setAddOrEditBoundaryCondition(false);
-          setSelectedBoundaryCondition(null);
-        }}
-        selectedBoundaryCondition={selectedBoundaryCondition}
       />
     </Box>
   );

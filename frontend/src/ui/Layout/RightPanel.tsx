@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { Box, IconButton, Typography, Chip, Checkbox, FormControlLabel } from '@mui/material';
+import { Box, IconButton, Typography, Chip, Checkbox, FormControlLabel, Tabs, Tab } from '@mui/material';
 import * as THREE from 'three';
 import {
   Close as CloseIcon,
@@ -9,12 +9,15 @@ import {
   Room as NodeIcon,
   Lock as SupportIcon,
   TrendingDown as LoadIcon,
+  BarChart as ResultsIcon,
 } from '@mui/icons-material';
 import { colors } from '../../theme';
 import { useModel } from '../../model/Context';
 import PropertyRow from '../Model/PropertyRow';
 import SectionChanger from '../Model/Sections/SectionChanger';
 import MaterialPresetSelector from '../Model/Materials/MaterialPresetSelector';
+import Reactions from '../Results/Components/Reactions/Reactions';
+import Diagrams from '../Results/Components/Diagrams/Diagrams';
 import { Section } from '../../types';
 import Select from '../../components/Select';
 import TextField from '../../components/TextField/TextField';
@@ -109,7 +112,20 @@ const RightPanel = observer(() => {
 
   const section: Section | null = member?.section ?? null;
 
-  if (!model?.rightPanelOpen || !model?.hasFocus()) return null;
+  // Results mode: the ribbon "Results" / "Reactions" buttons open this same dock.
+  const isResults = model?.activeDialog === 'results' || model?.activeDialog === 'reactions';
+  // Results tab follows the ribbon button that opened it (Reactions vs Forces).
+  const [resultsTab, setResultsTab] = useState<number>(model?.activeDialog === 'reactions' ? 0 : 1);
+
+  // Re-sync the initial tab when switching between the two ribbon buttons while
+  // the dock stays mounted (Results → Forces, Reactions → Reactions).
+  React.useEffect(() => {
+    if (model?.activeDialog === 'reactions') setResultsTab(0);
+    else if (model?.activeDialog === 'results') setResultsTab(1);
+  }, [model?.activeDialog]);
+
+  if (!model?.rightPanelOpen) return null;
+  if (!isResults && !model?.hasFocus()) return null;
 
   const sectionOptions = model.sections.map((s) => ({ id: s.id, name: s.name }));
   const materialOptions = model.materials.map((m) => ({ id: m.id, name: m.name }));
@@ -118,10 +134,16 @@ const RightPanel = observer(() => {
   /* ── header title + icon per entity type ──────────────────────────────── */
   let title = 'Properties';
   let icon: React.ReactNode = null;
-  if (member) { title = 'Member properties'; icon = <MemberIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
+  if (isResults) { title = 'Results'; icon = <ResultsIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
+  else if (member) { title = 'Member properties'; icon = <MemberIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (node) { title = 'Node properties'; icon = <NodeIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (support) { title = 'Support properties'; icon = <SupportIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (load) { title = 'Load properties'; icon = <LoadIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
+
+  const closePanel = () => {
+    if (isResults) model.closeDialog();
+    else model.clearFocus();
+  };
 
   /* ── member helpers ───────────────────────────────────────────────────── */
   const reassignSection = (secId: number) => {
@@ -302,7 +324,7 @@ const RightPanel = observer(() => {
             {icon}
             {title}
           </Typography>
-          <IconButton size="small" onClick={() => model.clearFocus()}
+          <IconButton size="small" onClick={closePanel}
             sx={{ color: colors.textDim, '&:hover': { color: colors.text, backgroundColor: colors.hover } }}>
             <CloseIcon fontSize="small" />
           </IconButton>
@@ -310,6 +332,34 @@ const RightPanel = observer(() => {
 
         {/* body */}
         <Box sx={{ flex: 1, overflowY: 'auto', px: 1.5, py: 1, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+          {isResults ? (
+            <>
+              {/* Results tabs (Reactions / Forces / Deformation) */}
+              <Tabs
+                value={resultsTab}
+                onChange={(_e, value) => setResultsTab(value as number)}
+                variant="fullWidth"
+                sx={{
+                  minHeight: 36,
+                  flexShrink: 0,
+                  mb: 1.5,
+                  borderBottom: `1px solid ${colors.border}`,
+                  '& .MuiTab-root': { minHeight: 36, fontSize: '0.72rem', textTransform: 'none', fontWeight: 600, color: colors.textFaint, '&.Mui-selected': { color: colors.accentSoft } },
+                  '& .MuiTabs-indicator': { backgroundColor: colors.accent, height: 2 },
+                }}
+              >
+                <Tab label="Reactions" />
+                <Tab label="Forces" />
+                <Tab label="Deformation" />
+              </Tabs>
+              <Box sx={{ flex: 1, overflowY: 'auto' }}>
+                {resultsTab === 0 && <Reactions />}
+                {resultsTab === 1 && <Diagrams variant="forces" />}
+                {resultsTab === 2 && <Diagrams variant="deformation" />}
+              </Box>
+            </>
+          ) : (
+          <>
           {/* entity label row + delete */}
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
             <Typography sx={{ fontSize: '0.9rem', fontWeight: 600, color: colors.text }}>{entityLabel}</Typography>
@@ -469,18 +519,22 @@ const RightPanel = observer(() => {
               </Box>
             </>
           )}
+          </>
+          )}
         </Box>
 
         {/* context help strip */}
         <Box sx={{ px: 1.5, py: 0.75, borderTop: `1px solid ${colors.divider}` }}>
           <Typography sx={{ fontSize: '0.68rem', color: colors.textFaint, lineHeight: 1.4 }}>
-            {member
-              ? '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.'
-              : support
-                ? 'Checked DOF = restrained. Pick a preset (Fixed/Pinned/Roller) or toggle for a custom support.'
-                : load
-                  ? 'Choose load type, direction and magnitude. Targets are shown as chips.'
-                  : 'Edit the node name and its coordinates.'}
+            {isResults
+              ? 'Reactions, internal force diagrams and deflected shape for the last analysis.'
+              : member
+                ? '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.'
+                : support
+                  ? 'Checked DOF = restrained. Pick a preset (Fixed/Pinned/Roller) or toggle for a custom support.'
+                  : load
+                    ? 'Choose load type, direction and magnitude. Targets are shown as chips.'
+                    : 'Edit the node name and its coordinates.'}
           </Typography>
         </Box>
       </Box>

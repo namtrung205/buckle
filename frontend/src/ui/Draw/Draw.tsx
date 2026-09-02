@@ -188,9 +188,6 @@ const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: El
       }}
       maxWidth="sm"
       fullWidth={false}
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
       draggable
       title={'New member'}
     >

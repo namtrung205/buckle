@@ -121,14 +121,14 @@ export class Model {
   /** Focus an entity in the right dock (member or node, by id). */
   focusMember = (id: number | null) => {
     this.selectedMemberId = id;
-    if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; }
+    if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
 
   focusNode = (id: number | null) => {
     this.selectedNodeId = id;
-    if (id != null) { this.selectedMemberId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; }
+    if (id != null) { this.selectedMemberId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
@@ -136,7 +136,7 @@ export class Model {
   /** Focus a support / boundary condition in the right dock, by id. */
   focusBoundaryCondition = (id: number | null) => {
     this.selectedBoundaryConditionId = id;
-    if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedLoadId = null; }
+    if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedLoadId = null; this.exitResults(); }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
@@ -144,9 +144,14 @@ export class Model {
   /** Focus a load in the right dock, by id. */
   focusLoad = (id: number | null) => {
     this.selectedLoadId = id;
-    if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedBoundaryConditionId = null; }
+    if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.exitResults(); }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
+  };
+
+  /** Leave the results dock mode when an entity takes focus (returns to Properties). */
+  private exitResults = () => {
+    if (this.activeDialog === 'results' || this.activeDialog === 'reactions') this.activeDialog = null;
   };
 
   /** True when any entity is focused for right-dock editing. */
@@ -186,6 +191,46 @@ export class Model {
         this.focusLoad(numeric);
       }
     } else if (ud.id != null) this.focusMember(ud.id);
+  };
+
+  /**
+   * Create a default entity and focus it in the right dock for inline editing.
+   * These replace the old floating "New X" dialogs: the entity is instantiated
+   * with sensible defaults and the dock takes over for the remaining inputs.
+   */
+
+  /** Create a blank nodal load (no targets, zero magnitude) and focus it. */
+  addNewLoad = () => {
+    const load = new Load(this, {
+      id: Math.floor(Math.random() * 0x7fffffff),
+      name: `Load ${this.loads.length + 1}`,
+      type: 'nodal',
+      targets: [],
+      value: new THREE.Vector3(0, 0, 0),
+    } as any);
+    load.createOrUpdate();
+    this.focusLoad(load.id);
+  };
+
+  /** Create a fixed support with no targets yet, then focus it. */
+  addNewSupport = () => {
+    const bc = new BoundaryCondition(this, {
+      id: Math.floor(Math.random() * 0x7fffffff),
+      name: `Support ${this.boundaryConditions.length + 1}`,
+      type: 'fixed',
+      targets: [],
+    } as any);
+    bc.createOrUpdate();
+    this.focusBoundaryCondition(bc.id);
+  };
+
+  /** Create a node at the origin and focus it. */
+  addNewNode = () => {
+    const node = new Node(new THREE.Vector3(0, 0, 0), undefined);
+    node.model = this;
+    node.create();
+    this.nodes.push(node);
+    this.focusNode(node.id);
   };
   // Active bottom-bar navigation tool (select / zoom / pan / orbit)
   navTool: NavTool = 'select';

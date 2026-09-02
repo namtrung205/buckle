@@ -86,10 +86,6 @@ const Settings = ({open, onClose}) => {
       maxWidth="xs"
       fullWidth={false}
       draggable
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
-      disableRestoreFocus
       title='Settings'
     >
       <Box sx={{ mb: 2, width: '250px' }}>

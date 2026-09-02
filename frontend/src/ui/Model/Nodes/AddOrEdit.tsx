@@ -115,9 +115,6 @@ const AddOrEdit = observer(({ open, onClose, selectedNode }: NodesProps) => {
       onClose={onClose}
       maxWidth="xs"
       fullWidth={false}
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
       draggable
       title={selectedNode ? 'Edit Node' : 'Add Node'}
       actions={actions}

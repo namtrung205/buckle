@@ -1,4 +1,4 @@
-import { ReactNode, useState, useEffect } from 'react';
+import { ReactNode, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { Box } from '@mui/material';
 import { colors } from '../../theme';
@@ -6,7 +6,6 @@ import { useModel } from '../../model/Context';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
 import RightPanel from './RightPanel';
-import ResultPanel from '../Results/ResultPanel';
 import BottomBar from '../BottomBar';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
@@ -59,17 +58,12 @@ const Layout = observer(({ children }: LayoutProps) => {
         >
           {children}
 
-          {/* Results dock panel (Reactions / Forces / Deformation tabs) */}
-          {(model?.activeDialog === 'results' || model?.activeDialog === 'reactions') && (
-            <ResultPanel onClose={() => model.closeDialog()} />
-          )}
-
           {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
           <BottomBar />
         </Box>
 
-        {/* Right dock panel — inline property editing for the focused entity */}
-        {model?.hasFocus() && <RightPanel />}
+        {/* Right dock panel — inline properties for the focused entity, or Results */}
+        {(model?.hasFocus() || model?.activeDialog === 'results' || model?.activeDialog === 'reactions') && <RightPanel />}
       </Box>
 
       {/* Bottom Status Bar */}
