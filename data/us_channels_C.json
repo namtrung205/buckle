@@ -1,0 +1,40 @@
+{
+  "_meta": {
+    "description": "American standard channels C, dimensions",
+    "source": "AISC Steel Construction Manual (16th ed.) C shapes",
+    "units": "mm",
+    "fields": { "name": "designation (depth in x weight lb/ft)", "h": "depth d", "b": "flange width bf", "tw": "web thickness", "tf": "average flange thickness", "r": "approx. fillet/toe radius (k - tf, estimate)" },
+    "note": "American standard channels have tapered flanges (16-2/3% slope); tf is average flange thickness. r is an approximate fillet radius for modelling."
+  },
+  "US_CHANNELS_C": [
+    {"name":"C3X4.1","h":76.2,"b":35.8,"tw":4.3,"tf":6.9,"r":11},
+    {"name":"C3X5","h":76.2,"b":38.1,"tw":6.6,"tf":6.9,"r":11},
+    {"name":"C3X6","h":76.2,"b":40.5,"tw":9.1,"tf":6.9,"r":11},
+    {"name":"C4X5.4","h":101.6,"b":40.2,"tw":4.7,"tf":7.5,"r":12},
+    {"name":"C4X7.25","h":101.6,"b":43.7,"tw":8.2,"tf":7.5,"r":12},
+    {"name":"C5X6.7","h":127.0,"b":44.5,"tw":4.8,"tf":8.1,"r":13},
+    {"name":"C5X9","h":127.0,"b":47.9,"tw":8.3,"tf":8.1,"r":13},
+    {"name":"C6X8.2","h":152.4,"b":48.8,"tw":5.1,"tf":8.7,"r":13},
+    {"name":"C6X10.5","h":152.4,"b":51.6,"tw":8.0,"tf":8.7,"r":13},
+    {"name":"C6X13","h":152.4,"b":54.9,"tw":11.1,"tf":8.7,"r":13},
+    {"name":"C7X9.8","h":177.8,"b":53.1,"tw":5.3,"tf":9.3,"r":14},
+    {"name":"C7X12.25","h":177.8,"b":55.6,"tw":7.5,"tf":9.3,"r":14},
+    {"name":"C7X14.75","h":177.8,"b":58.4,"tw":10.4,"tf":9.3,"r":14},
+    {"name":"C8X11.5","h":203.2,"b":57.4,"tw":5.6,"tf":9.9,"r":14},
+    {"name":"C8X13.75","h":203.2,"b":59.4,"tw":7.7,"tf":9.9,"r":14},
+    {"name":"C8X18.75","h":203.2,"b":64.3,"tw":12.4,"tf":9.9,"r":14},
+    {"name":"C9X13.4","h":228.6,"b":61.0,"tw":5.9,"tf":10.5,"r":15},
+    {"name":"C9X15","h":228.6,"b":61.7,"tw":7.2,"tf":10.5,"r":15},
+    {"name":"C9X20","h":228.6,"b":64.8,"tw":11.4,"tf":10.5,"r":15},
+    {"name":"C10X15.3","h":254.0,"b":65.0,"tw":6.1,"tf":11.1,"r":15},
+    {"name":"C10X20","h":254.0,"b":69.6,"tw":9.6,"tf":11.1,"r":15},
+    {"name":"C10X25","h":254.0,"b":73.4,"tw":13.4,"tf":11.1,"r":15},
+    {"name":"C10X30","h":254.0,"b":77.0,"tw":17.1,"tf":11.1,"r":15},
+    {"name":"C12X20.7","h":304.8,"b":74.7,"tw":7.2,"tf":12.7,"r":16},
+    {"name":"C12X25","h":304.8,"b":77.5,"tw":9.8,"tf":12.7,"r":16},
+    {"name":"C12X30","h":304.8,"b":80.5,"tw":13.0,"tf":12.7,"r":16},
+    {"name":"C15X33.9","h":381.0,"b":86.4,"tw":10.2,"tf":16.5,"r":18},
+    {"name":"C15X40","h":381.0,"b":89.4,"tw":13.2,"tf":16.5,"r":18},
+    {"name":"C15X50","h":381.0,"b":94.5,"tw":18.2,"tf":16.5,"r":18}
+  ]
+}

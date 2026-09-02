@@ -112,6 +112,18 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             areaMm2 = Math.PI * r * r;
             break;
         }
+        case 'RectangularHollow':
+            areaMm2 = section.width * section.height - (section.width - 2 * section.thickness) * (section.height - 2 * section.thickness);
+            break;
+        case 'Channel':
+            areaMm2 = 2 * section.width * section.tf + (section.depth - 2 * section.tf) * section.tw;
+            break;
+        case 'Tee':
+            areaMm2 = section.width * section.tf + (section.depth - section.tf) * section.tw;
+            break;
+        case 'Angle':
+            areaMm2 = section.width * section.thickness * 2 - section.thickness * section.thickness;
+            break;
     }
     return areaMm2 * 1e-6; // Convert mm2 to m2
   };

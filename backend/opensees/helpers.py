@@ -1,64 +1,149 @@
+"""
+Helpers for structural model construction (section properties, geometry).
+"""
 import math
-from typing import Dict, Union
-from .sections import ISection, HollowCircularSection, RectangularSection
+from typing import Dict
+
+from .sections import properties as sp
+from .materials import resolve_elastic_moduli
 
 mm = 1E-3
-def compute_section_properties(section: Dict) -> Dict[str, float]:
-    type = section["type"]
-    material = section['material']
-    E = material['E']
-    nu = material['nu']
-    G_mod = E / (2 * (1 + nu))  # Shear modulus
 
-    if type == "Rectangular":
+
+# Aliases that section type strings can take in the JSON payload.
+_TYPE_ALIASES = {
+    "rectangular": "rectangular",
+    "rectangle": "rectangular",
+    "rect": "rectangular",
+    "circular": "circular",
+    "circle": "circular",
+    "solidcircular": "circular",
+    "hollowcircular": "hollow_circular",
+    "circularhollow": "hollow_circular",
+    "pipe": "hollow_circular",
+    "chs": "hollow_circular",
+    "i": "i",
+    "isection": "i",
+    "h": "i",
+    "hsection": "i",
+    "w": "i",
+    "wshape": "i",
+    "he": "i",
+    "ipe": "i",
+    "rectangularhollow": "rectangular_hollow",
+    "box": "rectangular_hollow",
+    "squarehollow": "rectangular_hollow",
+    "rhs": "rectangular_hollow",
+    "shs": "rectangular_hollow",
+    "hss": "rectangular_hollow",
+    "channel": "channel",
+    "c": "channel",
+    "upn": "channel",
+    "upe": "channel",
+    "angle": "angle",
+    "l": "angle",
+    "tee": "tee",
+    "t": "tee",
+    "tsection": "tee",
+    "t_section": "tee",
+}
+
+
+def _canonical_type(type_str: str) -> str:
+    return _TYPE_ALIASES.get((type_str or "").lower(), (type_str or "").lower())
+
+
+def compute_section_properties(section: Dict) -> Dict[str, float]:
+    """
+    Compute the section properties for an elastic beam-column section.
+
+    The section dict must carry a ``type`` and a ``material`` dict (either
+    full elastic constants or a library ``preset`` key). Dimensions are in
+    millimetres in the schema and converted to metres here.
+
+    Returns a dict with keys: E, G_mod, nu, rho, A, Iz, Iy, Jxx, Sy, Sz, ry, rz.
+    """
+    kind = _canonical_type(section["type"])
+    material = section.get("material") or {}
+    mat = resolve_elastic_moduli(material)
+    E = mat["E"]
+    G_mod = mat["G"]
+
+    # ---- dispatch to analytic formulas (dimensions in m) ----
+    if kind == "rectangular":
         b = section["width"] * mm
         h = section["height"] * mm
-        rectangular_section = RectangularSection(b, h)
-        A, Iz, Iy, Jxx = rectangular_section.geometric_properties()
-
-    elif type == "Circular":
-        d = section["diameter"]
-        A = math.pi * (d**2) / 4
-        Iz = Iy = (math.pi * d**4) / 64
-        Jxx = (math.pi * d**4) / 32
-
-    elif type == "HollowCircular":
+        p = sp.rectangular(b, h)
+    elif kind == "circular":
+        d = section["diameter"] * mm
+        p = sp.circular(d)
+    elif kind == "hollow_circular":
         d = section["diameter"] * mm
         t = section["thickness"] * mm
-        hollow_circular_section = HollowCircularSection(d,t)
-        A, Iz, Iy, Jxx = hollow_circular_section.geometric_properties()
-    elif type == "I":
-        h = section['depth'] * mm
-        b = section['width'] * mm
-        t_w = section['tw'] * mm
-        t_f = section['tf'] * mm
-        i_section = ISection(h, b, t_f, t_w )
-        A, Iz, Iy, Jxx = i_section.geometric_properties()
-        
+        p = sp.hollow_circular(d, t)
+    elif kind == "i":
+        h = section["depth"] * mm
+        b = section["width"] * mm
+        tf = section["tf"] * mm
+        tw = section["tw"] * mm
+        r = section.get("r", 0.0) * mm
+        p = sp.i_section(h, b, tf, tw, r)
+    elif kind == "rectangular_hollow":
+        h = section["height"] * mm
+        b = section["width"] * mm
+        t = section["thickness"] * mm
+        if "height" not in section and "depth" in section:
+            h = section["depth"] * mm
+        ri = (section.get("ri") or section.get("r", 0.0)) * mm
+        p = sp.rectangular_hollow(h, b, t, ri)
+    elif kind == "channel":
+        h = section["depth"] * mm
+        b = section["width"] * mm
+        tf = section["tf"] * mm
+        tw = section["tw"] * mm
+        r = section.get("r", 0.0) * mm
+        p = sp.channel(h, b, tf, tw, r)
+    elif kind == "angle":
+        b = section["width"] * mm
+        t = section["thickness"] * mm
+        p = sp.angle(b, t)
+    elif kind == "tee":
+        h = section["depth"] * mm
+        b = section["width"] * mm
+        tf = section["tf"] * mm
+        tw = section["tw"] * mm
+        r = section.get("r", 0.0) * mm
+        p = sp.tee(h, b, tf, tw, r)
     else:
-        raise ValueError(f"Unknown section type: {type}")
+        raise ValueError(f"Unknown section type: {section.get('type')}")
 
     return {
         "E": E,
         "G_mod": G_mod,
-        "A": A,
-        "Iz": Iz,
-        "Iy": Iy,
-        "Jxx": Jxx
+        "nu": mat["nu"],
+        "rho": mat["rho"],
+        "A": p.A,
+        "Iy": p.Iy,
+        "Iz": p.Iz,
+        "Jxx": p.J,
+        "Sy": p.Sy,
+        "Sz": p.Sz,
+        "ry": p.ry,
+        "rz": p.rz,
     }
 
 
 def distance_between_points(point1: tuple, point2: tuple) -> float:
     """
     Calculate the Euclidean distance between two points in 3D space.
-    
+
     Args:
         point1: Tuple of (x, y, z) coordinates for the first point
         point2: Tuple of (x, y, z) coordinates for the second point
-    
+
     Returns:
         float: The distance between the two points
     """
     x1, y1, z1 = point1
     x2, y2, z2 = point2
-    return math.sqrt((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)
+    return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2 + (z2 - z1) ** 2)

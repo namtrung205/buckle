@@ -40,6 +40,8 @@ const Materials = observer(({}: MaterialsProps) => {
   const rows: GridRowsProp = model?.materials.map((material) => ({
     id: material.id,
     name: material.name || '',
+    category: material.category || '',
+    grade: material.grade || '',
     E: material.E,
     nu: material.nu,
     rho: material.rho || 0,
@@ -106,6 +108,18 @@ const Materials = observer(({}: MaterialsProps) => {
       width: 150,
       flex: 1,
       editable: true,
+    },
+    {
+      field: 'category',
+      headerName: 'Category',
+      width: 110,
+      editable: false,
+    },
+    {
+      field: 'grade',
+      headerName: 'Grade',
+      width: 110,
+      editable: false,
     },
     {
       field: 'E',
