@@ -81,6 +81,76 @@ export class Model {
   activeDialog: string | null = null;
   // Results lock: true after a successful analysis — model editing is disabled until unlocked
   isLocked: boolean = false;
+  // Right dock panel state: which entity is being edited inline, and whether the
+  // dock is open. These are observable so the dock and any trigger stay in sync.
+  rightPanelOpen = true;
+  selectedMemberId: number | null = null;
+  selectedNodeId: number | null = null;
+  selectedMemberDialogs = {
+    section: false,
+    material: false,
+  };
+
+  // Right dock width (px) — kept in sync with RightPanel.tsx so the viewport
+  // gizmo (ViewCube) can be shifted clear of the dock when it is visible.
+  static readonly RIGHT_PANEL_WIDTH = 332;
+  private static readonly GIZMO_RIGHT_BASE = 60;
+  private static readonly GIZMO_BOTTOM = 80;
+  // Canonical ViewCube options; replayed whole on reposition so `ViewportGizmo.set`
+  // (which REPLACES options rather than merging) keeps cube/placement/size intact.
+  private gizmoOptions = {
+    type: "cube" as const,
+    placement: "bottom-right" as const,
+    size: 100,
+    offset: { right: Model.GIZMO_RIGHT_BASE, bottom: Model.GIZMO_BOTTOM },
+  };
+
+  /** Reposition the ViewCube so it is never hidden behind the right dock. */
+  private updateGizmoOffset = () => {
+    if (!this.gizmo) return;
+    const dockOpen = this.rightPanelOpen && (this.selectedMemberId != null || this.selectedNodeId != null);
+    const right = Model.GIZMO_RIGHT_BASE + (dockOpen ? Model.RIGHT_PANEL_WIDTH : 0);
+    if (right !== this.gizmoOptions.offset.right) {
+      this.gizmoOptions.offset.right = right;
+      this.gizmo.set({ ...this.gizmoOptions, offset: { ...this.gizmoOptions.offset } });
+    }
+  };
+
+  /** Focus an entity in the right dock (member or node, by id). */
+  focusMember = (id: number | null) => {
+    this.selectedMemberId = id;
+    if (id != null) this.selectedNodeId = null;
+    this.rightPanelOpen = true;
+    this.updateGizmoOffset();
+  };
+
+  focusNode = (id: number | null) => {
+    this.selectedNodeId = id;
+    if (id != null) this.selectedMemberId = null;
+    this.rightPanelOpen = true;
+    this.updateGizmoOffset();
+  };
+
+  /** Clear the focused entity (closes the right dock). */
+  clearFocus = () => {
+    this.selectedMemberId = null;
+    this.selectedNodeId = null;
+    this.updateGizmoOffset();
+  };
+
+  /** Resolve a viewport-picked mesh → its owning member/node id and focus it. */
+  focusFromSelection = () => {
+    const sel = this.selector.selected?.[this.selector.selected.length - 1];
+    if (!sel) return;
+    let obj: THREE.Object3D = sel.object;
+    // climb to the typed group carrying the entity id (member group / node mesh)
+    if (obj.parent instanceof THREE.Group && (obj.parent.userData as any)?.id != null) {
+      obj = obj.parent;
+    }
+    const ud = (obj.userData || {}) as any;
+    if (ud.type === 'node' && ud.id != null) this.focusNode(ud.id);
+    else if (ud.id != null) this.focusMember(ud.id);
+  };
   // Active bottom-bar navigation tool (select / zoom / pan / orbit)
   navTool: NavTool = 'select';
   // Zoom navigation tool handling fit / window / drag modes
@@ -247,15 +317,7 @@ export class Model {
     this.gizmo = new ViewportGizmo(
       this.camera.cam, 
       this.renderer, 
-      { 
-        type: "cube", // Autodesk ViewCube style — clickable faces / edges / corners
-        placement: "bottom-right", 
-        size: 100,
-        offset :{
-          right: 60,
-          bottom: 80,
-        },
-      }
+      this.gizmoOptions,
     )
     this.gizmo.attachControls(this.camera.controls);
     this.nodes = []

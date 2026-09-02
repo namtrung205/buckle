@@ -1,10 +1,11 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useState, useEffect } from 'react';
 import { observer } from 'mobx-react-lite';
 import { Box } from '@mui/material';
 import { colors } from '../../theme';
 import { useModel } from '../../model/Context';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
+import RightPanel from './RightPanel';
 import ResultPanel from '../Results/ResultPanel';
 import BottomBar from '../BottomBar';
 import StatusBar from './StatusBar';
@@ -66,6 +67,9 @@ const Layout = observer(({ children }: LayoutProps) => {
           {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
           <BottomBar />
         </Box>
+
+        {/* Right dock panel — inline property editing for the focused entity */}
+        {(model?.selectedMemberId != null || model?.selectedNodeId != null) && <RightPanel />}
       </Box>
 
       {/* Bottom Status Bar */}
