@@ -190,6 +190,8 @@ class Selector {
             }
           }
         }
+        // Surface the freshly picked object into the right dock panel.
+        this.model.focusFromSelection();
       }
     }
 
