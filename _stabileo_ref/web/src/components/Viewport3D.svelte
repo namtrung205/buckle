@@ -1,0 +1,3046 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { t } from '../lib/i18n';
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  import { modelStore, uiStore, resultsStore, historyStore, dsmStepsStore, verificationStore } from '../lib/store';
+  import { boxSelect as boxSelectTargets, type BoxSelectMode } from '../lib/viewport/box-select';
+  import PointerModeButton from './PointerModeButton.svelte';
+  import Icon from './ribbon/Icon.svelte';
+  import { COLORS, setGroupColor, findUserData, disposeObject, createTextSprite } from '../lib/three/selection-helpers';
+  import { paintShell, paintShellEdge, restoreShellColor } from '../lib/three/create-shell-mesh';
+  import ShellContourLegend from './viewport/ShellContourLegend.svelte';
+  import { NodesInstanced } from '../lib/three/nodes-instanced';
+  import { ElementsBatched } from '../lib/three/elements-batched';
+  import { ElementsPicking } from '../lib/three/elements-picking';
+  import { fatLineResolution } from '../lib/three/create-element-mesh';
+  import { resolveHitUserData } from '../lib/viewport3d/picking';
+  import { evaluateDiagramAt, formatDiagramValue3D, type Diagram3DKind } from '../lib/engine/diagrams-3d';
+  import { getGroundIntersection as _getGroundIntersection, findNodeHit as _findNodeHit, findElementHit as _findElementHit, segmentIntersectsRect2D } from '../lib/viewport3d/picking';
+  import { getModelBounds as _getModelBounds, zoomToFit as _zoomToFit, setView as _setView, handleResize as _handleResize, syncOrthoFrustum as _syncOrthoFrustum } from '../lib/viewport3d/camera';
+  import { planeNormal, projectNodeToScene, setCameraUp, shouldProjectModelToXZ, GLOBAL_X, GLOBAL_Y, GLOBAL_Z } from '../lib/geometry/coordinate-system';
+  import { updateGrid as _updateGrid, createFatAxes as _createFatAxes, addAxisLabels as _addAxisLabels } from '../lib/viewport3d/grid';
+  import { syncNodes as _syncNodes, syncElements as _syncElements, syncSupports as _syncSupports, syncLoads as _syncLoads, syncShells as _syncShells, syncSelection as _syncSelection, syncLocalAxes as _syncLocalAxes, syncMemberOffsets as _syncMemberOffsets, syncShellOffsets as _syncShellOffsets, applyElementVisibility, type SceneSyncContext } from '../lib/viewport3d/scene-sync';
+  import { syncDeformed as _syncDeformed, syncDiagrams3D as _syncDiagrams3D, syncColorMap3D as _syncColorMap3D, syncVerificationLabels as _syncVerificationLabels, syncReactions as _syncReactions, syncConstraintForces as _syncConstraintForces, syncLabels3D as _syncLabels3D, syncDespiece3D as _syncDespiece3D, DIAGRAM_3D_TYPES, type ResultsSyncContext } from '../lib/viewport3d/results-sync';
+  import { applyLowDetail, isHeavyModel } from '../lib/viewport3d/lod';
+
+  let container: HTMLDivElement;
+  let renderer: THREE.WebGLRenderer;
+  let scene: THREE.Scene;
+  let camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+  let perspCamera: THREE.PerspectiveCamera;
+  let orthoCamera: THREE.OrthographicCamera;
+  let controls: OrbitControls;
+  let animFrameId: number;
+  let initialized = false;
+
+  // ─── Invalidation-based rendering ───────────────────────────
+  // Declared here so $effect blocks can call invalidate() from outside onMount.
+  // The actual implementation is assigned inside onMount once the renderer exists.
+  let invalidate: () => void = () => {};
+  // Restore idle render quality (pixel ratio + full detail) and re-render.
+  // Used when a box-select starts: OrbitControls 'start' fires on pointer-down
+  // and drops pixelRatio/low-detail assuming an orbit, but a box-select then
+  // disables controls and never moves the camera — so nothing re-renders and the
+  // resized (cleared) WebGL buffer would otherwise show dark until mouseup.
+  let exitOrbitLOD: () => void = () => {};
+
+  // ─── Scene graph maps (reconciled with store) ────────────────
+  let nodesInstanced = new NodesInstanced();
+  let elementsBatched = new ElementsBatched();
+  let elementsPicking = new ElementsPicking();
+  let elementGroups = new Map<number, THREE.Group>();
+  let supportGizmos = new Map<number, THREE.Group>();
+  let deformedGroup: THREE.Group | null = null;
+  // Despiece (free-body) one-shot pull-apart animation: timestamp the run start.
+  let despieceStart = 0;
+  const DESPIECE_ANIM_MS = 700;
+  let gridGroup: THREE.Object3D | null = null;
+  let measureGroup: THREE.Group | null = null;
+  let axesHelper: THREE.Group | null = null;
+  let axisLabelSprites: THREE.Sprite[] = [];
+
+  // Dedicated parent groups for raycasting scoping
+  let nodesParent: THREE.Group;
+  let elementsParent: THREE.Group;
+  let supportsParent: THREE.Group;
+  let loadsParent: THREE.Group;
+  let resultsParent: THREE.Group;
+  let shellsParent: THREE.Group;
+  let localAxesParent: THREE.Group;
+
+  // ─── Clipping plane ─────────────────────────────────────────
+  const clippingPlane = new THREE.Plane(planeNormal('XY').clone().negate(), 0);
+
+  // ─── Raycaster ───────────────────────────────────────────────
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+  let hoveredData: { type: string; id: number } | null = null;
+  let hoveredNodeId3D = $state<number | null>(null);
+  let mouseDownPos = { x: 0, y: 0 };
+  // OrbitControls drag flag: skips per-event hover raycast while the user is
+  // actively rotating/panning/zooming (recursive raycasts on large fixtures
+  // were the dominant cost of mousemove during orbit).
+  let isOrbiting = false;
+  // rAF-coalesced hover raycast: a single most-recent MouseEvent is saved and
+  // processed on the next animation frame, so fast mousemove streams collapse
+  // to one raycast per frame instead of one per event.
+  let pendingHoverEvent: MouseEvent | null = null;
+  let hoverRafId: number | null = null;
+
+  // ─── Box select state ──────────────────────────────────────
+  // Mode to return to when the quick sections toggle is switched off — keeps
+  // a 'solid' preference from Settings instead of always landing on wireframe.
+  let renderModeBeforeSections: 'wireframe' | 'solid' = 'wireframe';
+  let boxSelect3D = $state<{ startX: number; startY: number; endX: number; endY: number; additive: boolean } | null>(null);
+
+  // ─── Node dragging state ───────────────────────────────────
+  let draggedNodeId3D = $state<number | null>(null);
+  let dragMoved3D = false;
+  let dragStartWorld3D: THREE.Vector3 | null = null;
+
+  // ─── Hover tooltip state ─────────────────────────────────────
+  let hoverTooltip = $state<{ text: string; x: number; y: number } | null>(null);
+
+  // ─── Diagram legend (overlay) ────────────────────────────────
+  const DIAGRAM_COLORS: Record<string, string> = {
+    momentZ: '#4488ff',
+    momentY: '#44bbaa',
+    shearY:  '#44bb44',
+    shearZ:  '#66aa66',
+    axial:   '#aa66dd',
+    torsion: '#ee8844',
+    deformed:    '#ff8800',
+    modeShape:   '#4ecdc4',
+    bucklingMode:'#e96941',
+  };
+  const DIAGRAM_LABEL_KEYS: Record<string, string> = {
+    momentZ: 'viewport3d.momentZ',
+    momentY: 'viewport3d.momentY',
+    shearY:  'viewport3d.shearY',
+    shearZ:  'viewport3d.shearZ',
+    axial:   'viewport3d.axial',
+    torsion: 'viewport3d.torsion',
+    deformed:    'viewport3d.deformed',
+    modeShape:   'viewport3d.modeShape',
+    bucklingMode:'viewport3d.bucklingMode',
+  };
+
+  function shouldProject2DModel(): boolean {
+    return shouldProjectModelToXZ({
+      analysisMode: uiStore.analysisMode,
+      viewportPresentation3D: uiStore.viewportPresentation3D,
+      nodes: modelStore.nodes.values(),
+      supports: modelStore.supports.values(),
+      loads: modelStore.loads,
+      plateCount: modelStore.plates.size,
+      quadCount: modelStore.quads.size,
+    });
+  }
+
+  function syncResultsProjection(): void {
+    if (!resultsParent) return;
+    // Results are built in projected scene coordinates (getProjectedNodes handles
+    // the 2D→XZ swap), so no parent-level rotation is needed.
+    resultsParent.position.set(0, 0, 0);
+    resultsParent.rotation.set(0, 0, 0);
+  }
+  const diagramLegend = $derived.by(() => {
+    const dt = resultsStore.diagramType;
+    if (dt === 'none' || dt === 'axialColor' || dt === 'colorMap' || dt === 'verification') return null;
+    const color = DIAGRAM_COLORS[dt];
+    const key = DIAGRAM_LABEL_KEYS[dt];
+    if (!color || !key) return null;
+    return { name: t(key), color };
+  });
+
+  // ─── Tool interaction state ─────────────────────────────────
+  let pendingElementNodeI: number | null = null;  // first node for element tool
+  let pendingLine: THREE.Line | null = null;       // preview line for element tool
+
+  // ─── Coordinate input dialog state ──────────────────────────
+  let showCoordDialog = $state(false);
+  let coordX = $state('0');
+  let coordY = $state('0');
+  let coordZ = $state('0');
+
+  function openCoordDialog() {
+    coordX = '0'; coordY = '0'; coordZ = '0';
+    showCoordDialog = true;
+  }
+
+  function submitCoordDialog() {
+    const x = parseFloat(coordX);
+    const y = parseFloat(coordY);
+    const z = parseFloat(coordZ);
+    if (isNaN(x) || isNaN(y) || isNaN(z)) return;
+    historyStore.pushState();
+    const id = modelStore.addNode(x, y, z);
+    uiStore.selectNode(id, false);
+    uiStore.toast(t('viewport3d.nodeCreatedAt').replace('{id}', String(id)).replace('{x}', String(x)).replace('{y}', String(y)).replace('{z}', String(z)), 'success');
+    showCoordDialog = false;
+  }
+
+  function cancelCoordDialog() {
+    showCoordDialog = false;
+  }
+
+  // Cursor style based on active tool
+  let cursorStyle = $derived.by(() => {
+    if (uiStore.measureMode) return 'crosshair';
+    if (uiStore.selectMode === 'stress') return 'crosshair';
+    const tool = uiStore.currentTool;
+    if (tool === 'select') {
+      if (draggedNodeId3D !== null) return 'grabbing';
+      if (hoveredNodeId3D !== null) return 'grab';
+      return 'default';
+    }
+    if (tool === 'node') return 'crosshair';
+    if (tool === 'element') return 'crosshair';
+    if (tool === 'support') return 'pointer';
+    if (tool === 'load') return 'pointer';
+    if (tool === 'pan') return 'grab';
+    return 'default';
+  });
+
+  onMount(() => {
+    // Scene
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(COLORS.background);
+
+    // Parent groups
+    nodesParent = new THREE.Group();
+    nodesParent.name = 'nodes';
+    nodesParent.add(nodesInstanced.mesh);
+    elementsParent = new THREE.Group();
+    elementsParent.name = 'elements';
+    elementsParent.add(elementsPicking.mesh);
+    supportsParent = new THREE.Group();
+    supportsParent.name = 'supports';
+    loadsParent = new THREE.Group();
+    loadsParent.name = 'loads';
+    resultsParent = new THREE.Group();
+    resultsParent.name = 'results';
+    shellsParent = new THREE.Group();
+    shellsParent.name = 'shells';
+    localAxesParent = new THREE.Group();
+    localAxesParent.name = 'localAxes';
+    // The batched wireframe LineSegments2 lives directly under `scene`, not
+    // inside `elementsParent`, so it stays rendered even when LOD hides the
+    // parent during orbit. One mesh, one draw call, one toggle — no parallel
+    // orbit proxy needed.
+    scene.add(elementsBatched.mesh, elementsParent, nodesParent, supportsParent, loadsParent, resultsParent, shellsParent, localAxesParent);
+    syncResultsProjection();
+
+    // Camera — isometric-ish view looking at origin
+    perspCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+    setCameraUp(perspCamera);
+    perspCamera.position.set(12, 8, 12);
+    perspCamera.lookAt(0, 0, 0);
+
+    // Orthographic camera (frustum updated on resize)
+    orthoCamera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+    setCameraUp(orthoCamera);
+    orthoCamera.position.set(12, 8, 12);
+    orthoCamera.lookAt(0, 0, 0);
+
+    camera = uiStore.cameraMode3D === 'orthographic' ? orthoCamera : perspCamera;
+
+    // Renderer
+    renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.localClippingEnabled = true;
+    container.appendChild(renderer.domElement);
+
+    // Orbit controls
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.1;
+    controls.target.set(0, 0, 0);
+
+    // ── Keyboard camera navigation ──
+    // WASD = pan, Arrows = orbit, Q/E = up/down, Shift/Ctrl = speed boost
+    const keysPressed = new Set<string>();
+    let navShiftHeld = false;
+
+    const onNavKeyDown = (e: KeyboardEvent) => {
+      // Skip when typing in inputs
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (e.key === 'Shift') navShiftHeld = true;
+      const k = e.key.toLowerCase();
+      if ('wasdqe'.includes(k) || e.key.startsWith('Arrow')) {
+        const wasEmpty = keysPressed.size === 0;
+        keysPressed.add(k.startsWith('arrow') ? e.key : k);
+        e.preventDefault();
+        // Start continuous rendering while navigation keys are held
+        if (wasEmpty) invalidate();
+      }
+      // Disable OrbitControls' shift-pan while select tool is active
+      if (e.key === 'Shift' && uiStore.currentTool === 'select') {
+        controls.enablePan = false;
+      }
+    };
+    const onNavKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') navShiftHeld = false;
+      const k = e.key.toLowerCase();
+      keysPressed.delete(k.startsWith('arrow') ? e.key : k);
+      if (e.key === 'Shift') controls.enablePan = true;
+    };
+    window.addEventListener('keydown', onNavKeyDown);
+    window.addEventListener('keyup', onNavKeyUp);
+
+    // Sync camera state to uiStore on orbit change (throttled)
+    let cameraSyncTimer: ReturnType<typeof setTimeout> | null = null;
+    controls.addEventListener('change', () => {
+      invalidate(); // Re-render on orbit/pan/zoom via OrbitControls
+      if (cameraSyncTimer) return; // throttle
+      cameraSyncTimer = setTimeout(() => {
+        cameraSyncTimer = null;
+        const pos = camera.position;
+        const tgt = controls.target;
+        uiStore.cameraPosition3D = { x: pos.x, y: pos.y, z: pos.z };
+        uiStore.cameraTarget3D = { x: tgt.x, y: tgt.y, z: tgt.z };
+      }, 100);
+    });
+
+    // Lighting
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+    const dir1 = new THREE.DirectionalLight(0xffffff, 0.8);
+    dir1.position.set(10, 20, 10);
+    scene.add(dir1);
+    const dir2 = new THREE.DirectionalLight(0xffffff, 0.3);
+    dir2.position.set(-10, 10, -10);
+    scene.add(dir2);
+
+    // Grid (reactive — updated by syncGrid effect)
+    updateGrid();
+
+    // Axes: fat Line2 lines — R=X, G=Y, B=Z
+    axesHelper = createFatAxes();
+    scene.add(axesHelper);
+    addAxisLabels();
+
+    // Handle resize
+    const ro = new ResizeObserver(() => { handleResize(); invalidate(); });
+    ro.observe(container);
+    handleResize();
+
+    // Initialize sync contexts (must be after parent groups are created)
+    initSyncContexts();
+    initialized = true;
+    sceneCtx.initialized = true;
+    resultsCtx.initialized = true;
+
+    // Initial sync
+    syncNodes();
+    syncElements();
+    syncSupports();
+    syncLoads();
+    syncShells();
+
+    // Set initial camera to match model type (flat 2D → front view, 3D → isometric)
+    if (modelStore.nodes.size > 0) zoomToFit();
+
+    // ── Invalidation-based render loop ──
+    // Instead of running requestAnimationFrame every frame, we only render when
+    // the scene is dirty (needsRender=true) or continuous rendering is required
+    // (animations, keyboard navigation, or the user override flag).
+    let needsRender = true;
+    let dampingFrames = 0; // extra frames for OrbitControls damping to settle
+
+    /** Check if any animation is currently active that requires continuous rendering */
+    function isAnimating(): boolean {
+      const dt = resultsStore.diagramType;
+      const animDeformed = resultsStore.animateDeformed && dt === 'deformed' && !!resultsStore.results3D;
+      const animMode = dt === 'modeShape' && !!resultsStore.modalResult3D;
+      const animBuckling = dt === 'bucklingMode' && !!resultsStore.bucklingResult3D;
+      // Despiece is a one-shot pull-apart; keep rendering only while it plays.
+      const animDespiece = dt === 'despiece' && !!resultsStore.results3D
+        && (performance.now() - despieceStart) < DESPIECE_ANIM_MS + 80;
+      return animDeformed || animMode || animBuckling || animDespiece;
+    }
+
+    /** Whether we need to keep the render loop running continuously */
+    function needsContinuous(): boolean {
+      return uiStore.continuousRendering || keysPressed.size > 0 || isAnimating() || dampingFrames > 0;
+    }
+
+    /** Mark the scene as needing a re-render. Schedules a frame if one isn't pending. */
+    function _invalidate() {
+      if (!needsRender) {
+        needsRender = true;
+        animFrameId = requestAnimationFrame(renderOnce);
+      }
+    }
+    // Expose invalidate to the outer scope for use in $effect blocks
+    invalidate = _invalidate;
+
+    const _panVec = new THREE.Vector3();
+    const _orbitSpherical = new THREE.Spherical();
+
+    function handleKeyboardCamera() {
+      if (keysPressed.size === 0) return;
+      const dist = camera.position.distanceTo(controls.target);
+      const boost = navShiftHeld ? 3 : 1;
+      const panSpeed = dist * 0.012 * boost;   // scale with zoom level
+      const orbitSpeed = 0.02 * boost;          // radians per frame
+
+      // WASD — pan relative to camera orientation
+      const forward = _panVec.set(0, 0, 0);
+      if (keysPressed.has('w')) forward.z -= panSpeed;
+      if (keysPressed.has('s')) forward.z += panSpeed;
+      if (keysPressed.has('a')) forward.x -= panSpeed;
+      if (keysPressed.has('d')) forward.x += panSpeed;
+      if (forward.lengthSq() > 0) {
+        // Transform pan vector from camera-local to world space
+        forward.applyQuaternion(camera.quaternion);
+        forward.z = 0; // keep horizontal
+        controls.target.add(forward);
+        camera.position.add(forward);
+      }
+
+      // Q/E — vertical movement
+      if (keysPressed.has('q')) {
+        controls.target.z -= panSpeed;
+        camera.position.z -= panSpeed;
+      }
+      if (keysPressed.has('e')) {
+        controls.target.z += panSpeed;
+        camera.position.z += panSpeed;
+      }
+
+      // Arrow keys — orbit around target
+      _orbitSpherical.setFromVector3(
+        camera.position.clone().sub(controls.target)
+      );
+      if (keysPressed.has('ArrowLeft')) _orbitSpherical.theta -= orbitSpeed;
+      if (keysPressed.has('ArrowRight')) _orbitSpherical.theta += orbitSpeed;
+      if (keysPressed.has('ArrowUp')) _orbitSpherical.phi = Math.max(0.1, _orbitSpherical.phi - orbitSpeed);
+      if (keysPressed.has('ArrowDown')) _orbitSpherical.phi = Math.min(Math.PI - 0.1, _orbitSpherical.phi + orbitSpeed);
+      if (keysPressed.has('ArrowLeft') || keysPressed.has('ArrowRight') || keysPressed.has('ArrowUp') || keysPressed.has('ArrowDown')) {
+        camera.position.copy(controls.target).add(
+          _panVec.setFromSpherical(_orbitSpherical)
+        );
+      }
+    }
+
+    function renderOnce() {
+      if (!needsRender && !needsContinuous()) return;
+      needsRender = false;
+
+      // Keyboard camera movement
+      handleKeyboardCamera();
+
+      controls.update();
+      // Keep ortho frustum synced when using orthographic camera
+      if (camera === orthoCamera) syncOrthoFrustum();
+      // Update clipping plane
+      updateClippingPlane();
+
+      // Tick down damping frames (OrbitControls damping settles over ~15-20 frames).
+      // Stay in low-detail + pixelRatio=1 through the settle and restore crisp full
+      // detail only on the final frame — otherwise releasing the orbit paid ~20
+      // full-detail, full-DPR renders in a row.
+      if (dampingFrames > 0) {
+        dampingFrames--;
+        if (dampingFrames === 0 && !isOrbiting) {
+          renderer.setPixelRatio(idlePixelRatio);
+          setLowDetail(false);
+        }
+      }
+
+      // Animate deformed shape (oscillating scale like 2D viewport)
+      const _dt = resultsStore.diagramType;
+      const _animDeformed = resultsStore.animateDeformed && _dt === 'deformed' && resultsStore.results3D;
+      const _animMode = _dt === 'modeShape' && resultsStore.modalResult3D;
+      const _animBuckling = _dt === 'bucklingMode' && resultsStore.bucklingResult3D;
+      if (_animDeformed || _animMode || _animBuckling) {
+        if (_animMode || _animBuckling) {
+          // Mode shapes always animate — syncDeformed handles the sin() internally
+          syncDeformed();
+        } else {
+          const baseScale = resultsStore.deformedScale;
+          const animScale = baseScale * Math.sin(performance.now() / (500 / resultsStore.animSpeed));
+          // Only rebuild if scale changed meaningfully (avoid per-frame full rebuild)
+          if (resultsCtx.lastDeformedAnimScale === null || Math.abs(animScale - resultsCtx.lastDeformedAnimScale) > baseScale * 0.02) {
+            resultsCtx.lastDeformedAnimScale = animScale;
+            syncDeformed(animScale);
+          }
+        }
+      } else if (deformedGroup && resultsCtx.lastDeformedAnimScale !== null) {
+        // Animation was running but conditions no longer met (model cleared, example changed, etc.)
+        // Clean up immediately to avoid ghost deformed shape lingering until reactive effect fires
+        resultsParent.remove(deformedGroup);
+        disposeObject(deformedGroup);
+        deformedGroup = null;
+        resultsCtx.lastDeformedAnimScale = null;
+      }
+
+      // Despiece pull-apart (one-shot easeOutCubic 0→1, then static).
+      if (_dt === 'despiece' && resultsStore.results3D) {
+        const tNorm = Math.max(0, Math.min(1, (performance.now() - despieceStart) / DESPIECE_ANIM_MS));
+        const sep = 1 - Math.pow(1 - tNorm, 3);
+        if (resultsCtx.lastDespieceSep === null || Math.abs(sep - resultsCtx.lastDespieceSep) > 0.01 || sep >= 1) {
+          resultsCtx.lastDespieceSep = sep;
+          syncDespiece(sep);
+        }
+      } else if (resultsCtx.despieceGroup && resultsCtx.lastDespieceSep !== null) {
+        resultsParent.remove(resultsCtx.despieceGroup);
+        disposeObject(resultsCtx.despieceGroup);
+        resultsCtx.despieceGroup = null;
+        resultsCtx.lastDespieceSep = null;
+      }
+
+      const _perfT0 = perfHud.on ? performance.now() : 0;
+      renderer.render(scene, camera);
+      drawAxisGizmo();
+      if (perfHud.on) {
+        // GPU side: draw calls + triangles (renderer.info auto-resets per render,
+        // so these are THIS frame's counts). Geometry/texture counts reveal
+        // teardown/rebuild churn during edits (CPU sync), distinguishing the two.
+        const _now = performance.now();
+        perfAcc.renderMsSum += _now - _perfT0;
+        perfAcc.frames++;
+        if (perfAcc.lastFrameT) perfAcc.frameMsSum += _now - perfAcc.lastFrameT;
+        perfAcc.lastFrameT = _now;
+        if (_now - perfAcc.lastFlush > 250) {
+          const f = perfAcc.frames || 1;
+          perfHud = {
+            on: true,
+            // Monotonic window id. A spec measuring a gesture waits for this to advance
+            // TWICE after the gesture starts: the first window straddles the gesture
+            // boundary, the second lies entirely inside it.
+            flush: perfHud.flush + 1,
+            fps: perfAcc.frameMsSum > 0 ? Math.round(1000 / (perfAcc.frameMsSum / f)) : 0,
+            renderMs: +(perfAcc.renderMsSum / f).toFixed(2),
+            syncMs: +perfAcc.syncMs.toFixed(2), // CPU scene-sync since last flush
+            calls: renderer.info.render.calls,
+            tris: renderer.info.render.triangles,
+            geos: renderer.info.memory.geometries,
+            texs: renderer.info.memory.textures,
+          };
+          perfAcc.syncMs = 0; perfAcc.frames = 0; perfAcc.frameMsSum = 0;
+          perfAcc.renderMsSum = 0; perfAcc.lastFlush = _now;
+        }
+      }
+
+      // Keep looping if continuous rendering is needed
+      if (needsContinuous() || needsRender) {
+        animFrameId = requestAnimationFrame(renderOnce);
+      } else if (perfHud.on) {
+        // The loop is about to STOP. This viewport renders on demand, so the next
+        // frame may be seconds away — and without this, that idle gap would be
+        // charged to `frameMsSum` as if it were one frame interval, which is how a
+        // 60fps orbit after a 1.2s pause used to report ~11fps. Zeroing `lastFrameT`
+        // makes the `if (perfAcc.lastFrameT)` guard above skip that first interval.
+        //
+        // ONLY `lastFrameT`. Clearing the rest of the window (frames/sums/lastFlush)
+        // looks tidier and is a trap: a mouse-driven gesture stops and restarts the
+        // loop between input events, so a per-stop reset means the window never
+        // reaches 250ms and the HUD stops flushing entirely mid-gesture. The window
+        // must survive stutter; only the gap interval must not enter the timing.
+        perfAcc.lastFrameT = 0;
+      }
+    }
+    // Kick off the first frame
+    animFrameId = requestAnimationFrame(renderOnce);
+
+    // When OrbitControls interaction ends, allow damping frames to settle
+    // During camera manipulation, drop to pixelRatio=1 so the GPU pushes ~4× fewer
+    // pixels on retina displays. Restore on 'end' so the idle frame is crisp.
+    // Slight aliasing during drag is acceptable — users perceive smoothness more
+    // than pixel fidelity while rotating.
+    const idlePixelRatio = window.devicePixelRatio;
+    // Level-of-detail during orbit. Typical models keep full detail while the
+    // camera moves; heavy models (per the isHeavyModel policy in lod.ts, which
+    // weighs shells and the sections render mode) fall back to hiding the
+    // decorative parents + per-element solids and forcing the single batched
+    // LineSegments2 draw call on as the stand-in.
+    function setLowDetail(on: boolean): void {
+      const dt = resultsStore.diagramType;
+      // Despiece manages element visibility itself (the original members are hidden
+      // and the separated free-body overlay is drawn instead). The heavy-model LOD
+      // fallback would force the batched wireframe visible during camera motion,
+      // flashing the un-separated model over the free-body view — so skip LOD
+      // entirely while Despiece is active. applyElementVisibility stays the authority.
+      if (dt === 'despiece') return;
+      const resultsColoringActive = !!resultsStore.results3D
+        && (dt === 'axialColor' || dt === 'colorMap' || dt === 'verification');
+      // Opt-in "smooth orbit" forces the heavy-model low-detail path for any
+      // model during camera motion (collapse to the single batched wireframe).
+      const heavyModel = uiStore.smoothOrbit3D || isHeavyModel(
+        {
+          elements: modelStore.elements.size,
+          shells: modelStore.plates.size + modelStore.quads.size,
+          supports: modelStore.supports.size,
+        },
+        uiStore.renderMode3D,
+      );
+      applyLowDetail(on, {
+        nodesParent, supportsParent, loadsParent, resultsParent, shellsParent,
+        localAxesParent,
+        elementsParent,
+        elementsBatchedMesh: elementsBatched.mesh,
+        renderMode: uiStore.renderMode3D,
+      }, { resultsColoringActive, heavyModel });
+    }
+    exitOrbitLOD = () => {
+      isOrbiting = false;
+      renderer.setPixelRatio(idlePixelRatio);
+      setLowDetail(false);
+      invalidate();
+    };
+    controls.addEventListener('start', () => {
+      isOrbiting = true;
+      dampingFrames = 0;
+      renderer.setPixelRatio(1);
+      setLowDetail(true);
+    });
+    controls.addEventListener('end', () => {
+      isOrbiting = false;
+      dampingFrames = 20;
+      // Keep low-detail + pixelRatio=1 through the damping settle; renderOnce
+      // restores full detail/DPR on the final settle frame (one crisp frame
+      // instead of 20).
+      invalidate();
+    });
+
+    // Listen for global zoom-to-fit event (dispatched by F key from Toolbar)
+    const handleZoomToFitEvent = () => { zoomToFit(); }; // zoomToFit() calls invalidate() internally
+    window.addEventListener('stabileo-zoom-to-fit', handleZoomToFitEvent);
+
+    // Listen for camera restore event (dispatched on tab switch)
+    const handleRestoreCamera = () => {
+      const pos = uiStore.cameraPosition3D;
+      const tgt = uiStore.cameraTarget3D;
+      setCameraUp(camera);
+      camera.position.set(pos.x, pos.y, pos.z);
+      controls.target.set(tgt.x, tgt.y, tgt.z);
+      controls.update();
+      invalidate();
+    };
+    window.addEventListener('stabileo-restore-camera-3d', handleRestoreCamera);
+
+    // Keyboard shortcuts for 3D viewport
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Shift+P — toggle the dev perf HUD live (also persisted for next load).
+      if (e.key === 'P' && e.shiftKey) {
+        perfHud = { ...perfHud, on: !perfHud.on };
+        try { localStorage.setItem('stabileo_perf', perfHud.on ? '1' : '0'); } catch { /* ignore */ }
+        invalidate();
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (showCoordDialog) { cancelCoordDialog(); return; }
+        if (uiStore.measureMode) { clearMeasureVisuals(); }
+      }
+      // "N" opens coordinate dialog when node tool is active (and no input is focused)
+      if (e.key === 'n' && uiStore.currentTool === 'node' && !showCoordDialog) {
+        const active = document.activeElement;
+        if (!active || (active.tagName !== 'INPUT' && active.tagName !== 'TEXTAREA' && active.tagName !== 'SELECT')) {
+          e.preventDefault();
+          openCoordDialog();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      initialized = false;
+      cancelAnimationFrame(animFrameId);
+      ro.disconnect();
+      renderer.dispose();
+      controls.dispose();
+      window.removeEventListener('stabileo-zoom-to-fit', handleZoomToFitEvent);
+      window.removeEventListener('stabileo-restore-camera-3d', handleRestoreCamera);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', onNavKeyDown);
+      window.removeEventListener('keyup', onNavKeyUp);
+      if (renderer.domElement.parentNode) {
+        renderer.domElement.parentNode.removeChild(renderer.domElement);
+      }
+    };
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  //  SYNC CONTEXT — shared mutable state for scene-sync + results-sync
+  // ═══════════════════════════════════════════════════════════════
+
+  // Context objects (initialized in onMount, used by sync functions)
+  let sceneCtx: SceneSyncContext;
+  let resultsCtx: ResultsSyncContext;
+
+  function initSyncContexts() {
+    sceneCtx = {
+      initialized: false,
+      nodesParent, elementsParent, supportsParent, loadsParent, resultsParent, shellsParent, scene,
+      nodesInstanced, elementsBatched, elementsPicking, elementGroups, supportGizmos,
+      shellGroups: new Map(),
+      loadGroup: null,
+      localAxesGroup: null,
+      offsetVizGroup: null,
+      shellOffsetVizGroup: null,
+      localAxesParent,
+      colorMapApplied: false,
+    };
+    resultsCtx = {
+      initialized: false,
+      resultsParent, scene,
+      elementGroups,
+      elementsBatched,
+      shellGroups: sceneCtx.shellGroups,
+      deformedGroup: null, diagramGroup: null, overlayDiagramGroup: null, despieceGroup: null,
+      reactionGroup: null, constraintForcesGroup: null, nodeLabelsGroup: null, elementLabelsGroup: null, lengthLabelsGroup: null, verificationLabelsGroup: null,
+      lastDeformedAnimScale: null, lastDespieceSep: null,
+      colorMapApplied: false,
+    };
+  }
+
+  // ── Perf HUD (dev measurement only) ──────────────────────────────
+  // Decides whether the 3D slowdown is CPU-bound (scene sync per edit) or
+  // GPU-bound (draw calls / fill rate). Enable with ?perf in the URL or
+  // localStorage.stabileo_perf='1', or toggle live with Shift+P. Zero cost when
+  // off (perfTimed early-returns; the render block is guarded). Not for prod.
+  let perfHud = $state<{ on: boolean; flush: number; fps: number; renderMs: number; syncMs: number; calls: number; tris: number; geos: number; texs: number }>({
+    on: (() => { try { return new URLSearchParams(location.search).has('perf') || localStorage.getItem('stabileo_perf') === '1'; } catch { return false; } })(),
+    flush: 0, fps: 0, renderMs: 0, syncMs: 0, calls: 0, tris: 0, geos: 0, texs: 0,
+  });
+  // Non-reactive accumulators so the HUD's own reactivity doesn't perturb the measurement.
+  const perfAcc = { syncMs: 0, frames: 0, frameMsSum: 0, renderMsSum: 0, lastFlush: 0, lastFrameT: 0 };
+  function perfTimed<T>(fn: () => T): T {
+    if (!perfHud.on) return fn();
+    const t0 = performance.now();
+    const r = fn();
+    perfAcc.syncMs += performance.now() - t0;
+    return r;
+  }
+
+  // Thin wrappers that delegate to extracted modules + keep local refs in sync.
+  // Wrapped in perfTimed so the HUD can attribute per-edit CPU cost to scene sync.
+  function syncNodes() { perfTimed(() => _syncNodes(sceneCtx)); }
+  function syncElements() { perfTimed(() => _syncElements(sceneCtx)); }
+  function syncSupports() { perfTimed(() => _syncSupports(sceneCtx)); }
+  function syncLoads() { perfTimed(() => _syncLoads(sceneCtx)); }
+  function syncShells() { perfTimed(() => _syncShells(sceneCtx)); }
+  // Decorative overlays (member/shell local-axis triads, offset viz) fully rebuild
+  // on every call. The nodes $effect re-runs them on every modelVersion bump, i.e.
+  // every node-drag tick. Suppress them while a node is being dragged (the cheap,
+  // signature-diffed node/element/shell syncs still run so the geometry follows the
+  // cursor) and run them once on drag-end (finalizeDecorAfterDrag) so they snap to
+  // the final position. 'always'-mode triads + offset arms are the dominant
+  // remaining per-tick cost; this removes it from the drag.
+  function syncLocalAxes() { if (draggedNodeId3D !== null) return; perfTimed(() => _syncLocalAxes(sceneCtx)); }
+  function syncMemberOffsets() { if (draggedNodeId3D !== null) return; perfTimed(() => _syncMemberOffsets(sceneCtx)); }
+  function syncShellOffsets() { if (draggedNodeId3D !== null) return; perfTimed(() => _syncShellOffsets(sceneCtx)); }
+  /** Run the drag-suppressed decorative syncs once after a node drag finishes. */
+  function finalizeDecorAfterDrag() {
+    syncLocalAxes();
+    syncMemberOffsets();
+    syncShellOffsets();
+    invalidate();
+  }
+  function syncSelection() {
+    _syncSelection(sceneCtx);
+    // Re-apply color map if active (syncSelection overwrites element colors)
+    const dt = resultsStore.diagramType;
+    if (resultsStore.results3D && (dt === 'axialColor' || dt === 'colorMap' || dt === 'verification')) {
+      syncColorMap3D();
+    }
+  }
+  function syncDespiece(sep: number) {
+    _syncDespiece3D(resultsCtx, sep);
+  }
+
+  function syncDeformed(scaleOverride?: number) {
+    _syncDeformed(resultsCtx, scaleOverride);
+    deformedGroup = resultsCtx.deformedGroup;
+  }
+  function syncDiagrams3D() {
+    _syncDiagrams3D(resultsCtx);
+  }
+  function syncColorMap3D() {
+    _syncColorMap3D(resultsCtx);
+    sceneCtx.colorMapApplied = resultsCtx.colorMapApplied;
+  }
+  function syncVerificationLabels() {
+    _syncVerificationLabels(resultsCtx);
+  }
+  function syncReactions() {
+    _syncReactions(resultsCtx);
+  }
+  function syncConstraintForces() {
+    _syncConstraintForces(resultsCtx);
+  }
+  function syncLabels3D() {
+    _syncLabels3D(resultsCtx);
+  }
+
+  // ─── Clear stress query when leaving stress mode ────────────
+  $effect(() => {
+    if (uiStore.selectMode !== 'stress') {
+      resultsStore.stressQuery = null;
+    }
+  });
+  $effect(() => {
+    if (!resultsStore.results3D && uiStore.selectMode === 'stress' && !uiStore.liveCalc) {
+      uiStore.selectMode = 'elements';
+    }
+  });
+
+  // ─── Reactive effects ────────────────────────────────────────
+  $effect(() => {
+    // Trigger on model changes
+    modelStore.nodes;
+    syncNodes();
+    syncElements(); // elements depend on nodes for position
+    syncSupports();
+    syncLoads();
+    syncShells(); // shells depend on node positions
+    invalidate();
+  });
+
+  $effect(() => {
+    modelStore.elements;
+    syncElements();
+    syncLoads(); // loads reference elements
+    invalidate();
+  });
+
+  $effect(() => {
+    modelStore.plates;
+    modelStore.quads;
+    uiStore.renderMode3D; // flat ↔ extruded slab rebuild
+    syncShells();
+    invalidate();
+  });
+
+  $effect(() => {
+    uiStore.renderMode3D;
+    syncElements();
+    invalidate();
+  });
+
+  $effect(() => {
+    modelStore.modelVersion;
+    uiStore.analysisMode;
+    syncResultsProjection();
+    invalidate();
+  });
+
+  $effect(() => {
+    modelStore.supports;
+    syncSupports();
+    invalidate();
+  });
+
+  $effect(() => {
+    modelStore.loads;
+    uiStore.showLoads3D;
+    uiStore.hideLoadsWithDiagram;
+    uiStore.momentStyle3D;
+    resultsStore.diagramType;
+    syncLoads();
+    invalidate();
+  });
+
+  $effect(() => {
+    resultsStore.results3D;
+    resultsStore.diagramType;
+    resultsStore.deformedScale;
+    resultsStore.modalResult3D;
+    resultsStore.activeModeIndex;
+    resultsStore.bucklingResult3D;
+    resultsStore.activeBucklingMode;
+    const animating = resultsStore.animateDeformed;
+    const dt = resultsStore.diagramType;
+    if (resultsCtx) resultsCtx.lastDeformedAnimScale = null;
+    // Mode shapes and buckling modes always animate from the render loop
+    if (dt === 'modeShape' || dt === 'bucklingMode') { invalidate(); return; }
+    // Always sync deformed to clean up old geometry when diagram type changes.
+    // When animation is active AND we're still showing deformed, the render
+    // loop will keep updating — but syncDeformed is idempotent (removes + recreates).
+    syncDeformed();
+    invalidate();
+  });
+
+  // When animation state changes, kick the render loop
+  $effect(() => {
+    resultsStore.animateDeformed;
+    resultsStore.animSpeed;
+    invalidate();
+  });
+
+  // Despiece (free-body) activation: restart the one-shot pull-apart; the render
+  // loop builds/animates it and cleans up when the diagram type changes away.
+  $effect(() => {
+    const dt = resultsStore.diagramType;
+    resultsStore.results3D;
+    if (dt === 'despiece') {
+      despieceStart = performance.now();
+      if (resultsCtx) resultsCtx.lastDespieceSep = null;
+    } else if (uiStore.despieceInspect) {
+      uiStore.despieceInspect = null; // clear stale inspection when leaving despiece
+    }
+    invalidate();
+  });
+
+  // Hide the real member meshes while despiece is active (the overlay draws its
+  // own separated members + ghost remnants). Picking helpers stay raycastable.
+  // This is the SINGLE authority for element-mesh visibility: it also depends on
+  // model identity + render mode so it re-runs (after the sync effects above,
+  // which are defined earlier and therefore flush first) on every model load /
+  // example switch / edit / render-mode change. That guarantees a stale
+  // `visible = false` left by despiece can never persist on a signature-matched
+  // reused group — the root cause of the intermittent partial 3D render.
+  $effect(() => {
+    const hide = resultsStore.diagramType === 'despiece';
+    modelStore.modelVersion; modelStore.nodes; modelStore.elements; // re-assert after re-sync
+    applyElementVisibility(elementGroups, elementsBatched?.mesh, elementsParent, hide, uiStore.renderMode3D === 'wireframe');
+    invalidate();
+  });
+
+  // Despiece option changes (vector mode / basis / sizes / reactions) must redraw
+  // immediately — the render loop's despiece pass rebuilds when the signature
+  // changes (no mouse movement needed).
+  $effect(() => {
+    uiStore.despieceVectorMode; uiStore.despieceBasis;
+    uiStore.despieceVectorSize; uiStore.despieceLabelSize;
+    uiStore.despieceCombineVectors; uiStore.despieceLoadMode; modelStore.loads;
+    resultsStore.showReactions; uiStore.despieceInspect;
+    invalidate();
+  });
+
+  $effect(() => {
+    resultsStore.results3D;
+    resultsStore.diagramType;
+    resultsStore.diagramScale;
+    resultsStore.showDiagramValues;
+    resultsStore.drawPositiveTowardLocalAxes; // rebuild diagrams immediately on toggle (no re-solve)
+    resultsStore.overlayResults3D;
+    resultsStore.isEnvelopeActive;
+    resultsStore.fullEnvelope3D;
+    syncDiagrams3D();
+    invalidate();
+  });
+
+  $effect(() => {
+    resultsStore.results3D;
+    resultsStore.diagramType;
+    resultsStore.colorMapKind;
+    resultsStore.shellContourComponent;
+    // Shell meshes rebuild on render-mode / geometry change → re-apply contour.
+    uiStore.renderMode3D;
+    modelStore.plates;
+    modelStore.quads;
+    // Geometry refs (Maps are replaced on structural edits), NOT modelVersion —
+    // that bumps on load/material edits too and was recoloring + rebuilding the
+    // heatmap on every keystroke while a color map was active.
+    modelStore.nodes;
+    modelStore.elements;
+    // Also react to verification store changes for 'verification' color map.
+    // `.design` and `.providedRevision` were missing: a baseline-only or
+    // reinforcement-only change left the overlay painted with the previous state.
+    verificationStore.concrete;
+    verificationStore.steel;
+    verificationStore.design;
+    verificationStore.providedRevision;
+    verificationStore.demandRevision;
+    verificationStore.analysisRevision;
+    syncColorMap3D();
+    syncVerificationLabels();
+    invalidate();
+  });
+
+  $effect(() => {
+    resultsStore.results3D;
+    resultsStore.showReactions;
+    syncReactions();
+    invalidate();
+  });
+
+  $effect(() => {
+    resultsStore.constraintForces3D;
+    resultsStore.showConstraintForces;
+    syncConstraintForces();
+    invalidate();
+  });
+
+  $effect(() => {
+    uiStore.selectedNodes;
+    uiStore.selectedElements;
+    uiStore.selectedSupports;
+    uiStore.selectedShells;
+    syncSelection();
+    invalidate();
+  });
+
+  // Local-axis triads: driven by localAxesMode3D (always / selected / never).
+  // The selection is NOT listed explicitly: syncLocalAxes reads it only in
+  // 'selected' mode (nested reads are tracked), so 'always' mode does not
+  // dispose + rebuild every triad on each selection click.
+  $effect(() => {
+    uiStore.localAxesMode3D;
+    uiStore.shellAxesMode3D;
+    uiStore.analysisMode;
+    modelStore.nodes;
+    modelStore.elements;
+    modelStore.plates;
+    modelStore.quads;
+    modelStore.modelVersion;
+    syncLocalAxes();
+    invalidate();
+  });
+
+  // Member-offset preview: ghost centerline + offset line + rigid arms.
+  $effect(() => {
+    modelStore.elements;
+    modelStore.nodes;
+    modelStore.modelVersion;
+    uiStore.analysisMode;
+    syncMemberOffsets();
+    invalidate();
+  });
+
+  // Shell-offset preview: rigid arms + ghost outline of the offset surface.
+  $effect(() => {
+    modelStore.plates;
+    modelStore.quads;
+    modelStore.nodes;
+    modelStore.modelVersion;
+    uiStore.analysisMode;
+    syncShellOffsets();
+    invalidate();
+  });
+
+  $effect(() => {
+    modelStore.nodes;
+    modelStore.elements;
+    uiStore.showNodeLabels3D;
+    uiStore.showElementLabels3D;
+    uiStore.showLengths3D;
+    syncLabels3D();
+    invalidate();
+  });
+
+  // Reactive grid: update when working plane, grid size, nodeCreateZ change
+  $effect(() => {
+    uiStore.workingPlane;
+    uiStore.nodeCreateZ;
+    uiStore.gridSize3D;
+    uiStore.gridExtent3D;
+    uiStore.showGrid3D;
+    updateGrid();
+    invalidate();
+  });
+
+  // Reactive axes visibility: gizmo replaces world-origin axes in Basic 3D and PRO
+  $effect(() => {
+    const show = uiStore.showAxes3D;
+    const mode = uiStore.analysisMode;
+    // Hide world-origin axes in Basic 3D and PRO (gizmo replaces them)
+    const hideWorldAxes = mode === '3d' || mode === 'pro';
+    if (axesHelper) axesHelper.visible = show && !hideWorldAxes;
+    for (const s of axisLabelSprites) s.visible = show && !hideWorldAxes;
+    // Gizmo visibility follows the setting
+    if (gizmoCanvas) gizmoCanvas.style.display = show ? 'block' : 'none';
+    invalidate();
+  });
+
+  // Reactive clipping plane: invalidate when clipping settings change
+  $effect(() => {
+    uiStore.clippingEnabled;
+    uiStore.clippingAxis;
+    uiStore.clippingPosition;
+    invalidate();
+  });
+
+  // Cancel pending element when tool changes
+  $effect(() => {
+    uiStore.currentTool;
+    cancelPendingElement();
+  });
+
+  // ─── Stress query marker in 3D viewport ─────────────────────
+  let stressMarkerGroup: THREE.Group | null = null;
+
+  $effect(() => {
+    const sq = resultsStore.stressQuery;
+
+    // Remove old marker
+    if (stressMarkerGroup) {
+      resultsParent.remove(stressMarkerGroup);
+      disposeObject(stressMarkerGroup);
+      stressMarkerGroup = null;
+    }
+
+    if (!sq || !resultsStore.results3D || !initialized) return;
+
+    stressMarkerGroup = new THREE.Group();
+    const pos = new THREE.Vector3(sq.worldX, sq.worldY, sq.worldZ ?? 0);
+
+    // Sphere marker at query position
+    const sphereGeo = new THREE.SphereGeometry(0.08, 16, 12);
+    const sphereMat = new THREE.MeshBasicMaterial({
+      color: 0xff4488,
+      transparent: true,
+      opacity: 0.85,
+      depthTest: false,
+    });
+    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+    sphere.position.copy(pos);
+    sphere.renderOrder = 2;
+    stressMarkerGroup.add(sphere);
+
+    // Cross lines (3 orthogonal lines through the point)
+    const crossLen = 0.15;
+    const crossMat = new THREE.LineBasicMaterial({ color: 0xff4488, depthTest: false });
+    for (const dir of [GLOBAL_X, GLOBAL_Y, GLOBAL_Z]) {
+      const pts = [
+        pos.clone().sub(dir.clone().multiplyScalar(crossLen)),
+        pos.clone().add(dir.clone().multiplyScalar(crossLen)),
+      ];
+      const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+      const line = new THREE.Line(lineGeo, crossMat);
+      line.renderOrder = 2;
+      stressMarkerGroup.add(line);
+    }
+
+    // Label
+    const label = createTextSprite('σ', '#ff4488', 32);
+    label.position.copy(pos).add(new THREE.Vector3(0.12, 0.12, 0));
+    label.renderOrder = 2;
+    stressMarkerGroup.add(label);
+
+    resultsParent.add(stressMarkerGroup);
+    invalidate();
+  });
+
+  // Clean up measurement visuals when measureMode is toggled off
+  $effect(() => {
+    if (!uiStore.measureMode) {
+      clearMeasureVisuals();
+      invalidate();
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════
+  //  INTERACTION
+  // ═══════════════════════════════════════════════════════════════
+
+  function updateMouseNDC(e: MouseEvent) {
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  }
+
+  // ─── Context menu (right-click) ──────────────────────────
+  function handleContextMenu3D(e: MouseEvent) {
+    e.preventDefault();
+    updateMouseNDC(e);
+    if (!camera) return;
+    raycaster.setFromCamera(mouse, camera);
+    raycaster.camera = camera;
+
+    // Raycast nodes first, then elements
+    const nodeHits = raycaster.intersectObjects(nodesParent.children, true);
+    for (const hit of nodeHits) {
+      const ud = resolveHitUserData(hit);
+      if (ud?.type === 'node') {
+        uiStore.contextMenu = { x: e.clientX, y: e.clientY, nodeId: ud.id };
+        return;
+      }
+    }
+
+    const elemHits = raycaster.intersectObjects(elementsParent.children, true);
+    for (const hit of elemHits) {
+      const ud = resolveHitUserData(hit);
+      if (ud?.type === 'element') {
+        uiStore.contextMenu = { x: e.clientX, y: e.clientY, elementId: ud.id };
+        return;
+      }
+    }
+
+    // Clicked empty space → context menu without specific entity
+    uiStore.contextMenu = { x: e.clientX, y: e.clientY };
+  }
+
+  function handleMouseDown(e: MouseEvent) {
+    if (e.button === 0) {
+      mouseDownPos = { x: e.clientX, y: e.clientY };
+
+      const tool = uiStore.currentTool;
+
+      // In select/pan tool: check for node drag or box select initiation
+      if (tool === 'select' || tool === 'pan') {
+        const nodeId = findNodeHit(e);
+
+        if (nodeId !== null && tool === 'select') {
+          // Start dragging this node
+          controls.enabled = false;
+          historyStore.pushState();
+          draggedNodeId3D = nodeId;
+          dragMoved3D = false;
+          dragStartWorld3D = getGroundIntersection(e);
+
+          // If node isn't selected, select it (with shift for additive)
+          if (!uiStore.selectedNodes.has(nodeId) && !e.shiftKey) {
+            uiStore.selectNode(nodeId, false);
+          } else if (!uiStore.selectedNodes.has(nodeId) && e.shiftKey) {
+            uiStore.selectNode(nodeId, true);
+          }
+        } else if (nodeId === null && tool === 'select') {
+          // Always start box select candidate — distinguish click vs drag in mouseUp
+          const rect = container.getBoundingClientRect();
+          const mx = e.clientX - rect.left;
+          const my = e.clientY - rect.top;
+          boxSelect3D = { startX: mx, startY: my, endX: mx, endY: my, additive: e.shiftKey };
+          controls.enabled = false;
+          // This is a box-select, not an orbit — undo the low-detail/low-res
+          // state that OrbitControls 'start' just engaged, and re-render so the
+          // model stays fully visible (not a dark cleared buffer) during the drag.
+          exitOrbitLOD();
+        }
+      }
+    }
+  }
+
+  // ─── Ground plane intersection for node creation ──────────
+  function getGroundIntersection(e: MouseEvent): THREE.Vector3 | null {
+    updateMouseNDC(e);
+    if (!camera) return null;
+    return _getGroundIntersection(raycaster, mouse, camera, uiStore.workingPlane, uiStore.nodeCreateZ);
+  }
+
+  // ─── Find first node hit by raycast ───────────────────────
+  function findNodeHit(e: MouseEvent): number | null {
+    updateMouseNDC(e);
+    if (!camera) return null;
+    return _findNodeHit(raycaster, mouse, camera, nodesParent);
+  }
+
+  // ─── Find first element hit by raycast ────────────────────
+  function findElementHit(e: MouseEvent): number | null {
+    updateMouseNDC(e);
+    if (!camera) return null;
+    return _findElementHit(raycaster, mouse, camera, elementsParent);
+  }
+
+  // ─── Tool handlers ─────────────────────────────────────────
+
+  function handleNodeTool(e: MouseEvent) {
+    // Joints / Articulaciones mode: click a member to set/clear its internal
+    // 3D joint (relative-DOF release mask) at the nearest end.
+    if (uiStore.nodeMode === 'hinge') { handleJoint3DPlacement(e); return; }
+
+    const pos = getGroundIntersection(e);
+    if (!pos) return;
+
+    // Full 3D snap: snap all coordinates to grid
+    const snapped = uiStore.snapWorld3D(pos.x, pos.y, pos.z);
+    historyStore.pushState();
+    const id = modelStore.addNode(snapped.x, snapped.y, snapped.z);
+    uiStore.selectNode(id, false);
+    uiStore.toast(t('viewport3d.nodeCreated').replace('{id}', String(id)), 'success');
+  }
+
+  /** Apply the current 3D joint DOF mask to the nearest end of the clicked member. */
+  function handleJoint3DPlacement(e: MouseEvent) {
+    updateMouseNDC(e);
+    if (!camera) return;
+    const mask = uiStore.jointDof3d;
+    if (!mask.some(Boolean)) { uiStore.toast(t('float.jointPickDof'), 'info'); return; }
+    raycaster.setFromCamera(mouse, camera);
+    raycaster.camera = camera;
+    const elemHits = raycaster.intersectObjects(elementsParent.children, true);
+    for (const hit of elemHits) {
+      const ud = resolveHitUserData(hit);
+      if (ud?.type !== 'element') continue;
+      const elem = modelStore.elements.get(ud.id);
+      if (!elem) return;
+      const ni = modelStore.getNode(elem.nodeI), nj = modelStore.getNode(elem.nodeJ);
+      if (!ni || !nj) return;
+      const niz = ni.z ?? 0, njz = nj.z ?? 0;
+      const edx = nj.x - ni.x, edy = nj.y - ni.y, edz = njz - niz;
+      const lenSq = edx * edx + edy * edy + edz * edz;
+      if (lenSq < 1e-12) return;
+      const p = hit.point;
+      const tpar = ((p.x - ni.x) * edx + (p.y - ni.y) * edy + (p.z - niz) * edz) / lenSq;
+      const end: 'i' | 'j' = tpar < 0.5 ? 'i' : 'j';
+      const cur = end === 'i' ? elem.jointI : elem.jointJ;
+      const same = !!cur && cur.dof.every((v, i) => v === mask[i]);
+      modelStore.setElementJoint(ud.id, end, same ? null : [...mask]);
+      resultsStore.clear();
+      uiStore.selectElement(ud.id, false);
+      uiStore.toast(same ? t('viewport.jointRemoved') : t('viewport.jointAdded'), 'info');
+      return;
+    }
+  }
+
+  function handleElementTool(e: MouseEvent) {
+    const nodeId = findNodeHit(e);
+    if (nodeId === null) {
+      // Clicked empty → cancel pending
+      cancelPendingElement();
+      return;
+    }
+
+    if (pendingElementNodeI === null) {
+      // First click → set node I
+      pendingElementNodeI = nodeId;
+      uiStore.selectNode(nodeId, false);
+
+      // Highlight node I
+      nodesInstanced.setColor(nodeId, 0x00ff00);
+      uiStore.toast(t('viewport3d.nodeIClickJ').replace('{id}', String(nodeId)), 'info');
+    } else {
+      // Second click → create element
+      if (nodeId === pendingElementNodeI) return; // same node
+
+      historyStore.pushState();
+      const elemId = modelStore.addElement(pendingElementNodeI, nodeId, uiStore.elementCreateType);
+      uiStore.selectElement(elemId, false);
+      uiStore.toast(t('viewport3d.elementCreated').replace('{id}', String(elemId)), 'success');
+
+      // Clean up
+      cancelPendingElement();
+    }
+  }
+
+  function cancelPendingElement() {
+    let changed = false;
+    if (pendingElementNodeI !== null) {
+      // Restore node color
+      nodesInstanced.restoreColor(pendingElementNodeI);
+      changed = true;
+    }
+    pendingElementNodeI = null;
+    if (pendingLine) {
+      scene?.remove(pendingLine);
+      pendingLine.geometry?.dispose();
+      (pendingLine.material as THREE.Material)?.dispose();
+      pendingLine = null;
+      changed = true;
+    }
+    if (changed) invalidate();
+  }
+
+  function handleSupportTool(e: MouseEvent) {
+    const nodeId = findNodeHit(e);
+    if (nodeId === null) return;
+
+    const is3D = uiStore.analysisMode === '3d' || uiStore.analysisMode === 'pro';
+
+    historyStore.pushState();
+
+    if (is3D) {
+      // Per-DOF 3D support creation
+      const dofRestraints = {
+        tx: uiStore.sup3dTx, ty: uiStore.sup3dTy, tz: uiStore.sup3dTz,
+        rx: uiStore.sup3dRx, ry: uiStore.sup3dRy, rz: uiStore.sup3dRz,
+      };
+
+      // Determine visual type for gizmo
+      const allFixed = dofRestraints.tx && dofRestraints.ty && dofRestraints.tz &&
+                       dofRestraints.rx && dofRestraints.ry && dofRestraints.rz;
+      const onlyTrans = dofRestraints.tx && dofRestraints.ty && dofRestraints.tz &&
+                        !dofRestraints.rx && !dofRestraints.ry && !dofRestraints.rz;
+      const noneFixed = !dofRestraints.tx && !dofRestraints.ty && !dofRestraints.tz &&
+                        !dofRestraints.rx && !dofRestraints.ry && !dofRestraints.rz;
+
+      const type: import('../lib/store/model.svelte.ts').SupportType =
+        allFixed ? 'fixed3d' : onlyTrans ? 'pinned3d' : noneFixed ? 'spring3d' : 'custom3d';
+
+      // Collect springs for unchecked DOFs that have stiffness values
+      let springs: { kx?: number; ky?: number; kz?: number; krx?: number; kry?: number; krz?: number } | undefined;
+      const hasSpring = (!dofRestraints.tx && uiStore.sup3dKx > 0) ||
+                        (!dofRestraints.ty && uiStore.sup3dKy > 0) ||
+                        (!dofRestraints.tz && uiStore.sup3dKz > 0) ||
+                        (!dofRestraints.rx && uiStore.sup3dKrx > 0) ||
+                        (!dofRestraints.ry && uiStore.sup3dKry > 0) ||
+                        (!dofRestraints.rz && uiStore.sup3dKrz > 0);
+      if (hasSpring || noneFixed) {
+        springs = {};
+        if (!dofRestraints.tx && uiStore.sup3dKx > 0) springs.kx = uiStore.sup3dKx;
+        if (!dofRestraints.ty && uiStore.sup3dKy > 0) springs.ky = uiStore.sup3dKy;
+        if (!dofRestraints.tz && uiStore.sup3dKz > 0) springs.kz = uiStore.sup3dKz;
+        if (!dofRestraints.rx && uiStore.sup3dKrx > 0) springs.krx = uiStore.sup3dKrx;
+        if (!dofRestraints.ry && uiStore.sup3dKry > 0) springs.kry = uiStore.sup3dKry;
+        if (!dofRestraints.rz && uiStore.sup3dKrz > 0) springs.krz = uiStore.sup3dKrz;
+      }
+
+      const opts: any = { dofRestraints, dofFrame: uiStore.supportFrame3D };
+      const supId = modelStore.addSupport(nodeId, type, springs, opts);
+      uiStore.selectSupport(supId, false);
+      uiStore.toast(t('viewport3d.supportCreated').replace('{id}', String(supId)).replace('{nid}', String(nodeId)), 'success');
+    } else {
+      // 2D support creation (unchanged)
+      const type = toSupportType(uiStore.supportType, uiStore.supportDirection);
+      let springs: { kx?: number; ky?: number; kz?: number } | undefined;
+      if (type === 'spring') {
+        springs = { kx: uiStore.springKx, ky: uiStore.springKy, kz: uiStore.springKz };
+      }
+      const opts: { angle?: number; isGlobal?: boolean; dx?: number; dy?: number; drz?: number } = {};
+      opts.angle = uiStore.supportAngle;
+      opts.isGlobal = uiStore.supportIsGlobal;
+      if (uiStore.supportDx !== 0) opts.dx = uiStore.supportDx;
+      if (uiStore.supportDy !== 0) opts.dy = uiStore.supportDy;
+      if (uiStore.supportDrz !== 0) opts.drz = uiStore.supportDrz;
+      const supId = modelStore.addSupport(nodeId, type as any, springs, opts);
+      uiStore.selectSupport(supId, false);
+      uiStore.toast(t('viewport3d.supportCreated').replace('{id}', String(supId)).replace('{nid}', String(nodeId)), 'success');
+    }
+  }
+
+  function handleLoadTool(e: MouseEvent) {
+    const is3D = uiStore.analysisMode === '3d' || uiStore.analysisMode === 'pro';
+
+    if (uiStore.loadType === 'nodal') {
+      const nodeId = findNodeHit(e);
+      if (nodeId === null) return;
+
+      historyStore.pushState();
+      if (is3D) {
+        // Build 3D nodal load from direction + value
+        const dir = uiStore.nodalLoadDir3D;
+        const val = uiStore.loadValue;
+        const fx = dir === 'fx' ? val : 0;
+        const fy = dir === 'fy' ? val : 0;
+        const fz = dir === 'fz' ? val : 0;
+        const mx = dir === 'mx' ? val : 0;
+        const my = dir === 'my' ? val : 0;
+        const mz = dir === 'mz' ? val : 0;
+        modelStore.addNodalLoad3D(nodeId, fx, fy, fz, mx, my, mz, uiStore.activeLoadCaseId);
+      } else {
+        // 2D nodal load
+        const dir = uiStore.nodalLoadDir;
+        const val = uiStore.loadValue;
+        const fx = dir === 'fx' ? val : 0;
+        const fz = dir === 'fz' ? val : 0;
+        const my = dir === 'my' ? val : 0;
+        modelStore.addNodalLoad(nodeId, fx, fz, my, uiStore.activeLoadCaseId);
+      }
+      uiStore.toast(t('viewport3d.pointLoadApplied').replace('{id}', String(nodeId)), 'success');
+    } else if (uiStore.loadType === 'distributed') {
+      const elemId = findElementHit(e);
+      if (elemId === null) return;
+
+      historyStore.pushState();
+      if (is3D) {
+        const qY = uiStore.loadValue;
+        const qZ = uiStore.loadValueZ;
+        modelStore.addDistributedLoad3D(elemId, qY, uiStore.loadValueJ, qZ, uiStore.loadValueZJ, undefined, undefined, uiStore.activeLoadCaseId);
+      } else {
+        modelStore.addDistributedLoad(elemId, uiStore.loadValue, uiStore.loadValueJ, undefined, undefined, uiStore.activeLoadCaseId);
+      }
+      uiStore.toast(t('viewport3d.distLoadApplied').replace('{id}', String(elemId)), 'success');
+    }
+  }
+
+  function toSupportType(tool: string, direction: 'x' | 'y'): string {
+    if (tool === 'roller') return direction === 'x' ? 'rollerX' : 'rollerZ';
+    return tool;
+  }
+
+
+  /** Find nearest existing node within threshold (3D distance) */
+  function findNearestNode3D(worldPos: THREE.Vector3, threshold = 0.3): number | null {
+    let bestId: number | null = null;
+    let bestDist = threshold;
+    for (const [id, node] of modelStore.nodes) {
+      const dx = node.x - worldPos.x;
+      const dy = node.y - worldPos.y;
+      const dz = (node.z ?? 0) - worldPos.z;
+      const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (d < bestDist) {
+        bestDist = d;
+        bestId = id;
+      }
+    }
+    return bestId;
+  }
+
+  // ─── Measurement tool ──────────────────────────────────────
+
+  function clearMeasureVisuals() {
+    if (measureGroup) {
+      scene?.remove(measureGroup);
+      disposeObject(measureGroup);
+      measureGroup = null;
+    }
+    uiStore.measurePoints = [];
+  }
+
+  function handleMeasureTool(e: MouseEvent) {
+    const currentPoints = uiStore.measurePoints;
+
+    // Third click → reset
+    if (currentPoints.length >= 2) {
+      clearMeasureVisuals();
+      return;
+    }
+
+    // Raycast: try to snap to nearest node first
+    updateMouseNDC(e);
+    if (!camera) return;
+    raycaster.setFromCamera(mouse, camera);
+    raycaster.camera = camera;
+
+    let worldPoint: THREE.Vector3 | null = null;
+
+    // Check proximity to any node in world space (within 0.5 units)
+    const planeHit = getGroundIntersection(e);
+    if (planeHit) {
+      const nearNodeId = findNearestNode3D(planeHit, 0.5);
+      if (nearNodeId !== null) {
+        const n = modelStore.nodes.get(nearNodeId);
+        if (n) {
+          worldPoint = new THREE.Vector3(n.x, n.y, n.z ?? 0);
+        }
+      }
+    }
+
+    // If no node snap, use working plane intersection
+    if (!worldPoint) {
+      worldPoint = planeHit;
+    }
+
+    if (!worldPoint) return;
+
+    const pt = { x: worldPoint.x, y: worldPoint.y, z: worldPoint.z };
+
+    // Ensure measureGroup exists
+    if (!measureGroup) {
+      measureGroup = new THREE.Group();
+      measureGroup.name = 'measurement';
+      scene.add(measureGroup);
+    }
+
+    // Create red sphere at point
+    const sphereGeo = new THREE.SphereGeometry(0.15, 16, 16);
+    const sphereMat = new THREE.MeshStandardMaterial({ color: 0xff0000, depthTest: false });
+    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+    sphere.position.set(pt.x, pt.y, pt.z);
+    sphere.renderOrder = 999;
+    measureGroup.add(sphere);
+
+    if (currentPoints.length === 0) {
+      // First point (A)
+      uiStore.measurePoints = [pt];
+    } else {
+      // Second point (B)
+      const A = currentPoints[0];
+      const B = pt;
+      uiStore.measurePoints = [A, B];
+
+      // Draw dashed line between A and B
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(A.x, A.y, A.z),
+        new THREE.Vector3(B.x, B.y, B.z),
+      ]);
+      const lineMat = new THREE.LineDashedMaterial({
+        color: 0xff4444,
+        dashSize: 0.2,
+        gapSize: 0.1,
+        depthTest: false,
+      });
+      const line = new THREE.Line(lineGeo, lineMat);
+      line.computeLineDistances();
+      line.renderOrder = 999;
+      measureGroup.add(line);
+
+      // Compute distance
+      const dx = B.x - A.x;
+      const dy = B.y - A.y;
+      const dz = B.z - A.z;
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      // Show distance label at midpoint
+      const mx = (A.x + B.x) / 2;
+      const my = (A.y + B.y) / 2;
+      const mz = (A.z + B.z) / 2;
+
+      // Compute model-size-relative scale for the label
+      const box = new THREE.Box3();
+      const project2D = shouldProject2DModel();
+      for (const [, node] of modelStore.nodes) {
+        const pos = projectNodeToScene(node, project2D);
+        box.expandByPoint(new THREE.Vector3(pos.x, pos.y, pos.z));
+      }
+      const size = box.getSize(new THREE.Vector3());
+      const modelSize = Math.max(size.x, size.y, size.z, 1);
+      const spriteScale = modelSize * 0.04;
+
+      const label = createTextSprite(`${dist.toFixed(3)} m`, '#ff4444', 32);
+      label.position.set(mx, my, mz + spriteScale * 0.5);
+      label.scale.set(spriteScale, spriteScale, 1);
+      label.renderOrder = 1000;
+      measureGroup.add(label);
+
+      // Toast with distance
+      uiStore.toast(t('viewport3d.distance').replace('{dist}', dist.toFixed(3)), 'info');
+    }
+    invalidate();
+  }
+
+  // ─── Helper: project a 3D world point to screen coords ────
+  function projectToScreen(wx: number, wy: number, wz: number): { x: number; y: number } {
+    const v = new THREE.Vector3(wx, wy, wz);
+    v.project(camera);
+    const rect = container.getBoundingClientRect();
+    return {
+      x: (v.x * 0.5 + 0.5) * rect.width,
+      y: (-v.y * 0.5 + 0.5) * rect.height,
+    };
+  }
+
+  // segmentsIntersect2D & segmentIntersectsRect2D imported from ../lib/viewport3d/picking
+
+  // ─── Main mouse up handler ─────────────────────────────────
+  function handleMouseUp(e: MouseEvent) {
+    if (e.button !== 0) return;
+
+    // ── Finalize node dragging ──
+    if (draggedNodeId3D !== null) {
+      if (!dragMoved3D) {
+        // No movement → undo the pushState
+        historyStore.undo();
+      }
+      draggedNodeId3D = null;
+      dragMoved3D = false;
+      dragStartWorld3D = null;
+      controls.enabled = true;
+      finalizeDecorAfterDrag(); // triads/offset viz were suppressed during the drag
+      return;
+    }
+
+    // ── Finalize box selection (AutoCAD-style Window vs Crossing) ──
+    if (boxSelect3D) {
+      const x1 = Math.min(boxSelect3D.startX, boxSelect3D.endX);
+      const y1 = Math.min(boxSelect3D.startY, boxSelect3D.endY);
+      const x2 = Math.max(boxSelect3D.startX, boxSelect3D.endX);
+      const y2 = Math.max(boxSelect3D.startY, boxSelect3D.endY);
+      const isWindow = boxSelect3D.endX >= boxSelect3D.startX;
+      const additive = boxSelect3D.additive; // shift was held at drag start
+
+      // Only count as box select if dragged at least a few pixels
+      if (x2 - x1 > 3 || y2 - y1 > 3) {
+        /*
+         * Respect the active select subtype: what is highlighted has to be
+         * what a Delete would remove, and plates and quads share the frame
+         * elements' numeric id space, so a marquee filling `selectedElements`
+         * from shells mode would resolve to the wrong things entirely.
+         *
+         * Supports and Loads used to fall through every branch: the rectangle
+         * was drawn, the drag ended, and nothing was selected. Those two now
+         * go through the same `box-select` module the 2D viewport uses, so a
+         * distributed load is judged on the stretch it covers and a support on
+         * its node, identically in both modes.
+         */
+        const sm = uiStore.selectMode;
+        /*
+         * Nodes only when nodes were asked for. Members used to bring their
+         * ends along so the highlight would not look half-finished, and that
+         * made Delete on a swept frame take the nodes too — and with them the
+         * supports and the loads standing on them. The selection is what
+         * Delete removes, so it holds what was asked for and nothing else;
+         * wanting both is the multi-kind switch's job.
+         */
+        const allowNodes = uiStore.selectsKind('nodes');
+        const allowElems = uiStore.selectsKind('elements');
+        const allowShells = sm === 'shells';
+
+        // Collect new selection items
+        const newNodes = additive ? new Set(uiStore.selectedNodes) : new Set<number>();
+        const newElems = additive ? new Set(uiStore.selectedElements) : new Set<number>();
+
+        // Nodes: project to screen, check containment
+        const project2D = shouldProject2DModel();
+        if (allowNodes) for (const node of modelStore.nodes.values()) {
+          const pos = projectNodeToScene(node, project2D);
+          const s = projectToScreen(pos.x, pos.y, pos.z);
+          if (s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2) {
+            newNodes.add(node.id);
+          }
+        }
+        // Elements: project both endpoints
+        if (allowElems) for (const elem of modelStore.elements.values()) {
+          const ni = modelStore.getNode(elem.nodeI);
+          const nj = modelStore.getNode(elem.nodeJ);
+          if (!ni || !nj) continue;
+          const siPos = projectNodeToScene(ni, project2D);
+          const sjPos = projectNodeToScene(nj, project2D);
+          const si = projectToScreen(siPos.x, siPos.y, siPos.z);
+          const sj = projectToScreen(sjPos.x, sjPos.y, sjPos.z);
+          const iIn = si.x >= x1 && si.x <= x2 && si.y >= y1 && si.y <= y2;
+          const jIn = sj.x >= x1 && sj.x <= x2 && sj.y >= y1 && sj.y <= y2;
+
+          if (isWindow) {
+            if (iIn && jIn) newElems.add(elem.id);
+          } else {
+            if ((iIn || jIn) || segmentIntersectsRect2D(si.x, si.y, sj.x, sj.y, x1, y1, x2, y2)) {
+              newElems.add(elem.id);
+            }
+          }
+        }
+
+        // Shells (plates + quads): select by their corner nodes, same Window
+        // (all corners inside) / Crossing (any corner inside) rule — but ONLY in
+        // shells select mode. Gating by selectMode (like nodes/elements above)
+        // keeps box-select highlight == delete target: a marquee in nodes/
+        // supports/loads/elements mode must not silently fill selectedShells and
+        // delete shells the user never targeted.
+        const newShells = additive ? new Set(uiStore.selectedShells) : new Set<string>();
+        if (allowShells) {
+          const cornerIn = (nodeId: number): boolean => {
+            const nd = modelStore.getNode(nodeId);
+            if (!nd) return false;
+            const sp = projectNodeToScene(nd, project2D);
+            const s = projectToScreen(sp.x, sp.y, sp.z);
+            return s.x >= x1 && s.x <= x2 && s.y >= y1 && s.y <= y2;
+          };
+          const collectShell = (key: string, nodeIds: number[]) => {
+            const flags = nodeIds.map(cornerIn);
+            if (isWindow ? flags.every(Boolean) : flags.some(Boolean)) newShells.add(key);
+          };
+          for (const p of modelStore.model.plates.values()) collectShell('p' + p.id, p.nodes);
+          for (const q of modelStore.model.quads.values()) collectShell('q' + q.id, q.nodes);
+        }
+
+        /*
+         * Supports and loads, through the shared module. Projection differs —
+         * 3D goes through the camera — so the transform is passed in rather
+         * than assumed, which is the whole reason that module takes one.
+         */
+        if (uiStore.selectsKind('supports') || uiStore.selectsKind('loads')) {
+          const picked = boxSelectTargets({
+            rect: { x1, y1, x2, y2 },
+            isWindow,
+            // `SelectMode` is wider than `BoxSelectMode` (it adds 'shells' and
+            // 'stress'), so narrow with a type predicate rather than a cast.
+            kinds: [...uiStore.selectKinds].filter(
+              (k): k is BoxSelectMode => k === 'supports' || k === 'loads',
+            ),
+            /*
+             * The camera projection, with the node's own z. Flattening to
+             * z = 0 — which a two-number signature forces — would have judged
+             * every member as if the model were flat, so a marquee on a tower
+             * would select from the wrong storey.
+             */
+            toScreen: (pt) => {
+              const pos = projectNodeToScene({ x: pt.x, y: pt.y, z: pt.z ?? 0 } as never, project2D);
+              return projectToScreen(pos.x, pos.y, pos.z);
+            },
+            model: {
+              nodes: [],
+              elements: modelStore.elements.values(),
+              supports: modelStore.supports.values(),
+              loads: modelStore.model.loads as never,
+              getNode: (id) => modelStore.getNode(id) as never,
+              getElement: (id) => modelStore.elements.get(id),
+            },
+          });
+          /*
+           * Assigned unconditionally, exactly like nodes/elements below: a
+           * non-additive sweep REPLACES the selection, even with an empty
+           * result. Guarding on `size > 0` left a marquee over empty space
+           * keeping the old supports/loads selection — still highlighted,
+           * still what Delete would remove, and no longer what the user
+           * pointed at.
+           */
+          uiStore.selectedSupports = additive
+            ? new Set([...uiStore.selectedSupports, ...picked.supports])
+            : picked.supports;
+          uiStore.selectedLoads = additive
+            ? new Set([...uiStore.selectedLoads, ...picked.loads])
+            : picked.loads;
+        }
+
+        // Reassign sets to trigger Svelte reactivity (manual box-select)
+        uiStore.setSelection(newNodes, newElems, true, newShells);
+      } else {
+        // Small drag = click → delegate to normal click selection
+        boxSelect3D = null;
+        controls.enabled = true;
+        handleSelectionClick(e);
+        return;
+      }
+      boxSelect3D = null;
+      controls.enabled = true;
+      return;
+    }
+
+    // Only count as click if mouse didn't move much (not an orbit drag)
+    const dx = e.clientX - mouseDownPos.x;
+    const dy = e.clientY - mouseDownPos.y;
+    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) return;
+
+    // Measurement tool intercepts all clicks when active
+    if (uiStore.measureMode) {
+      handleMeasureTool(e);
+      return;
+    }
+
+    // Dispatch based on active tool
+    const tool = uiStore.currentTool;
+
+    if (tool === 'node') {
+      handleNodeTool(e);
+      return;
+    }
+    if (tool === 'element') {
+      handleElementTool(e);
+      return;
+    }
+    if (tool === 'support') {
+      handleSupportTool(e);
+      return;
+    }
+    if (tool === 'load') {
+      handleLoadTool(e);
+      return;
+    }
+
+    // Default: selection (select or pan tool)
+    handleSelectionClick(e);
+  }
+
+  function handleSelectionClick(e: MouseEvent) {
+    updateMouseNDC(e);
+    if (!camera) return;
+
+    raycaster.setFromCamera(mouse, camera);
+    raycaster.camera = camera;
+
+    // ── Shell node-pick mode: clicks collect node ids for a shell creator ──
+    if (uiStore.shellNodePick.active) {
+      const nodeHits = raycaster.intersectObjects(nodesParent.children, true);
+      for (const hit of nodeHits) {
+        const ud = resolveHitUserData(hit);
+        if (ud?.type === 'node') { uiStore.pushShellNodePick(ud.id); break; }
+      }
+      return; // consume the click while picking (no normal selection / clear)
+    }
+
+    // ── Despiece inspection: while the free-body view is active, a click inspects
+    // the converging actions (node) or both member ends (member) — without
+    // disturbing the normal selection used when Despiece is off. ──
+    if (resultsStore.diagramType === 'despiece' && resultsStore.results3D) {
+      const nodeHits = raycaster.intersectObjects(nodesParent.children, true);
+      for (const hit of nodeHits) {
+        const ud = resolveHitUserData(hit);
+        if (ud?.type === 'node') { uiStore.despieceInspect = { type: 'node', id: ud.id }; invalidate(); return; }
+      }
+      const elemHits = raycaster.intersectObjects(elementsParent.children, true);
+      for (const hit of elemHits) {
+        const ud = resolveHitUserData(hit);
+        if (ud?.type === 'element') { uiStore.despieceInspect = { type: 'member', id: ud.id }; invalidate(); return; }
+      }
+      uiStore.despieceInspect = null;
+      invalidate();
+      return;
+    }
+
+    // ── Stress mode: click on element → stress query ──
+    if (uiStore.selectMode === 'stress' && resultsStore.results3D) {
+      const elemHits = raycaster.intersectObjects(elementsParent.children, true);
+      for (const hit of elemHits) {
+        const ud = resolveHitUserData(hit);
+        if (ud?.type === 'element') {
+          const elem = modelStore.elements.get(ud.id);
+          if (!elem) continue;
+          const ni = modelStore.getNode(elem.nodeI);
+          const nj = modelStore.getNode(elem.nodeJ);
+          if (!ni || !nj) continue;
+          const niz = ni.z ?? 0;
+          const njz = nj.z ?? 0;
+          const edx = nj.x - ni.x;
+          const edy = nj.y - ni.y;
+          const edz = njz - niz;
+          const lenSq = edx * edx + edy * edy + edz * edz;
+          if (lenSq < 1e-12) continue;
+          // Project hit point onto element axis to get t
+          const p = hit.point;
+          let t = ((p.x - ni.x) * edx + (p.y - ni.y) * edy + (p.z - niz) * edz) / lenSq;
+          t = Math.max(0, Math.min(1, t));
+          const wx = ni.x + t * edx;
+          const wy = ni.y + t * edy;
+          const wz = niz + t * edz;
+          resultsStore.stressQuery = { elementId: ud.id, t, worldX: wx, worldY: wy, worldZ: wz };
+          uiStore.selectElement(ud.id);
+          return;
+        }
+      }
+      // Clicked empty → clear stress query
+      resultsStore.stressQuery = null;
+      return;
+    }
+
+    const addToSel = e.shiftKey;
+    const sm = uiStore.selectMode;
+
+    // ── Per-subtype filtering (mirrors the 2D viewport): in a dedicated
+    // select mode, only that entity class is pickable. This also keeps
+    // selectedElements type-consistent — frame elements and plates/quads have
+    // overlapping numeric ids, disambiguated only by selectMode. ──
+    if (sm === 'shells') {
+      const shellHits = raycaster.intersectObjects(shellsParent.children, true);
+      for (const hit of shellHits) {
+        const ud = resolveHitUserData(hit);
+        if (ud?.type === 'plate' || ud?.type === 'quad') {
+          uiStore.selectElement(ud.id, addToSel);
+          return;
+        }
+      }
+      if (!addToSel) uiStore.clearSelection();
+      return;
+    }
+
+    /*
+     * ── Multi-kind: pick the nearest among ALL armed kinds ──
+     *
+     * Mirrors the 2D viewport's multi-kind click. Tried in the order a click
+     * identifies things — a node is a point, a member a line, a support a
+     * glyph — so the most specific answer wins at a joint, where all three
+     * sit on the same spot. Loads have no picking in 3D at all (they are
+     * selected from the Loads tab rows), so an armed 'loads' kind simply
+     * never hits here; the drag path DOES cover them via box-select.
+     * ('shells' is not re-checked: that mode returned just above.)
+     */
+    if (uiStore.multiKindSelect && sm !== 'stress') {
+      /*
+       * Clear up front, as the 2D branch does: selectNode/selectElement only
+       * reset the node/element/shell channels, so a hit on one kind would
+       * otherwise leave another kind's selection stale — still highlighted,
+       * still what Delete removes. The trailing clear-on-miss the single-kind
+       * branches need is covered by this.
+       */
+      if (!addToSel) uiStore.clearSelection();
+      let hit = false;
+      if (uiStore.selectsKind('nodes')) {
+        for (const h of raycaster.intersectObjects(nodesParent.children, true)) {
+          const ud = resolveHitUserData(h);
+          if (ud?.type === 'node') {
+            uiStore.selectNode(ud.id, addToSel);
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (!hit && uiStore.selectsKind('elements')) {
+        for (const h of raycaster.intersectObjects(elementsParent.children, true)) {
+          const ud = resolveHitUserData(h);
+          if (ud?.type === 'element') {
+            uiStore.selectElement(ud.id, addToSel);
+            if (dsmStepsStore.isOpen) dsmStepsStore.selectElement(ud.id);
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (!hit && uiStore.selectsKind('supports')) {
+        for (const h of raycaster.intersectObjects(supportsParent.children, true)) {
+          const ud = findUserData(h.object);
+          if (ud?.type === 'support') {
+            uiStore.selectSupport(ud.id, addToSel);
+            hit = true;
+            break;
+          }
+        }
+      }
+      return;
+    }
+
+    if (sm === 'nodes') {
+      const nodeHits = raycaster.intersectObjects(nodesParent.children, true);
+      for (const hit of nodeHits) {
+        const ud = resolveHitUserData(hit);
+        if (ud?.type === 'node') {
+          uiStore.selectNode(ud.id, addToSel);
+          return;
+        }
+      }
+      if (!addToSel) uiStore.clearSelection();
+      return;
+    }
+
+    if (sm === 'supports') {
+      const supHits = raycaster.intersectObjects(supportsParent.children, true);
+      for (const hit of supHits) {
+        const ud = findUserData(hit.object);
+        if (ud?.type === 'support') {
+          uiStore.selectSupport(ud.id, addToSel);
+          return;
+        }
+      }
+      if (!addToSel) uiStore.clearSelection();
+      return;
+    }
+
+    if (sm === 'loads') {
+      // 3D has no viewport load picking (loads are selected from the Loads
+      // tab rows); a click in loads mode must not select frame elements.
+      if (!addToSel) uiStore.clearSelection();
+      return;
+    }
+
+    // ── Elements mode (default): nodes first, then elements, then supports ──
+    const nodeHits = raycaster.intersectObjects(nodesParent.children, true);
+    const elemHits = raycaster.intersectObjects(elementsParent.children, true);
+    const supHits = raycaster.intersectObjects(supportsParent.children, true);
+
+    for (const hit of nodeHits) {
+      const ud = resolveHitUserData(hit);
+      if (ud?.type === 'node') {
+        uiStore.selectNode(ud.id, addToSel);
+        return;
+      }
+    }
+
+    for (const hit of elemHits) {
+      const ud = resolveHitUserData(hit);
+      if (ud?.type === 'element') {
+        uiStore.selectElement(ud.id, addToSel);
+        // Sync with DSM Matrix Explorer if wizard is open
+        if (dsmStepsStore.isOpen) dsmStepsStore.selectElement(ud.id);
+        return;
+      }
+    }
+
+    for (const hit of supHits) {
+      const ud = findUserData(hit.object);
+      if (ud?.type === 'support') {
+        uiStore.selectSupport(ud.id, addToSel);
+        return;
+      }
+    }
+
+    // Shells (plates + quads) — lowest priority so frames/nodes on top win.
+    const shellHits = raycaster.intersectObjects(shellsParent.children, true);
+    for (const hit of shellHits) {
+      const ud = resolveHitUserData(hit);
+      if (ud?.type === 'plate' || ud?.type === 'quad') {
+        const key = (ud.type === 'plate' ? 'p' : 'q') + ud.id;
+        uiStore.selectShell(key, addToSel);
+        return;
+      }
+    }
+
+    // Clicked on empty space → clear selection
+    if (!addToSel) {
+      uiStore.clearSelection();
+    }
+  }
+
+  function handleMouseMove(e: MouseEvent) {
+    updateMouseNDC(e);
+    if (!camera || !initialized) return;
+
+    // Update status bar with 3D world position (cheap single-plane raycast)
+    raycaster.setFromCamera(mouse, camera);
+    raycaster.camera = camera;
+    const wp = uiStore.workingPlane;
+    let groundPlane: THREE.Plane;
+    if (wp === 'XY') {
+      groundPlane = new THREE.Plane(planeNormal('XY'), -uiStore.nodeCreateZ);
+    } else if (wp === 'YZ') {
+      groundPlane = new THREE.Plane(planeNormal('YZ'), -uiStore.nodeCreateZ);
+    } else {
+      groundPlane = new THREE.Plane(planeNormal('XZ'), -uiStore.nodeCreateZ);
+    }
+    const worldPt = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(groundPlane, worldPt)) {
+      const rect = container.getBoundingClientRect();
+      uiStore.setMouse(e.clientX - rect.left, e.clientY - rect.top, worldPt.x, worldPt.y);
+    }
+
+    // Schedule the expensive hover/diagram raycast on the next animation frame.
+    // During orbit we clear any stale hover and skip entirely — recursive raycasts
+    // over a large scene are the main cost of orbit on pro fixtures.
+    scheduleHoverRaycast(e);
+
+    // ─── Node dragging ────────────────────────────────────────
+    if (draggedNodeId3D !== null && dragStartWorld3D) {
+      const newWorld = getGroundIntersection(e);
+      if (newWorld) {
+        const snapped = uiStore.snapWorld3D(newWorld.x, newWorld.y, newWorld.z);
+        const snappedVec = new THREE.Vector3(snapped.x, snapped.y, snapped.z);
+        const delta = snappedVec.clone().sub(dragStartWorld3D);
+
+        if (uiStore.selectedNodes.size > 1 && uiStore.selectedNodes.has(draggedNodeId3D)) {
+          for (const nodeId of uiStore.selectedNodes) {
+            const node = modelStore.getNode(nodeId);
+            if (node) {
+              modelStore.updateNode(nodeId, node.x + delta.x, node.y + delta.y, (node.z ?? 0) + delta.z);
+            }
+          }
+        } else {
+          modelStore.updateNode(draggedNodeId3D, snapped.x, snapped.y, snapped.z);
+        }
+
+        dragStartWorld3D = snappedVec;
+        dragMoved3D = true;
+        resultsStore.clear();
+        resultsStore.clear3D();
+      }
+      return;
+    }
+
+    // ─── Box selection tracking ───────────────────────────────
+    if (boxSelect3D) {
+      const rect = container.getBoundingClientRect();
+      boxSelect3D = { ...boxSelect3D, endX: e.clientX - rect.left, endY: e.clientY - rect.top };
+      // Keep re-rendering during the drag so the model stays visible (the camera
+      // is static during box-select, so without this the canvas wouldn't repaint).
+      invalidate();
+      return;
+    }
+
+    // ─── Preview line for element creation tool ──────────────
+    // Uses cached hoveredData (may lag ≤1 frame behind mouse) so this stays cheap.
+    if (uiStore.currentTool === 'element' && pendingElementNodeI !== null && scene) {
+      const nodeI = modelStore.nodes.get(pendingElementNodeI);
+      if (nodeI) {
+        const groundPt = getGroundIntersection(e);
+        let endPt: THREE.Vector3;
+        if (hoveredData?.type === 'node') {
+          const nJ = modelStore.nodes.get(hoveredData.id);
+          endPt = nJ ? new THREE.Vector3(nJ.x, nJ.y, nJ.z ?? 0) : (groundPt ?? new THREE.Vector3());
+        } else {
+          endPt = groundPt ?? new THREE.Vector3();
+        }
+
+        const startPt = new THREE.Vector3(nodeI.x, nodeI.y, nodeI.z ?? 0);
+
+        if (pendingLine) {
+          const pos = pendingLine.geometry.attributes.position as THREE.BufferAttribute;
+          pos.setXYZ(0, startPt.x, startPt.y, startPt.z);
+          pos.setXYZ(1, endPt.x, endPt.y, endPt.z);
+          pos.needsUpdate = true;
+          pendingLine.computeLineDistances();
+        } else {
+          const geo = new THREE.BufferGeometry().setFromPoints([startPt, endPt]);
+          const mat = new THREE.LineDashedMaterial({
+            color: 0x44ff88,
+            dashSize: 0.15,
+            gapSize: 0.1,
+            depthTest: false,
+          });
+          pendingLine = new THREE.Line(geo, mat);
+          pendingLine.computeLineDistances();
+          pendingLine.renderOrder = 999;
+          scene.add(pendingLine);
+        }
+        invalidate();
+      }
+    }
+  }
+
+  /**
+   * rAF-coalesce the expensive hover raycast so a burst of mousemove events
+   * collapses to one raycast per animation frame. Skips entirely while the user
+   * is orbiting — hover is irrelevant during camera manipulation, and the
+   * recursive raycast dominates orbit cost on large fixtures.
+   */
+  function scheduleHoverRaycast(e: MouseEvent) {
+    if (isOrbiting) {
+      if (hoveredData) {
+        restoreColor(hoveredData);
+        hoveredData = null;
+        hoveredNodeId3D = null;
+        invalidate();
+      }
+      hoverTooltip = null;
+      return;
+    }
+    pendingHoverEvent = e;
+    if (hoverRafId !== null) return;
+    hoverRafId = requestAnimationFrame(() => {
+      hoverRafId = null;
+      const ev = pendingHoverEvent;
+      pendingHoverEvent = null;
+      if (!ev || !camera || !initialized) return;
+      // Re-check orbit in case it started between schedule and frame.
+      if (isOrbiting) return;
+      runHoverRaycast(ev);
+    });
+  }
+
+  function runHoverRaycast(e: MouseEvent) {
+    updateMouseNDC(e);
+    raycaster.setFromCamera(mouse, camera);
+    raycaster.camera = camera;
+
+    // Recurse from the parents directly (recursive=true) instead of spreading
+    // every child into a new array each hover frame — on shell-heavy models that
+    // spread allocated an array of thousands of objects per pointer-move.
+    const hits = raycaster.intersectObjects([nodesParent, elementsParent, supportsParent, shellsParent], true);
+
+    let newHover: { type: string; id: number } | null = null;
+    for (const hit of hits) {
+      const ud = resolveHitUserData(hit);
+      if (ud) {
+        newHover = ud;
+        break;
+      }
+    }
+
+    if (hoveredData && (!newHover || newHover.id !== hoveredData.id || newHover.type !== hoveredData.type)) {
+      restoreColor(hoveredData);
+    }
+
+    if (newHover && (!hoveredData || newHover.id !== hoveredData.id || newHover.type !== hoveredData.type)) {
+      applyHoverColor(newHover);
+
+      const rect = container.getBoundingClientRect();
+      let tooltipText = '';
+      if (newHover.type === 'node') {
+        const n = modelStore.nodes.get(newHover.id);
+        if (n) tooltipText = t('viewport3d.nodeTooltip').replace('{id}', String(n.id)).replace('{x}', n.x.toFixed(2)).replace('{y}', n.y.toFixed(2)).replace('{z}', (n.z ?? 0).toFixed(2));
+      } else if (newHover.type === 'element') {
+        const el = modelStore.elements.get(newHover.id);
+        if (el) tooltipText = `Elem ${el.id} [${el.type}] ${el.nodeI}→${el.nodeJ}`;
+      } else if (newHover.type === 'support') {
+        const s = modelStore.supports.get(newHover.id);
+        if (s) tooltipText = t('viewport3d.supportTooltip').replace('{id}', String(s.id)).replace('{type}', s.type);
+      } else if (newHover.type === 'plate' || newHover.type === 'quad') {
+        const sh = newHover.type === 'plate' ? modelStore.plates.get(newHover.id) : modelStore.quads.get(newHover.id);
+        if (sh) tooltipText = `${newHover.type === 'plate' ? 'Plate' : 'Quad'} ${newHover.id} · t=${sh.thickness}m`;
+      }
+      if (tooltipText) {
+        hoverTooltip = { text: tooltipText, x: e.clientX - rect.left + 15, y: e.clientY - rect.top - 10 };
+      }
+    }
+
+    if (!newHover) {
+      // ─── Diagram hover tooltip ─────────────────────────────────
+      const dt = resultsStore.diagramType;
+      const r3d = resultsStore.results3D;
+      if (r3d && DIAGRAM_3D_TYPES.has(dt) && resultsParent.children.length > 0) {
+        const diagramHits = raycaster.intersectObjects(resultsParent.children, true);
+        let diagramTooltip: string | null = null;
+        for (const hit of diagramHits) {
+          const ud = hit.object.userData;
+          if (ud?.type === 'diagram3dMesh' || ud?.type === 'diagram3dLine') {
+            const elemId: number = ud.elementId;
+            const kind: Diagram3DKind = ud.kind;
+            const elem = modelStore.elements.get(elemId);
+            if (!elem) break;
+            const ni = modelStore.getNode(elem.nodeI);
+            const nj = modelStore.getNode(elem.nodeJ);
+            if (!ni || !nj) break;
+            const niz = ni.z ?? 0;
+            const njz = nj.z ?? 0;
+            // Project hit point onto element axis to get t
+            const edx = nj.x - ni.x;
+            const edy = nj.y - ni.y;
+            const edz = njz - niz;
+            const lenSq = edx * edx + edy * edy + edz * edz;
+            if (lenSq < 1e-12) break;
+            const p = hit.point;
+            let t = ((p.x - ni.x) * edx + (p.y - ni.y) * edy + (p.z - niz) * edz) / lenSq;
+            t = Math.max(0, Math.min(1, t));
+            // Find ElementForces3D for this element
+            const ef = r3d.elementForces.find(f => f.elementId === elemId);
+            if (!ef) break;
+            const val = evaluateDiagramAt(ef, kind, t);
+            const formatted = formatDiagramValue3D(val, kind);
+            const posLabel = `x=${(t * ef.length).toFixed(2)}m`;
+            diagramTooltip = `Elem ${elemId} (${posLabel}): ${formatted}`;
+            break;
+          }
+        }
+        if (diagramTooltip) {
+          const rect = container.getBoundingClientRect();
+          hoverTooltip = { text: diagramTooltip, x: e.clientX - rect.left + 15, y: e.clientY - rect.top - 10 };
+        } else {
+          hoverTooltip = null;
+        }
+      } else {
+        hoverTooltip = null;
+      }
+    }
+
+    // Re-render only when the hover highlight actually changed. newHover is a
+    // fresh object literal each call, so the old `hoveredData !== newHover`
+    // reference check fired on EVERY mouse move over the SAME object — a wasted
+    // full-scene redraw (thousands of draw calls on shell-heavy models). The
+    // tooltip is a DOM element (Svelte-reactive), so it doesn't need a WebGL
+    // redraw; only the material recolor (applyHoverColor/restoreColor, gated by
+    // value) does, and that happens exactly when the value below changes.
+    const sameHover = hoveredData?.id === newHover?.id && hoveredData?.type === newHover?.type;
+    if (!sameHover) invalidate();
+    hoveredData = newHover;
+    hoveredNodeId3D = (newHover?.type === 'node') ? newHover.id : null;
+  }
+
+  function handleMouseLeave() {
+    if (hoverRafId !== null) {
+      cancelAnimationFrame(hoverRafId);
+      hoverRafId = null;
+      pendingHoverEvent = null;
+    }
+    if (hoveredData) {
+      restoreColor(hoveredData);
+      hoveredData = null;
+      invalidate();
+    }
+    hoverTooltip = null;
+    hoveredNodeId3D = null;
+
+    // Cancel box select / drag on mouse leave
+    if (boxSelect3D) {
+      boxSelect3D = null;
+      controls.enabled = true;
+    }
+    if (draggedNodeId3D !== null) {
+      if (!dragMoved3D) historyStore.undo();
+      draggedNodeId3D = null;
+      dragMoved3D = false;
+      dragStartWorld3D = null;
+      controls.enabled = true;
+      finalizeDecorAfterDrag(); // triads/offset viz were suppressed during the drag
+    }
+  }
+
+  function restoreColor(data: { type: string; id: number }) {
+    if (data.type === 'node') {
+      const selected = uiStore.selectedNodes.has(data.id);
+      nodesInstanced.setBaseColor(data.id, selected ? COLORS.nodeSelected : COLORS.node);
+    } else if (data.type === 'element') {
+      // Same as applyHoverColor: the group is optional, the batched colour is
+      // not. Gated on the group, this restored nothing in wireframe — which
+      // did not show, only because the hover it was undoing never painted.
+      const group = elementGroups.get(data.id);
+      const dt = resultsStore.diagramType;
+      if (resultsStore.results3D && (dt === 'axialColor' || dt === 'colorMap' || dt === 'verification')) {
+        // No-op: applyHoverColor skips painting while a color mode is
+        // active, so there is nothing to restore — and a full
+        // syncColorMap3D() here recolored EVERY element (plus a batched
+        // position+color re-upload) per hover-out, a multi-ms stall per
+        // element crossed on large models. Mode changes mid-hover are
+        // covered by the colorMap $effect, which repaints everything.
+      } else {
+        // In shells mode selectedElements holds plate/quad ids — a frame
+        // element with an overlapping id is not selected.
+        const selected = uiStore.selectMode !== 'shells' && uiStore.selectedElements.has(data.id);
+        const elem = modelStore.elements.get(data.id);
+        const wireframe = uiStore.renderMode3D === 'wireframe';
+        const isTruss = elem?.type === 'truss';
+        const base = wireframe
+          ? (isTruss ? COLORS.truss : COLORS.frameWire)
+          : (isTruss ? COLORS.truss : COLORS.frame);
+        const color = selected ? COLORS.elementSelected : base;
+        if (group) setGroupColor(group, color);
+        elementsBatched.setBaseColor(data.id, color);
+        elementsBatched.flush();
+      }
+    } else if (data.type === 'support') {
+      const gizmo = supportGizmos.get(data.id);
+      if (gizmo) {
+        const selected = uiStore.selectedSupports.has(data.id);
+        setGroupColor(gizmo, selected ? COLORS.elementSelected : COLORS.support);
+      }
+    } else if (data.type === 'plate' || data.type === 'quad') {
+      const key = (data.type === 'plate' ? 'p' : 'q') + data.id;
+      const group = sceneCtx.shellGroups.get(key);
+      if (group) {
+        const sel = uiStore.selectedShells.has(key);
+        if (shellContourActive()) {
+          paintShellEdge(group, sel ? COLORS.elementSelected : (group.userData.baseEdgeColor as number) ?? COLORS.support);
+        } else if (sel) {
+          paintShell(group, COLORS.elementSelected, COLORS.elementSelected);
+        } else {
+          restoreShellColor(group);
+        }
+      }
+    }
+  }
+
+  /** Mirror of scene-sync's contour check (so hover/selection don't clobber an
+   *  active shell contour). */
+  function shellContourActive(): boolean {
+    if (resultsStore.diagramType !== 'colorMap') return false;
+    const k = resultsStore.colorMapKind;
+    if (k !== 'shellVonMises' && k !== 'shellBending') return false;
+    const r = resultsStore.results3D;
+    return !!(r && ((r.plateStresses?.length ?? 0) > 0 || (r.quadStresses?.length ?? 0) > 0));
+  }
+
+  function applyHoverColor(data: { type: string; id: number }) {
+    if (data.type === 'node') {
+      nodesInstanced.setColor(data.id, COLORS.nodeHovered);
+    } else if (data.type === 'element') {
+      /*
+       * NOT gated on having a group. In wireframe — Basic 3D's default — a
+       * plain member is a segment of the batched mesh and has no group at
+       * all, so `if (group)` skipped the hover highlight on every member in
+       * the model. The group is decoration where it exists; the batched
+       * colour is the visual.
+       */
+      const group = elementGroups.get(data.id);
+      // Don't override color map colors with hover
+      const dt = resultsStore.diagramType;
+      if (dt !== 'axialColor' && dt !== 'colorMap' && dt !== 'verification') {
+        if (group) setGroupColor(group, COLORS.elementHovered);
+        elementsBatched.setColor(data.id, COLORS.elementHovered);
+        elementsBatched.flush();
+      }
+    } else if (data.type === 'support') {
+      const gizmo = supportGizmos.get(data.id);
+      if (gizmo) setGroupColor(gizmo, COLORS.elementHovered);
+    } else if (data.type === 'plate' || data.type === 'quad') {
+      const key = (data.type === 'plate' ? 'p' : 'q') + data.id;
+      const group = sceneCtx.shellGroups.get(key);
+      if (group) {
+        if (shellContourActive()) paintShellEdge(group, COLORS.elementHovered);
+        else paintShell(group, COLORS.elementHovered, COLORS.elementHovered);
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  CAMERA HELPERS
+  // ═══════════════════════════════════════════════════════════════
+
+
+  function zoomToFit() {
+    _zoomToFit(camera, controls, modelStore.nodes, orthoCamera, container);
+    invalidate();
+  }
+
+  function setView(view: 'top' | 'front' | 'side' | 'iso') {
+    _setView(view, camera, controls, modelStore.nodes);
+    invalidate();
+  }
+
+  // ─── 3D Axis gizmo (bottom-left corner) ────────────────────
+  let gizmoCanvas: HTMLCanvasElement | null = null;
+
+  function drawAxisGizmo() {
+    if (!gizmoCanvas || !camera) return;
+    const gc = gizmoCanvas.getContext('2d');
+    if (!gc) return;
+    const s = gizmoCanvas.width;
+    gc.clearRect(0, 0, s, s);
+
+    // Use the rotation part of the view matrix to project world axes to screen
+    camera.updateMatrixWorld();
+    const viewMat = camera.matrixWorldInverse;
+    const axes = [
+      { label: 'X', color: '#ff4444', dir: GLOBAL_X.clone() },
+      { label: 'Y', color: '#44ff44', dir: GLOBAL_Y.clone() },
+      { label: 'Z', color: '#4488ff', dir: GLOBAL_Z.clone() },
+    ];
+
+    const cx = s / 2, cy = s / 2, len = s * 0.35;
+    const projected = axes.map(a => {
+      const d = a.dir.clone().transformDirection(viewMat);
+      return { ...a, sx: d.x * len, sy: -d.y * len, depth: d.z };
+    }).sort((a, b) => a.depth - b.depth);
+
+    for (const ax of projected) {
+      gc.strokeStyle = ax.color;
+      gc.lineWidth = 2;
+      gc.globalAlpha = ax.depth > 0 ? 1 : 0.3;
+      gc.beginPath();
+      gc.moveTo(cx, cy);
+      gc.lineTo(cx + ax.sx, cy + ax.sy);
+      gc.stroke();
+      gc.globalAlpha = 1;
+      gc.fillStyle = ax.color;
+      gc.font = 'bold 12px sans-serif';
+      gc.fillText(ax.label, cx + ax.sx * 1.2 - 4, cy + ax.sy * 1.2 + 4);
+    }
+  }
+
+  function toggleCameraMode() {
+    if (!camera || !controls || !renderer) return;
+    const isPersp = uiStore.cameraMode3D === 'perspective';
+    const newMode = isPersp ? 'orthographic' : 'perspective';
+    const from = isPersp ? perspCamera : orthoCamera;
+    const to = isPersp ? orthoCamera : perspCamera;
+
+    // Copy position, rotation, up
+    to.position.copy(from.position);
+    to.up.copy(from.up);
+    to.lookAt(controls.target);
+
+    camera = to;
+    controls.object = camera;
+
+    // Sync ortho frustum from distance
+    if (newMode === 'orthographic') {
+      const aspect = container ? container.clientWidth / container.clientHeight : 1;
+      syncOrthoFrustum(aspect);
+    } else {
+      perspCamera.updateProjectionMatrix();
+    }
+
+    uiStore.cameraMode3D = newMode;
+    invalidate();
+  }
+
+  // ─── Utils ──────────────────────────────────────────────────
+
+  function handleResize() {
+    if (!container || !renderer || !camera) return;
+    _handleResize(container, renderer, perspCamera, orthoCamera, camera, controls);
+  }
+
+  function updateClippingPlane() {
+    if (!renderer) return;
+    if (uiStore.clippingEnabled) {
+      // Normal vector: axis direction (clips on negative side of plane)
+      const normal = new THREE.Vector3(
+        uiStore.clippingAxis === 'x' ? -1 : 0,
+        uiStore.clippingAxis === 'y' ? -1 : 0,
+        uiStore.clippingAxis === 'z' ? -1 : 0,
+      );
+      clippingPlane.normal.copy(normal);
+      clippingPlane.constant = uiStore.clippingPosition;
+      renderer.clippingPlanes = [clippingPlane];
+    } else {
+      renderer.clippingPlanes = [];
+    }
+  }
+
+  function syncOrthoFrustum(aspect?: number) {
+    if (!orthoCamera || !controls) return;
+    const containerAspect = container ? container.clientWidth / container.clientHeight : 1;
+    _syncOrthoFrustum(orthoCamera, camera.position, controls.target, containerAspect, aspect);
+  }
+
+  function updateGrid() {
+    if (!scene) return;
+    gridGroup = _updateGrid(scene, gridGroup, uiStore.showGrid3D, uiStore.gridSize3D, uiStore.gridExtent3D, uiStore.workingPlane, uiStore.nodeCreateZ);
+  }
+
+  function createFatAxes(): THREE.Group {
+    return _createFatAxes(fatLineResolution);
+  }
+
+  function addAxisLabels() {
+    axisLabelSprites = _addAxisLabels(scene);
+  }
+</script>
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="viewport3d-wrapper"
+  bind:this={container}
+  style="cursor: {cursorStyle};"
+  onmousedown={handleMouseDown}
+  onmouseup={handleMouseUp}
+  onmousemove={handleMouseMove}
+  onmouseleave={handleMouseLeave}
+  oncontextmenu={handleContextMenu3D}
+>
+  <!-- Dev perf HUD (Shift+P or ?perf). Reads: high `calls` + stable `geos` = GPU
+       draw-call bound; `geos`/`texs` spiking + high `syncMs` while editing = CPU
+       teardown/rebuild churn. -->
+  {#if perfHud.on}
+    <div class="perf-hud" data-flush={perfHud.flush}>
+      <div><b>3D perf</b> <span style="opacity:.6">(Shift+P)</span></div>
+      <div>fps <b>{perfHud.fps}</b> · render <b>{perfHud.renderMs}</b>ms</div>
+      <!-- "/window", not "/250ms": the loop renders on demand, so a window is ≥250ms
+           and is however long it took to accumulate — it spans idle gaps. -->
+      <div>sync <b>{perfHud.syncMs}</b>ms/window</div>
+      <div>draw calls <b>{perfHud.calls}</b> · tris <b>{(perfHud.tris / 1000).toFixed(0)}</b>k</div>
+      <div>geos <b>{perfHud.geos}</b> · texs <b>{perfHud.texs}</b></div>
+    </div>
+  {/if}
+  <!-- Camera preset buttons -->
+  <div class="camera-controls" data-tour="camera-controls" style="top: {uiStore.floatingToolsTopOffset}px">
+    <!-- Same stack, same order as 2D: the pointer mode on top, then the view. -->
+    <PointerModeButton />
+    <button onclick={zoomToFit} title={t('viewport3d.zoomToFit')} aria-label={t('viewport3d.zoomToFit')}>
+      <Icon name="fit" size={17} />
+    </button>
+    <button onclick={() => setView('top')} title={t('viewport3d.topView')}>⊤</button>
+    <button onclick={() => setView('front')} title={t('viewport3d.frontView')}>⊡</button>
+    <button onclick={() => setView('side')} title={t('viewport3d.sideView')}>⊟</button>
+    <button
+      onclick={toggleCameraMode}
+      title={uiStore.cameraMode3D === 'perspective' ? t('viewport3d.switchToOrtho') : t('viewport3d.switchToPersp')}
+    >
+      {uiStore.cameraMode3D === 'perspective' ? 'P' : 'O'}
+    </button>
+    <button
+      onclick={() => { uiStore.clippingEnabled = !uiStore.clippingEnabled; }}
+      title={uiStore.clippingEnabled ? t('viewport3d.disableClipping') : t('viewport3d.enableClipping')}
+      class:active-cam={uiStore.clippingEnabled}
+    >
+      ✂
+    </button>
+    <button
+      onclick={() => { uiStore.measureMode = !uiStore.measureMode; }}
+      title={uiStore.measureMode ? t('viewport3d.disableMeasure') : t('viewport3d.enableMeasure')}
+      class:active-cam={uiStore.measureMode}
+    >
+      📏
+    </button>
+    <!-- Quick render-mode toggle: sections ↔ the previous mode (wireframe/solid).
+         Single compact button like the perspective/ortho switch. Shows the mode
+         Returns to the mode that was active before entering sections. -->
+    <button
+      onclick={() => {
+        if (uiStore.renderMode3D === 'sections') {
+          uiStore.renderMode3D = renderModeBeforeSections;
+        } else {
+          renderModeBeforeSections = uiStore.renderMode3D === 'solid' ? 'solid' : 'wireframe';
+          uiStore.renderMode3D = 'sections';
+        }
+      }}
+      class:active-cam={uiStore.renderMode3D === 'sections'}
+      title={uiStore.renderMode3D === 'sections' ? t('config.wireframe') : t('config.sections')}
+    >
+      {uiStore.renderMode3D === 'sections' ? '◫' : '⬡'}
+    </button>
+  </div>
+
+  <!-- Clipping plane controls -->
+  {#if uiStore.clippingEnabled}
+    <div class="clip-controls" style="top: {uiStore.floatingToolsTopOffset}px; left: {uiStore.showFloatingTools ? 12 : 48}px">
+      <div class="clip-axis-btns">
+        {#each ['x', 'y', 'z'] as ax}
+          <button
+            class:active-ax={uiStore.clippingAxis === ax}
+            onclick={() => { uiStore.clippingAxis = ax as 'x' | 'y' | 'z'; }}
+          >{ax.toUpperCase()}</button>
+        {/each}
+      </div>
+      <input
+        type="range"
+        min="-30"
+        max="30"
+        step="0.1"
+        value={uiStore.clippingPosition}
+        oninput={(e) => { uiStore.clippingPosition = +e.currentTarget.value; }}
+        class="clip-slider"
+      />
+      <span class="clip-val">{uiStore.clippingPosition.toFixed(1)}</span>
+    </div>
+  {/if}
+
+  <!-- Coordinate input dialog -->
+  {#if showCoordDialog}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="coord-dialog-overlay" onkeydown={(e) => { if (e.key === 'Escape') cancelCoordDialog(); }}>
+      <div class="coord-dialog">
+        <div class="coord-title">{t('viewport3d.createNodeCoords')}</div>
+        <div class="coord-row">
+          <label>X</label>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input type="number" step="any" bind:value={coordX} autofocus
+            onkeydown={(e) => { if (e.key === 'Enter') submitCoordDialog(); }}
+          />
+        </div>
+        <div class="coord-row">
+          <label>Y</label>
+          <input type="number" step="any" bind:value={coordY}
+            onkeydown={(e) => { if (e.key === 'Enter') submitCoordDialog(); }}
+          />
+        </div>
+        <div class="coord-row">
+          <label>Z</label>
+          <input type="number" step="any" bind:value={coordZ}
+            onkeydown={(e) => { if (e.key === 'Enter') submitCoordDialog(); }}
+          />
+        </div>
+        <div class="coord-actions">
+          <button class="coord-btn-ok" onclick={submitCoordDialog}>{t('viewport3d.create')}</button>
+          <button class="coord-btn-cancel" onclick={cancelCoordDialog}>{t('viewport3d.cancel')}</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Diagram legend -->
+  {#if diagramLegend && resultsStore.results3D}
+    <div class="diagram-legend">
+      {#if resultsStore.isEnvelopeActive && resultsStore.fullEnvelope3D}
+        <span class="legend-color" style="background: #4169E1;"></span>
+        <span class="legend-text">{t('viewport3d.envPlus')}</span>
+        <span class="legend-color" style="background: #E15041; margin-left: 8px;"></span>
+        <span class="legend-text">{t('viewport3d.envMinus')}</span>
+      {:else}
+        <span class="legend-color" style="background: {diagramLegend.color};"></span>
+        <span class="legend-text">{diagramLegend.name}</span>
+      {/if}
+      {#if resultsStore.overlayResults3D && resultsStore.overlayLabel}
+        <span class="legend-color" style="background: #FFA500; margin-left: 8px;"></span>
+        <span class="legend-text">{t('viewport3d.overlay').replace('{label}', resultsStore.overlayLabel)}</span>
+      {/if}
+    </div>
+  {/if}
+
+  <!--
+    Axial-as-member-colour legend.
+    
+    `diagramLegend` above returns null for this mode on purpose — it describes a
+    diagram drawn in ONE colour, and this mode has two. But two colours with no
+    key is worse than one with a name: red and blue on a shed tell a reader
+    nothing until somebody says which is which. The same pair of strings the 2D
+    viewport paints, so the two modes read identically.
+  -->
+  {#if resultsStore.diagramType === 'axialColor' && resultsStore.results3D}
+    <div class="diagram-legend">
+      <span class="legend-color" style="background: #e5482a;"></span>
+      <span class="legend-text">{t('viewport.tension')}</span>
+      <span class="legend-color" style="background: #2c6cb4; margin-left: 8px;"></span>
+      <span class="legend-text">{t('viewport.compression')}</span>
+    </div>
+  {/if}
+
+  <!-- Despiece (free-body) legend -->
+  {#if resultsStore.diagramType === 'despiece' && resultsStore.results3D}
+    <div class="diagram-legend">
+      <span class="legend-color" style="background: #ff7070;"></span>
+      <span class="legend-text">{t('despiece.legendAxial')}</span>
+      <span class="legend-color" style="background: #4ecdc4; margin-left: 8px;"></span>
+      <span class="legend-text">{t('despiece.legendShear')}</span>
+      <span class="legend-color" style="background: #ffd166; margin-left: 8px;"></span>
+      <span class="legend-text">{t('despiece.legendMoment')}</span>
+      <span class="legend-color" style="background: #00e676; margin-left: 8px;"></span>
+      <span class="legend-text">{t('despiece.legendReaction')}</span>
+      <span class="legend-text" style="margin-left: 10px; opacity: 0.7; font-style: italic;">{t('despiece.legendNote')}</span>
+    </div>
+  {/if}
+
+  <!-- Verification color legend: utilization is demand/capacity, plus the three
+       honest display states (current / stale / unavailable). -->
+  {#if resultsStore.diagramType === 'verification' && (verificationStore.hasResults || verificationStore.hasDemandData)}
+    <div class="diagram-legend verification-legend" data-testid="overlay-legend">
+      <span class="legend-text legend-util-label">u = D/C</span>
+      <span class="legend-color" style="background: #22cc66;"></span>
+      <span class="legend-text">&le; 0.5</span>
+      <span class="legend-color" style="background: #88cc22; margin-left: 6px;"></span>
+      <span class="legend-text">&le; 0.9</span>
+      <span class="legend-color" style="background: #ddaa00; margin-left: 6px;"></span>
+      <span class="legend-text">&le; 1.0 &#9888;</span>
+      <span class="legend-color" style="background: #ee2222; margin-left: 6px;"></span>
+      <span class="legend-text">&gt; 1.0 &#10007;</span>
+      <span class="legend-sep">|</span>
+      <span class="legend-color legend-current" data-testid="overlay-legend-current" style="background: #22cc66;"></span>
+      <span class="legend-text">{t('design.overlay.current')}</span>
+      <span class="legend-color legend-stale" data-testid="overlay-legend-stale"></span>
+      <span class="legend-text">&#8987; {t('design.overlay.stale')}</span>
+      <span class="legend-color legend-unavailable" data-testid="overlay-legend-unavailable" style="background: #888888;"></span>
+      <span class="legend-text">&#9675; {t('design.overlay.unavailable')}</span>
+    </div>
+  {/if}
+
+  <!-- Box select overlay (AutoCAD-style) -->
+  {#if boxSelect3D}
+    {@const x = Math.min(boxSelect3D.startX, boxSelect3D.endX)}
+    {@const y = Math.min(boxSelect3D.startY, boxSelect3D.endY)}
+    {@const w = Math.abs(boxSelect3D.endX - boxSelect3D.startX)}
+    {@const h = Math.abs(boxSelect3D.endY - boxSelect3D.startY)}
+    {@const isWindow = boxSelect3D.endX >= boxSelect3D.startX}
+    <div
+      class="box-select-rect"
+      class:window-mode={isWindow}
+      class:crossing-mode={!isWindow}
+      style="left: {x}px; top: {y}px; width: {w}px; height: {h}px;"
+    ></div>
+  {/if}
+
+  <!-- Hover tooltip -->
+  {#if hoverTooltip}
+    <div class="hover-tooltip" style="left: {hoverTooltip.x}px; top: {hoverTooltip.y}px;">
+      {hoverTooltip.text}
+    </div>
+  {/if}
+  <canvas
+    bind:this={gizmoCanvas}
+    class="axis-gizmo"
+    width="80"
+    height="80"
+  ></canvas>
+
+  <!-- Shell contour legend (visible only while a shell contour map is active) -->
+  <ShellContourLegend />
+</div>
+
+<style>
+  .viewport3d-wrapper {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Dev perf HUD — measurement only (Shift+P / ?perf). */
+  .perf-hud {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    z-index: 50;
+    pointer-events: none;
+    font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #cfe8ff;
+    background: rgba(10, 18, 28, 0.82);
+    border: 1px solid rgba(120, 180, 255, 0.25);
+    border-radius: 6px;
+    padding: 6px 8px;
+    white-space: nowrap;
+  }
+  .perf-hud b { color: #fff; }
+
+  .viewport3d-wrapper :global(canvas:not(.axis-gizmo)) {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+  }
+  .axis-gizmo {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    width: 80px !important;
+    height: 80px !important;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .camera-controls {
+    position: absolute;
+    right: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 10;
+    transition: top 0.15s ease;
+    /* Right-aligned so every button in the stack shares an edge. */
+    align-items: flex-end;
+}
+
+  .camera-controls button {
+    width: 32px;
+    height: 32px;
+    border: 1px solid #445;
+    border-radius: 4px;
+    background: rgba(22, 33, 62, 0.9);
+    color: #aabbcc;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+  }
+
+  .camera-controls button:hover {
+    background: rgba(40, 60, 100, 0.95);
+    color: #ddeeff;
+  }
+
+  .camera-controls button.active-cam {
+    background: rgba(78, 205, 196, 0.25);
+    color: #4ecdc4;
+    border-color: #4ecdc4;
+  }
+
+  .clip-controls {
+    position: absolute;
+    transition: top 0.15s ease, left 0.15s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 10;
+    background: rgba(22, 33, 62, 0.92);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid #445;
+  }
+  .clip-axis-btns {
+    display: flex;
+    gap: 2px;
+  }
+  .clip-axis-btns button {
+    width: 24px;
+    height: 24px;
+    border: 1px solid #445;
+    border-radius: 3px;
+    background: transparent;
+    color: #aabbcc;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .clip-axis-btns button.active-ax {
+    background: rgba(78, 205, 196, 0.25);
+    color: #4ecdc4;
+    border-color: #4ecdc4;
+  }
+  .clip-slider {
+    width: 100px;
+    accent-color: #4ecdc4;
+  }
+  .clip-val {
+    color: #aabbcc;
+    font-size: 0.65rem;
+    min-width: 30px;
+    text-align: right;
+  }
+
+  .coord-dialog-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    background: rgba(0,0,0,0.35);
+  }
+
+  .coord-dialog {
+    background: #16213e;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    min-width: 200px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  }
+
+  .coord-title {
+    font-size: 0.85rem;
+    color: #4ecdc4;
+    margin-bottom: 0.75rem;
+    font-weight: 600;
+  }
+
+  .coord-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .coord-row label {
+    width: 20px;
+    color: #aaa;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  .coord-row input {
+    flex: 1;
+    background: #0f3460;
+    border: 1px solid #1a4a7a;
+    border-radius: 4px;
+    color: #eee;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.85rem;
+    text-align: right;
+    font-family: monospace;
+  }
+
+  .coord-row input:focus {
+    outline: none;
+    border-color: #4ecdc4;
+  }
+
+  .coord-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-top: 0.75rem;
+  }
+
+  .coord-btn-ok {
+    padding: 0.3rem 0.8rem;
+    background: #e94560;
+    border: none;
+    border-radius: 4px;
+    color: white;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .coord-btn-ok:hover { background: #ff6b6b; }
+
+  .coord-btn-cancel {
+    padding: 0.3rem 0.8rem;
+    background: #2a2a4e;
+    border: none;
+    border-radius: 4px;
+    color: #aaa;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .coord-btn-cancel:hover { background: #3a3a5e; }
+
+  .diagram-legend {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(10, 15, 30, 0.85);
+    padding: 5px 12px;
+    border-radius: 5px;
+    border: 1px solid #334;
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .legend-color {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .legend-text {
+    color: #ccd;
+    font-size: 0.78rem;
+    font-family: monospace;
+  }
+
+  .legend-util-label { opacity: 0.75; margin-right: 2px; }
+  .legend-sep { color: #445; margin: 0 6px; font-size: 0.78rem; }
+  /* Stale = desaturated status colour + diagonal hatch, so "not current" reads
+     without relying on hue alone. */
+  .legend-stale {
+    margin-left: 6px;
+    background:
+      repeating-linear-gradient(45deg, #8a8f7a 0 3px, #5d6154 3px 6px);
+  }
+  .legend-unavailable { margin-left: 6px; }
+  .legend-current { margin-left: 0; }
+
+  .hover-tooltip {
+    position: absolute;
+    background: rgba(10, 15, 30, 0.92);
+    color: #ccd;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: monospace;
+    pointer-events: none;
+    white-space: nowrap;
+    border: 1px solid #334;
+    z-index: 20;
+  }
+
+  /* ─── Box select overlay ─── */
+  .box-select-rect {
+    position: absolute;
+    pointer-events: none;
+    z-index: 15;
+  }
+  .box-select-rect.window-mode {
+    border: 1px solid #4ecdc4;
+    background: rgba(78, 205, 196, 0.08);
+  }
+  .box-select-rect.crossing-mode {
+    border: 1px dashed #44bb44;
+    background: rgba(68, 187, 68, 0.06);
+  }
+</style>

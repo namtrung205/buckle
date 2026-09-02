@@ -1,0 +1,483 @@
+# Changelog
+
+Read next:
+- solver roadmap: [`SOLVER_ROADMAP.md`](/Users/unbalancedparen/projects/dedaliano/docs/roadmap/SOLVER_ROADMAP.md)
+- benchmark/proof status: [`BENCHMARKS.md`](/Users/unbalancedparen/projects/dedaliano/docs/BENCHMARKS.md)
+
+This file is the historical record.
+It should capture what changed, not what should be built next.
+
+## Unreleased
+
+### Changed
+
+#### Shell edge loads: outward normal sign corrected (E6 audit, 2026-08-14)
+
+**BREAKING (saved models): `quadEdge` and `quad9Edge` loads reverse direction.**
+`quad_edge_load` and `quad9_edge_load` built their in-plane normal as `ez × et`, which
+points INWARD for the CCW node ordering `quad_local_axes` guarantees — the opposite of
+the convention documented on `SolverQuadEdgeLoad` ("positive `qn` = outward from
+element") and of `curved_shell_edge_load`, which has always used `t̂ × d̂`. The three
+shell elements disagreed, and the two quads contradicted their own documented input.
+
+The code now matches the documentation, so **the documentation did not change and the
+results did**. Any existing model carrying a `quadEdge`/`quad9Edge` load now produces
+forces in the opposite direction: a case that read as tension reads as compression.
+There is no version gate and no automatic migration — `qn` is passed through unmodified
+at every call site. Re-check any saved model that uses these load types, and negate `qn`
+where the previous (inward) direction was the intended one.
+
+Unaffected: `curved_shell` edge loads, which were already correct; pressure loads; and
+any model without edge loads.
+
+**Magnitude fix in the same place.** The normal was also unnormalized. `ez` is derived
+from the element diagonals, so it is perpendicular to the edge chord only when the quad
+is planar; on a warped element `|et × ez| = sin θ < 1` and `qn` was applied at that
+fraction of its stated value — correct direction, silently short, and invisible to any
+test built on a flat square. Both quads now normalize, matching `curved_shell`.
+
+#### Curved shell thermal gradient: 2× factor removed (E6 audit, 2026-08-14)
+
+`curved_shell_thermal_load` applied twice the thermal moment it should. The through
+-thickness gradient term now integrates to `M_T = Eα·ΔTg·t²/(12(1−ν))`, matching
+`quad_thermal_load`. Thermal-gradient results on curved shells change by a factor of 2.
+
+#### RC Design workflow rebuild — verified auto-design, honest invalidation (PR15, 2026-07-25)
+
+**BREAKING (verification results): `cirsoc201.provided.v1` → `cirsoc201.provided.v2`.**
+Statuses produced by earlier versions are NOT comparable with this release — some
+previous passes were false. Every design certificate now records `verifierId`, and
+the UI carries a migration notice (`design.cert.migrationNotice`).
+
+**Reported regression fixed.** A committed reinforcement edit called
+`verificationStore.clear()`, which emptied the design table and also destroyed
+`concreteMap` — the data the live provided-rebar verification needs as input. Editing
+reinforcement now preserves the table, the expansion, filters, scroll position and
+selection; the affected member re-verifies immediately from retained demand.
+
+**The real trust bug fixed.** The table summary and the viewport overlay read the
+auto-design baseline, which is "designed to pass" by construction. Weakening a
+member's rebar left the viewport green. Status everywhere is now derived from the
+PROVIDED reinforcement, with three honest display states: current, stale (desaturated
+status colour + hatch + glyph) and unavailable (never green).
+
+**Governing-axis correction.** Beam and column verification was hardcoded to the
+Mz/Vy pair while the generator selected the axis per member. Measured on the
+408-member flagship frame: 128 X-beams received *false passes* (utilization 0.62 while
+the real 1113 kN·m gravity moment was unchecked), and columns were designed for a
+6 kN·m moment while carrying 973 kN·m. Both now consume a single
+`resolveDesignAxes` result. Missing reinforcement in a loaded region is an explicit
+FAILURE instead of a silently skipped check; column ties check both shear components;
+the slenderness magnifier reaches the verifier.
+
+**Auto-design now produces verified reinforcement.** A deterministic, bounded
+candidate search designs each beam region independently, enforces bar fit at
+generation time, recomputes the effective depth from the actual layer centroid, and
+verifies every candidate with the authoritative verifier the UI displays. Outcomes are
+`VERIFIED` (with a certificate), `SECTION_INADEQUATE` (exhaustive, with a preliminary
+section recommendation), `DEMAND_UNAVAILABLE`, `SEARCH_EXHAUSTED` or `UNSUPPORTED` —
+none of which is ever counted as a pass. Measured on `rc-design-frame`:
+**376/408 failing before → 408/408 VERIFIED after** at rebuild time, worst certified
+utilization 0.993, 408 members in ~0.4 s. (The second review round below later
+tightened biaxial coverage: the same frame now reports 386 VERIFIED + 22 honest
+refusals of previously false-passing wind-combo beams.)
+
+**Utilization convention** is now demand/capacity everywhere (warn 0.95 < u ≤ 1.00,
+fail above 1.00); the ad-hoc `1/ratio` inversion in the UI is gone.
+
+**Review hardening (PR #78 review follow-ups).** Three verifier defects in the
+regional rewrite, all in `station-design-forces.ts`:
+
+- Column uniaxial P-M capacity was analyzed about the WRONG axis for My-governed
+  rectangular columns (b≠h): the capacity axis followed the moment NAME instead of
+  the flex-rotated section, checking at the strong depth — measured false passes of
+  ~2.2x (util 0.68 reported where the true value is 1.51). The mapping is now
+  primary→depth h, secondary→depth b.
+- Opposite-sign demand was silently unchecked: hogging in the span (cantilevers,
+  pattern live load, uplift) and sagging at the supports were filtered out of every
+  region. A new sweep checks them against the steel that actually reaches each region
+  (from the curtailment/continuity resolution) and FAILS explicitly when none does;
+  the candidate generator seeds and escalates support top steel for span hogging and
+  span bottom steel for support sagging. The pre-PR sweep coverage is restored.
+- Shear capacity received the axial force in the solver's sign (+ = tension) while
+  expecting compression-positive — compression weakened members (false failures) and
+  tension strengthened them (unsafe passes). Both call sites now pass -N. Column ties
+  also use a per-axis effective depth (secondary axis used the primary depth).
+
+Plus: stirrup/tie legs clamped to [2, 6] and column face bars to 6 at the store layer
+(typed input bypassed the editors' max; legs multiply shear capacity unchecked);
+`designOne` keeps provisional flags in sync; the design table no longer hijacks
+editor keystrokes (Enter collapsed the row being edited). Regression coverage:
+`design/__tests__/review-fixes.test.ts` (9 tests incl. rectangular-column P-M,
+cantilever-style span hogging, shear axial sign) and
+`store/__tests__/rebar-review-fixes.test.ts` (clamps + provisional sync).
+The flagship frame still designed 408/408 VERIFIED with the sweep active
+(now 386 + 22 explicit biaxial refusals — see the second review round below).
+
+**Review hardening, second round (independent review of the full PR).** Six
+further fixes, each RED-verified before the change:
+
+- Biaxial column P-M mapping: the first-round axis fix covered the uniaxial branch
+  only; the biaxial branch passed moments by name into the rotated section. Same
+  physical column gave utilization 0.903 vs 0.518 depending on axis naming; now
+  primary→Muz/secondary→Muy with a mirror-symmetry regression test.
+- Biaxial beams (secondary demand ≥10% of primary) are now explicitly REFUSED
+  instead of certified with an unchecked axis — 22 wind-combo beams on the flagship
+  frame moved from false-pass to `SEARCH_EXHAUSTED (limiting: biaxial)`.
+- Undo/redo of reinforcement-only edits goes through the silent path: the analysis,
+  demand and results survive Ctrl+Z (previously a full invalidation).
+- Solve generations are stamped on every results publish: verification computed
+  against superseded forces now displays as `stale` (previously unreachable), closing
+  the self-weight/axis-convention re-solve hole.
+- Solve results that arrive after a model mutation are discarded (mutation-epoch
+  guard in live-calc) — the moving-load fix generalized to the main combination path.
+- The 190 `design.*` i18n keys now exist in all 14 locales (2,280 translated strings)
+  with a key-parity test.
+
+**One "Run Design" button became three explicit commands plus Design all**
+(compute demands / run code check / auto-design), with progress, cancellation and
+partial-run honesty. Reinforcement writes go through
+`modelStore.reinforcementTransaction`: one undo step per action, one reactive commit,
+no model-version bump and **zero structural solves** — previously rebar edits were not
+undoable at all.
+
+**Added**: derived member grouping (elevation bands labelled `L3 +10.20 m`, structural
+planes, frame lines with a collinearity gate, section/material/kind/connectivity),
+batch editing with preview + validation + opt-in "Protect manual overrides" +
+one-step undo, changed-members review with provisional (uncertified) candidates, a
+design-code adapter registry (CIRSOC 201 implemented; ACI/Eurocode/NDS/TMS/AISI
+registered as honestly unsupported), and Playwright browser coverage.
+
+**Fixture corrections**: `rc-design-frame` authored its 120 Y-direction beams' gravity
+load in the local *y* (horizontal) component — 240 load entries moved to `qZ`. Load
+combinations added; sections enlarged to 500×500 columns and 350×650 beams so the
+flagship example demonstrates a complete design. New `rc-design-qa-8` fixture for fast
+deterministic tests. `orientation-diagnostic.ts` detects this class of error and blocks
+certification for affected members.
+
+**Initially-suspected solver defect: withdrawn.** While authoring this work, a raw
+WASM probe (no explicit `localY`) appeared to bend a global-Y member about local y
+instead of local z — ratio exactly Iz/Iy — and it reproduced on the untouched baseline,
+so it was written up as a pre-existing upstream defect. CI disproved that: `web/src/lib/wasm/`
+is gitignored and CI rebuilds it from the current `engine/` source, where the same probe
+returns the correct Iz result. The authoring machine's binary predated the newest engine
+commit by nine days. There is no solver defect and no solver change is needed; the
+regression coverage in `design/__tests__/orientation-boundary.test.ts` now asserts the
+correct behaviour and fails with an explicit "rebuild your local WASM" message if a
+stale binary is used.
+
+**Deferred to the next PR**: continuity-aware continuous-beam detailing, coordinated
+bar cutoff/laps across spans, beam-column joint design, seismic joint checks and
+strong-column/weak-beam design.
+
+### Performance
+
+#### JsValue boundary on the 8 hot WASM exports (2026-07-24)
+
+- `solve_2d`/`solve_3d`, `combine_results_2d`/`3d`, `compute_envelope_2d`/`3d`, and `solve_multi_case_2d`/`3d` now cross the JS↔WASM boundary as `JsValue` (serde-wasm-bindgen, maps as plain objects) instead of JSON text — no `stringify`/`parse` round trip on the hot path. Export names unchanged; ~70 cold exports untouched.
+- Worker pool messages carry structured-cloned plain objects instead of ~1MB JSON strings, removing main-thread JSON work from the parallel 3D combinations path.
+- `assertFiniteWire` guard preserves the old boundary semantics: NaN/Infinity inputs are rejected before reaching the solver (JSON.stringify used to coerce them to `null`, which serde_json rejected).
+- New `web/scripts/bench-wasm-boundary.mjs` benchmark (`npm run bench:wasm-boundary`): combine+envelope per call 1.15–2.1× faster; single-solve total is noise-bound (boundary is ~2% of solve).
+
+### Fixed
+
+#### Hinge/release correctness cleanup (2026-04-26)
+
+Systematic cleanup of hinge/release semantics across the solver contract:
+
+- **Bug A — orphan rotation DOFs**: 2D and 3D kinematic analysis now detect rotation-only zero-stiffness rows directly from `K_ff` instead of relying only on topology heuristics. Dense 2D assembly also stabilizes these orphan rotational DOFs so truss-attached pinned nodes no longer fail as false mechanisms.
+- **Bug B — 3D articulated arch / over-release**: 3D frame elements now use explicit per-axis end releases (`releaseMy`, `releaseMz`, `releaseT`) instead of ambiguous generic hinge booleans. This fixes the articulated-arch failure mode caused by releasing both bending planes at once.
+- **3D schema cleanup**: legacy 3D `hingeStart` / `hingeEnd` fields are no longer accepted by the solver input contract; stale 3D JSON now fails loudly instead of silently preserving broken semantics.
+- **3D UI bridge mapping**: the current 3D hinge bridge now maps the existing generic UI hinge toggle to a single in-plane bending release (`Mz`) rather than an accidental ball-joint-style double release.
+- **Regression coverage**: Rust + TypeScript reproducers now cover both the orphan-rotation false mechanism and the 3D articulated-arch release contract.
+
+#### Trust hardening — 25+ correctness fixes (2026-04-19)
+
+Systematic audit and fix of solver correctness issues across elements, constraints, and diagnostics:
+
+- **Timoshenko hinge FEF condensation**: correct shear/moment redistribution ratios derived from stiffness matrix — `sv = 6/(L(4+φ))`, `sm = (2-φ)/(4+φ)`. Both 2D (φ=0) and 3D (φ_y, φ_z) call sites updated across `assembly.rs`, `sparse_assembly.rs`, `linear.rs`, `corotational.rs`
+- **Pre-solve gates**: `run_pre_solve_gates_3d` wired into all advanced solvers (corotational, material_nonlinear, fiber_nonlinear, winkler) — shell distortion, suspicious local axes, isolated/duplicate nodes
+- **Shell distortion / Jacobian gating**: quality metrics for Quad9 (MITC9), SolidShell (SHB8-ANS), and CurvedShell — aspect ratio, skew, warping, Jacobian ratio at integration points. 24 shell mesh quality gate tests
+- **RigidLink DOF validation**: `validate_constraint_refs` now checks RigidLink DOF indices against `max_dofs_per_node` (3 for 2D, 6 for 3D)
+- **Inclined support equilibrium summary**: reactions transformed from support-local to global before summing, fixing incorrect totals. 2D + 3D tests
+- **Hognestad tangent**: removed contradictory dead code in pre-peak ascending branch
+- **Cable validation**: cable elements now pass input validation (were rejected as unknown type)
+- **Dead DKT code**: removed unused `ak/bk/ck/dk/ek` arrays from plate.rs
+
+### Added
+
+#### Step 4 runtime gates and CI improvements (2026-04-19)
+
+- **Runtime regression gates** (`perf_regression_advanced.rs` — 11 tests): timing bounds for modal, buckling, harmonic, Guyan, Craig-Bampton on representative plate models; sub-cubic scaling verification; sparse path efficiency checks
+- **k_full overbuild gates** (`kfull_overbuild_gates.rs` — 15 tests): audit confirmed all solver paths correct (no unnecessary k_full construction); gate tests lock down the contract; fill-ratio gates for frame, shell, and modal paths
+- **CI pipeline**: named gates for perf regression, advanced perf, and k_full overbuild; quick criterion benchmark run with HTML artifact upload (30-day retention)
+
+#### Frontend performance optimizations (2026-04-19)
+
+- **Invalidation-based viewport rendering**: both 2D (Canvas) and 3D (Three.js) viewports now render on-demand instead of continuous 60fps loops. Continuous rendering only for active animations, keyboard navigation, and orbit damping. Idle CPU drops to near-zero
+- **Live calc debounce**: 120ms for 2D, 200ms for 3D — prevents solver spam during drag/type operations. Manual solve remains immediate
+- **Continuous rendering flag**: `uiStore.continuousRendering` toggle to opt-in to old always-render behavior
+
+#### Comprehensive Z-up coordinate convention enforcement (2026-04-18)
+
+Audited and fixed 60+ Z-up/Y-up axis convention inconsistencies across 30+ files:
+
+- **viewport 3D rendering**: WASD pan uses forward.z (not forward.y), Q/E vertical movement on Z axis, distributed load axis fixed, 5 results-sync functions now use `projectNodeToScene()` (computeStructureBBox, syncVerificationLabels, applyFrameHeatmap, syncReactions, syncConstraintForces), measurement label offset corrected
+- **store operations**: `splitElementAtPoint`, `mirrorNodes`, `rotateNodes` now preserve Z coordinate for 3D models
+- **file persistence**: `.ded` files now persist `analysisMode` and `axisConvention3D`; share links serialize plates, quads, and constraints for PRO models; HTML report uses `dz`/`dry` instead of `dy`/`drz`
+- **exports**: added `isMode3D()` helper so PRO mode uses 3D code paths in CSV, HTML, and Excel exports (6 instances in excel.ts, 3 in toolbar)
+- **fixture loading**: separated spring stiffness keys from support opts in `load-fixture.ts`
+- **IFC import**: added `ifcToZup()`/`ifcDirToZup()` remapping with parent placement hierarchy composition
+- **backend AI**: `fz`/`my` as canonical 2D nodal load fields (`fy`/`mz` as serde aliases for backward compat); bounds contract uses `z_min`/`z_max` always-present, `y_min`/`y_max` optional for 3D
+- **section stress**: quick-path `computeSectionStress` in `section-stress-3d.ts` fixed My/Mz ↔ yMax/zMax pairing per Navier formula (`σ = N/A + Mz·y/Iz + My·z/Iy`)
+- **locale labels**: `rotMomentHelp` corrected across all 14 locales — My is weak-axis bending, Mz is strong-axis
+- **basic 3D node creation**: `shouldProjectModelToXZ()` now excludes `'3d'` mode (was only excluding `'pro'`), fixing Y/Z swap in basic 3D mode node placement
+- **axis validation**: added `validateAxisSafety()` to detect 2D files with non-zero Z coordinates on load
+- **autosave**: `restoreAutosave()` now restores `analysisMode` and `axisConvention3D`
+
+New tests: 39 tests across 4 new test files (model-zcoord, zup-results-sync-projection, fixture-support-metadata, file-save-load). All 1946 web tests and 5919 engine tests pass. (blended count predating the engine-coupled/reference split — see docs/BENCHMARKS.md 'Test taxonomy')
+
+### Added
+
+#### Extraction contracts, structured diagnostics, and solver-run artifacts
+
+- hardened the beam-station extraction contract for downstream RC/steel workflows:
+  - added `schemaVersion` to station payloads with documented evolution rules
+  - added no-phantom-governing protections so empty governing entries do not serialize fake combo IDs or infinities
+  - added representative full-pipeline regression fixtures for RC and steel solve → stations → demands workflows
+  - added grouped/member-level snapshot and contract coverage
+  - added governing combo names to governing entries and grouped member-governing entries
+- added pre-solve model-quality gates for:
+  - disconnected nodes / isolated components
+  - near-duplicate nodes
+  - initial 2D instability-risk detection
+- expanded structured diagnostics and trust signals:
+  - machine-readable diagnostic codes, severity, node/DOF references, and path-parity coverage
+  - equilibrium and residual summaries in representative result payloads
+  - sparse fill-ratio diagnostics after sparse Cholesky
+  - documented tolerance policy by test type
+- added a solver-run artifact contract for reproducibility and replay:
+  - `SolverRunMeta` with engine version, build SHA, solver path, and model size
+  - `SolverRunArtifact` carrying metadata, diagnostics, equilibrium, timings, result summary, and compact output fingerprint
+  - JSON round-trip coverage for artifact serialization
+
+### Changed
+
+#### WASM-first with TS fallback across engine modules
+
+- rewired kinematic analysis (2D/3D) to delegate to WASM when available, falling back to full TS LU rank analysis when not
+- deduplicated diagram code: diagrams-3d.ts `computeDiagram3D` now calls `evaluateDiagramAt` instead of duplicating 140-line switch/case; diagrams.ts uses shared `buildDiagram` helper
+- added TS fallback for `computeDeformedShape` (was WASM-only, broke tests)
+- restored TS fallback for `analyzeSectionStress` (2D), `analyzeSectionStress3D`, and `analyzeSectionStressFromForces` — all had been migrated to WASM-only without fallback
+- rewired `moving-loads.ts` to use TS solver when WASM unavailable
+- net reduction of ~240 LOC across migrated files
+
+### Fixed
+
+#### Test infrastructure: localStorage and WASM fallback
+
+- fixed `i18n/store.svelte.ts` localStorage crash in vitest: `typeof localStorage !== 'undefined'` passes in Node but `.getItem` is not a function; added `hasLocalStorage()` guard
+- fixed test imports in `inclined-supports.test.ts` and `kinematic-analysis.test.ts` to import kinematic functions from `kinematic-2d` instead of `solver-js`
+- test suite went from 122 passing / 3 failing / 31 suites crashing to 1625 passing / 0 failing / 35 suites green
+
+### Added
+
+#### Design-grade beam station extraction
+
+- added `engine/src/postprocess/beam_stations.rs` with 2D and 3D station extraction
+- `extract_beam_stations()` and `extract_beam_stations_3d()` evaluate M/V/N (or all 6 force components in 3D) at configurable stations per member, across all load combinations, tracking governing pos/neg values with combo provenance
+- exposed as WASM functions `extract_beam_stations` and `extract_beam_stations_3d` for direct use from the product layer
+- default 11 stations (tenth-points), configurable via `num_stations`
+- 8 unit tests (endpoint parity, midspan UDL, governing combo split, configurable count, missing element skip, determinism, 3D endpoint parity, envelope cross-check)
+- 3 integration tests (full solve→station extraction with multi-span continuous beam and two combos, JSON round-trip with camelCase verification, snapshot stability test for product-team contract)
+- unblocks RC design tables, reinforcement schedules, and downstream BBS generation
+- `Option<GoverningEntry>` pattern prevents phantom infinities / sentinel combo_id=0 when no combo data exists
+- `combo_name` propagated into per-station combo force entries — frontend never needs a separate join
+- `SignConvention2D` / `SignConvention3D` metadata embedded in every result payload
+- grouped-by-member convenience layer: `extract_beam_stations_grouped()` / `extract_beam_stations_grouped_3d()` with member-level governing summaries (`MemberGoverning` / `MemberGoverningEntry` including station index), WASM bindings, 5 unit tests, 1 integration test
+
+#### Modified Newton-Raphson for nonlinear solvers
+
+- added `modified_nr: bool` parameter to corotational 2D/3D and fiber nonlinear 2D/3D solvers
+- when enabled, caches the Cholesky factorization from iteration 0 and reuses it across subsequent NR iterations within each load increment, avoiding refactorization; falls back to full NR if Cholesky fails on iteration 0
+- measured on fiber nonlinear 2D with bilinear steel (fy=250 MPa, 1% hardening): converges for moderate plasticity with 2-3× more iterations; diverges for deep plasticity — not a blanket win, useful where factorization cost dominates and nonlinearity is moderate
+- corotational (geometric nonlinearity) diverges under modified NR; full NR remains more robust for geometric-nonlinear and deep-plasticity cases
+- added 3 parity tests (corotational 2D, corotational 3D, fiber 2D) and 1 measurement benchmark
+
+#### Sparse buckling eigensolver milestone
+
+- added `lanczos_buckling_eigen_sparse` in `engine/src/linalg/lanczos.rs`
+- wired `solve_buckling_3d` to use the sparse buckling eigensolver path directly in the common unconstrained case, while keeping a dense path for small models and conservative fallback behavior
+- added sparse shell gate coverage for sparse buckling parity
+- confirmed the sparse buckling path handles the generalized `K phi = lambda (-Kg) phi` case by factorizing `K` and applying `K^{-1}(-Kg)` as the operator
+
+#### Sparse modal eigensolver milestone
+
+- added sparse Lanczos operators in `engine/src/linalg/lanczos.rs`, including sparse symmetric mat-vec and sparse shift-invert helpers
+- wired `solve_modal_3d` to use the sparse eigensolver path directly in the common unconstrained case, skipping dense `K_ff` reconstruction there
+- added sparse shell gate coverage for:
+  - sparse faster than dense at representative shell size
+  - deterministic sparse assembly
+  - fill-ratio regression bounds
+  - sparse modal parity
+- added measured modal sparse-vs-dense timing coverage, including an `11.8×` speedup at `20×20 MITC4`
+- measured AMD vs RCM fill behavior and confirmed AMD wins materially on larger shell meshes
+
+#### Sparse reuse into 3D eigen and reduction workflows
+
+- switched `solve_modal_3d`, `solve_buckling_3d`, `solve_harmonic_3d`, `guyan_reduce_3d`, and `craig_bampton_3d` from dense `n×n` assembly to sparse assembly plus dense `K_ff` conversion
+- eliminated full dense `n×n` stiffness allocation in those workflows while leaving mass matrices, geometric stiffness, and eigensolver internals unchanged
+- added sparse shell gate coverage for these reuse paths (`321` tests reported green)
+
+#### Sparse assembly bottlenecks resolved
+
+- rewrote `from_triplets` from per-column duplicate compaction to global sort + single-pass CSC build, eliminating the memmove-heavy hotspot
+- added `k_ff`-only sparse assembly where full reactions are not needed
+- sparse assembly on representative shell models moved from major regression to runtime win after those fixes
+
+#### Measured sparse vs dense runtime gains
+
+- added dense vs sparse benchmarks for all three shell families: MITC4, Quad9, and curved shell
+- measured factorization-only speedups: 4.5× at 700 DOFs, 22× at 2600 DOFs, 77-89× at 5700 DOFs
+- measured end-to-end speedup: 22× at 30×30 MITC4 (sparse 0.56s vs dense 12.3s)
+- 0 pivot perturbations across all tested sizes and element families
+- sparse wins on all families above ~500 DOFs; dense still faster at curved 8×8 (~450 DOFs)
+- fill ratio grows from 2.6× (10×10) to 7.0× (50×50) under RCM ordering — not constant as previously estimated
+- extended `bench_solve_3d_shell` to 20×20 and 30×30 mesh sizes
+- added `bench_solve_3d_quad9` (5×5 to 15×15), `bench_solve_3d_curved` (8×8 to 24×24), and `bench_full_solve_3d_families` criterion benchmarks
+- added `sparse_vs_dense_comparison` in opt-in `bench_phases.rs` profiling test target, now gated behind `--features manual-bench-phases`
+
+#### Sparse shell solve viability and deterministic assembly
+
+- replaced broken etree-based symbolic Cholesky with direct left-looking symbolic factorization that correctly computes fill structure
+- added two-tier pivot perturbation in numeric Cholesky: hard threshold (1e-20 × max_diag) rejects true singularities, soft threshold (1e-10 × max_diag) perturbs drilling-DOF pivots with controlled regularization
+- added RCM (Reverse Cuthill-McKee) ordering with George-Liu pseudo-peripheral start node; fill ratio dropped from 673× to 1.8× on representative shell meshes
+- eliminated dense LU fallback on shell models: sparse Cholesky now survives MITC4, MITC9, and curved-shell plates that previously always fell back to dense LU (87% of wall time → 0%)
+- made all assembly paths (dense, sparse, parallel) deterministic by sorting HashMap element iterations by ID
+- fixed DOF numbering determinism: when multiple supports target the same node, constraint flags are now merged with OR instead of nondeterministic HashMap overwrite
+- added residual-based parity testing for ill-conditioned shell matrices: both sparse and dense solutions verified via ||Ku-f||/||f|| < 1e-6 instead of max-displacement comparison
+- added benchmark gate tests: no-dense-fallback gate, fill-ratio gate (< 200×), and sparse-vs-dense residual parity gate
+- wired pivot perturbation count and max perturbation into SolveTimings and solver diagnostics
+- added `PivotInfo` to `NumericCholesky` for tracking perturbation statistics
+
+#### Parallel 3D element assembly
+
+- added `assemble_sparse_3d_parallel()` behind `#[cfg(feature = "parallel")]` using rayon
+- unified all 8 element families (frame, truss, plate, quad, quad9, solid-shell, curved-shell, connector) into a single `AnyElement3D` enum for one `par_iter()` work pool
+- pre-built element-id load index reduces load dispatch from O(elem × loads) to O(elem + loads)
+- serial fallback via `#[cfg(not(feature = "parallel"))]` delegates to the existing `assemble_sparse_3d()`
+- wired parallel path into `solve_3d()` as the default sparse assembly call
+- added parity tests: flat-plate (4×4) and mixed frame+slab (4 columns + 16 quads + nodal + pressure loads)
+- added criterion benchmarks: flat-plate up to 50×50 (2500 quads, ~15k DOFs) and mixed frame+slab up to 8-storey 8×8
+- measured 2-6% speedup on MITC4 flat plates (lightweight per-element cost); later profiling showed CSC construction, not element math, is the real sparse-assembly bottleneck
+- made `inclined_rotation_matrix` and `apply_inclined_transform_triplets` public for reuse
+- fixed pre-existing `transform_force` scope issue in the 2D parallel path
+
+#### Curved shell family and corrected hemisphere interpretation
+
+- integrated the curved-shell family into the solver narrative as a production shell option for genuinely curved geometry
+- established that the old hemisphere extremes were partly inflated by an `E` unit issue in the benchmark setup, and corrected that interpretation across the shell benchmark story
+- added curved-shell benchmark coverage showing near-reference hemisphere behavior while preserving credible flat-shell and barrel-vault performance
+- clarified that the shell stack is now `MITC4 + MITC9 + SHB8-ANS + curved shell`, with the remaining work focused on family guidance, workflow hardening, and shell-adjacent breadth
+
+#### MITC9 and SHB8-ANS shell-family expansion
+
+- integrated the `MITC9` 9-node quadrilateral shell through the full solver stack: dense+sparse assembly, mass, geometric stiffness, buckling, stress recovery, and all shell load types
+- added `MITC9` acceptance/workflow models covering cantilever shell response, mixed beam+slab building workflow, cylindrical tank wall behavior, and modal plate extraction
+- integrated the `SHB8-ANS` solid-shell family as a new shell path for the curved/non-planar frontier
+- added shell-family frontier gates and comparative benchmarks across `MITC4`, `MITC9`, and `SHB8-ANS`
+- established explicit shell selection guidance instead of treating shell support as a single undifferentiated element family
+- shifted the shell roadmap from “add more shell breadth” to “harden and guide the multi-family shell stack”
+
+#### Sparse-first 3D assembly and solve
+
+- completed sparse 3D assembly for plates, quads, inclined supports, and diagnostics
+- wired sparse path into `solve_3d()` for models with 64+ free DOFs
+- 11-22x memory reduction on shell models (10×10 to 15×15 quad meshes)
+- 13 new validation tests: 8 dense-vs-sparse parity, 2 performance benchmarks, 3 drilling regression
+
+#### Shell validation and hardening
+
+- added `QuadSelfWeight` body force load type (density, gx, gy, gz) with consistent Gauss integration, wired into assembly
+- added mesh distortion robustness study: aspect ratio, parallelogram skew, trapezoidal taper, and random perturbation sweeps against Navier analytical
+- added MacNeal-Harder pinched cylinder benchmark (R=300, L=600, t=3, E=3×10⁶) at 6×6 and 8×8 meshes
+- added edge load validation: normal (in-plane) and tangential (axial extension) against beam theory
+- added thermal gradient convergence sweep: 4×4, 8×8, 16×16 with monotonic convergence and tightened tolerances
+- added warped element accuracy study: cantilever strip at 0%, 5%, 10%, 20% warp with graceful degradation tracking
+
+#### Shell and nonlinear 3D workflows
+
+- verified quad shell load vectors, mass, geometric stiffness, and quality metrics
+- verified mixed DKT and MITC4 assembly and beam-shell DOF interfacing
+- wired plate and quad stress recovery into the major nonlinear 3D solver families
+- added beam-shell mixed benchmarks, shell buckling benchmarks, shell thermal benchmarks, and shell acceptance models
+- added plate geometric stiffness contribution in 3D buckling
+- added assembly diagnostics for distorted/low-quality plate and quad meshes
+- added full nodal stress tensor recovery for MITC4 quads
+
+#### Constraints and connectors
+
+- pushed constraint-system unification further across solver families
+- added connector-element assembly coverage across dense and sparse 2D/3D paths
+- added constraint-force output in constrained solver paths
+- added eccentric-connection integration tests and new constraint benchmark coverage
+- propagated constraint-force output into plastic and fiber nonlinear solver paths
+- added cross-solver constraint-force parity coverage
+
+#### Benchmark gates and test infrastructure
+
+- added explicit gate suites for:
+  - constraints
+  - contact
+  - shells
+  - reduction
+  - sparse and conditioning paths
+- added explicit CI gate steps for shell benchmarks, shell acceptance models, and constraint benchmarks before the full suite
+- added conditioning diagnostics
+- added sparse triplet assembly infrastructure
+- added parallel element assembly behind the `parallel` feature flag
+- extended criterion benchmarks with larger-model assembly and dense-vs-sparse solve comparisons
+- switched CI and local default full-suite execution toward `cargo nextest`, with engine-local nextest config and Linux `mold` linker support
+
+### Changed
+
+#### MITC4 shell element: Bathe-Dvorkin ANS shear tying
+
+- implemented true assumed natural strain (ANS) transverse shear interpolation (Bathe & Dvorkin, 1986) in the MITC4 quad shell element
+- uses covariant strain tying at 4 edge midpoints with Jacobian-correct transformation at each Gauss point, eliminating transverse shear locking on thin plates
+- added EAS-4 membrane softening to the MITC4 quad shell element via static condensation
+- benchmark improvements: Scordelis-Lo 6×6 ratio from 0.14 to 0.80, Navier plate from 0.08 to 0.93, cantilever pressure from 0.10 to 1.05, buckling from wide tolerance to 1.02, modal frequencies from ~6× error to 0.1% error
+- tightened shell benchmark tolerances across the board to lock in the formulation quality
+- added `quad_check_jacobian()` for negative/degenerate Jacobian detection
+- added moderate warping diagnostics (0.01-0.1 range) in assembly
+- added dedicated thin-plate locking test (a/t = 1000) to prevent regression
+- expanded CI shell benchmark gate to cover plate bending, Navier convergence, Scordelis-Lo, cantilever, hemisphere, and thin-plate tests
+- EAS-4 is mathematically correct and stable, but pinched hemisphere remains a known membrane-locking limit; that boundary is now documented explicitly
+
+#### MITC4 shell element: EAS-7 upgrade and curved-shell tracking
+
+- replaced the 4-mode membrane enhancement with EAS-7 using a generic small-matrix inverse and 7 enhanced membrane modes
+- Scordelis-Lo improved further to roughly 0.84 of reference with no regressions on Navier, buckling, modal, or existing shell gates
+- added new shell tracking benchmarks for Raasch hook and twisted beam as explicit non-planar / curved-shell formulation-limit indicators
+- clarified that the remaining shell decision is no longer `EAS-4 vs EAS-7`; it is `bounded MITC4+EAS-7 vs broader shell family`
+
+### Fixed
+
+#### Deterministic DOF numbering and assembly
+
+- fixed 3D DOF numbering: multiple supports targeting the same node now merge constraint flags with OR instead of nondeterministic HashMap overwrite
+- fixed 2D DOF numbering: supports sorted by ID for deterministic overwrite order
+- fixed nondeterministic assembly: all element iterations in dense, sparse, and parallel assembly paths now sorted by element ID
+- fixed point-of-contraflexure inflection detection: rewrote to use nodal moment profile approach that handles inflection points on element boundaries
+
+#### Solver quality milestone
+
+- fixed the staged fixed-end-force accumulation bug by tracking cumulative loads across stages
+- corrected four pre-existing TME validation expectations involving formulas, sign conventions, and a wrong midspan-node assumption
+- added residual-checked Cholesky fallback: if ||Kff*u - f||/||f|| > 1e-6, the sparse 3D solve falls back to dense LU
+
+### Validation
+
+- latest reported full-suite status reached `5590` passing engine-coupled tests with `0` failures
+  (plus `1192` reference-formula self-checks counted separately — see `docs/BENCHMARKS.md`
+  "Test taxonomy")
