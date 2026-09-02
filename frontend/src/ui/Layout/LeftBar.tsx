@@ -328,6 +328,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           {model?.nodes?.slice(0, 50).map((node: Node) => (
             <Box
               key={node.id}
+              onClick={() => model.focusNode(node.id)}
               sx={{
                 px: 2,
                 pl: 6,
@@ -350,8 +351,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     disabled={isLocked}
                   onClick={(e) => {
                       e.stopPropagation();                    
-                      setSelectedNode(node);
-                      setAddOrEditNode(true); 
+                      model.focusNode(node.id);
                   }}
                   sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -394,6 +394,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           {model?.members?.slice(0, 50).map((member: ElasticBeamColumn) => (
             <Box
               key={member.id}
+              onClick={() => model.focusMember(member.id)}
               sx={{
                 px: 2,
                 pl: 6,
@@ -416,8 +417,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setSelectedMember(member);
-                    setAddOrEditMember(true);
+                    model.focusMember(member.id);
                   }}
                   sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
