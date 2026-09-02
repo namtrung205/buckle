@@ -13,7 +13,6 @@ import {
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
 import Move from '../Model/Nodes/Components/Move/Move';
-import Draw from '../Draw/Draw';
 import Docs from '../Docs/Docs';
 import AddOrEditSection from '../Model/Sections/AddOrEdit';
 import AddOrEditMaterial from '../Model/Materials/AddOrEdit';
@@ -535,7 +534,6 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
 
       <Settings open={dialogs.settings} onClose={close} />
             <Move open={dialogs.move} onClose={close} selectedNode={null} />
-      <Draw open={dialogs.draw} onClose={close} freeMode={true} />
       <Docs open={dialogs.docs} onClose={close} />
       <AddOrEditSection open={dialogs.sections} onClose={close} section={null} />
       <AddOrEditMaterial open={dialogs.materials} onClose={close} selectedMaterial={null} />

@@ -10,12 +10,14 @@ import {
   Lock as SupportIcon,
   TrendingDown as LoadIcon,
   BarChart as ResultsIcon,
+  Gesture as DrawIcon,
 } from '@mui/icons-material';
 import { colors } from '../../theme';
 import { useModel } from '../../model/Context';
 import PropertyRow from '../Model/PropertyRow';
 import SectionChanger from '../Model/Sections/SectionChanger';
 import MaterialPresetSelector from '../Model/Materials/MaterialPresetSelector';
+import DrawPanel from '../Draw/Draw';
 import Reactions from '../Results/Components/Reactions/Reactions';
 import Diagrams from '../Results/Components/Diagrams/Diagrams';
 import { Section } from '../../types';
@@ -114,6 +116,8 @@ const RightPanel = observer(() => {
 
   // Results mode: the ribbon "Results" / "Reactions" buttons open this same dock.
   const isResults = model?.activeDialog === 'results' || model?.activeDialog === 'reactions';
+  // Draw mode: the ribbon "Draw" button opens the member drawing tool here.
+  const isDraw = model?.activeDialog === 'draw';
   // Results tab follows the ribbon button that opened it (Reactions vs Forces).
   const [resultsTab, setResultsTab] = useState<number>(model?.activeDialog === 'reactions' ? 0 : 1);
 
@@ -125,7 +129,7 @@ const RightPanel = observer(() => {
   }, [model?.activeDialog]);
 
   if (!model?.rightPanelOpen) return null;
-  if (!isResults && !model?.hasFocus()) return null;
+  if (!isResults && !isDraw && !model?.hasFocus()) return null;
 
   const sectionOptions = model.sections.map((s) => ({ id: s.id, name: s.name }));
   const materialOptions = model.materials.map((m) => ({ id: m.id, name: m.name }));
@@ -135,13 +139,14 @@ const RightPanel = observer(() => {
   let title = 'Properties';
   let icon: React.ReactNode = null;
   if (isResults) { title = 'Results'; icon = <ResultsIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
+  else if (isDraw) { title = 'Draw member'; icon = <DrawIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (member) { title = 'Member properties'; icon = <MemberIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (node) { title = 'Node properties'; icon = <NodeIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (support) { title = 'Support properties'; icon = <SupportIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (load) { title = 'Load properties'; icon = <LoadIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
 
   const closePanel = () => {
-    if (isResults) model.closeDialog();
+    if (isResults || isDraw) model.closeDialog();
     else model.clearFocus();
   };
 
@@ -358,6 +363,11 @@ const RightPanel = observer(() => {
                 {resultsTab === 2 && <Diagrams variant="deformation" />}
               </Box>
             </>
+          ) : isDraw ? (
+            <>
+              {/* Member drawing tool (section pick + start/stop) */}
+              <DrawPanel />
+            </>
           ) : (
           <>
           {/* entity label row + delete */}
@@ -528,13 +538,15 @@ const RightPanel = observer(() => {
           <Typography sx={{ fontSize: '0.68rem', color: colors.textFaint, lineHeight: 1.4 }}>
             {isResults
               ? 'Reactions, internal force diagrams and deflected shape for the last analysis.'
-              : member
-                ? '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.'
-                : support
-                  ? 'Checked DOF = restrained. Pick a preset (Fixed/Pinned/Roller) or toggle for a custom support.'
-                  : load
-                    ? 'Choose load type, direction and magnitude. Targets are shown as chips.'
-                    : 'Edit the node name and its coordinates.'}
+              : isDraw
+                ? 'Start to draw members by clicking in the viewport. Esc or Stop ends the current stroke.'
+                : member
+                  ? '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.'
+                  : support
+                    ? 'Checked DOF = restrained. Pick a preset (Fixed/Pinned/Roller) or toggle for a custom support.'
+                    : load
+                      ? 'Choose load type, direction and magnitude. Targets are shown as chips.'
+                      : 'Edit the node name and its coordinates.'}
           </Typography>
         </Box>
       </Box>

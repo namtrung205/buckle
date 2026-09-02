@@ -110,7 +110,7 @@ export class Model {
   /** Reposition the ViewCube so it is never hidden behind the right dock. */
   private updateGizmoOffset = () => {
     if (!this.gizmo) return;
-    const dockOpen = this.rightPanelOpen && this.hasFocus();
+    const dockOpen = this.rightPanelOpen && (this.hasFocus() || this.activeDialog === 'results' || this.activeDialog === 'reactions' || this.activeDialog === 'draw');
     const right = Model.GIZMO_RIGHT_BASE + (dockOpen ? Model.RIGHT_PANEL_WIDTH : 0);
     if (right !== this.gizmoOptions.offset.right) {
       this.gizmoOptions.offset.right = right;
@@ -253,6 +253,7 @@ export class Model {
       return false;
     }
     this.activeDialog = dialog;
+    this.updateGizmoOffset();
     return true;
   }
 
@@ -274,6 +275,7 @@ export class Model {
     const currentTool = this.toolsController.getCurrentTool();
     currentTool?.stop();
     this.activeDialog = null;
+    this.updateGizmoOffset();
   }
 
   /**

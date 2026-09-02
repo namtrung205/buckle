@@ -62,8 +62,8 @@ const Layout = observer(({ children }: LayoutProps) => {
           <BottomBar />
         </Box>
 
-        {/* Right dock panel — inline properties for the focused entity, or Results */}
-        {(model?.hasFocus() || model?.activeDialog === 'results' || model?.activeDialog === 'reactions') && <RightPanel />}
+        {/* Right dock panel — inline properties for the focused entity, Results, or Draw */}
+        {(model?.hasFocus() || model?.activeDialog === 'results' || model?.activeDialog === 'reactions' || model?.activeDialog === 'draw') && <RightPanel />}
       </Box>
 
       {/* Bottom Status Bar */}
