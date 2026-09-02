@@ -72,6 +72,28 @@ def compute_section_properties(section: Dict) -> Dict[str, float]:
     E = mat["E"]
     G_mod = mat["G"]
 
+    # ---- amorphous / properties-only section: A, Iy, Iz, Jxx given directly ----
+    props_override = section.get("properties")
+    if props_override and {"A", "Iy", "Iz"} <= set(props_override):
+        a = float(props_override["A"])
+        iy = float(props_override["Iy"])
+        iz = float(props_override["Iz"])
+        jxx = float(props_override.get("Jxx", props_override.get("J", 0.0)))
+        return {
+            "E": E,
+            "G_mod": G_mod,
+            "nu": mat["nu"],
+            "rho": mat["rho"],
+            "A": a,
+            "Iy": iy,
+            "Iz": iz,
+            "Jxx": jxx,
+            "Sy": 0.0,
+            "Sz": 0.0,
+            "ry": math.sqrt(iy / a) if a > 0 else 0.0,
+            "rz": math.sqrt(iz / a) if a > 0 else 0.0,
+        }
+
     # ---- build the canonical polygon outline and integrate it ----
     j = 0.0  # torsion constant (computed alongside each shape)
     if kind == "rectangular":
