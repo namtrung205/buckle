@@ -86,6 +86,8 @@ export class Model {
   rightPanelOpen = true;
   selectedMemberId: number | null = null;
   selectedNodeId: number | null = null;
+  selectedBoundaryConditionId: number | null = null;
+  selectedLoadId: number | null = null;
   selectedMemberDialogs = {
     section: false,
     material: false,
@@ -108,7 +110,7 @@ export class Model {
   /** Reposition the ViewCube so it is never hidden behind the right dock. */
   private updateGizmoOffset = () => {
     if (!this.gizmo) return;
-    const dockOpen = this.rightPanelOpen && (this.selectedMemberId != null || this.selectedNodeId != null);
+    const dockOpen = this.rightPanelOpen && this.hasFocus();
     const right = Model.GIZMO_RIGHT_BASE + (dockOpen ? Model.RIGHT_PANEL_WIDTH : 0);
     if (right !== this.gizmoOptions.offset.right) {
       this.gizmoOptions.offset.right = right;
@@ -119,22 +121,47 @@ export class Model {
   /** Focus an entity in the right dock (member or node, by id). */
   focusMember = (id: number | null) => {
     this.selectedMemberId = id;
-    if (id != null) this.selectedNodeId = null;
+    if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
 
   focusNode = (id: number | null) => {
     this.selectedNodeId = id;
-    if (id != null) this.selectedMemberId = null;
+    if (id != null) { this.selectedMemberId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
+
+  /** Focus a support / boundary condition in the right dock, by id. */
+  focusBoundaryCondition = (id: number | null) => {
+    this.selectedBoundaryConditionId = id;
+    if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedLoadId = null; }
+    this.rightPanelOpen = true;
+    this.updateGizmoOffset();
+  };
+
+  /** Focus a load in the right dock, by id. */
+  focusLoad = (id: number | null) => {
+    this.selectedLoadId = id;
+    if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedBoundaryConditionId = null; }
+    this.rightPanelOpen = true;
+    this.updateGizmoOffset();
+  };
+
+  /** True when any entity is focused for right-dock editing. */
+  hasFocus = () =>
+    this.selectedMemberId != null ||
+    this.selectedNodeId != null ||
+    this.selectedBoundaryConditionId != null ||
+    this.selectedLoadId != null;
 
   /** Clear the focused entity (closes the right dock). */
   clearFocus = () => {
     this.selectedMemberId = null;
     this.selectedNodeId = null;
+    this.selectedBoundaryConditionId = null;
+    this.selectedLoadId = null;
     this.updateGizmoOffset();
   };
 
@@ -149,7 +176,16 @@ export class Model {
     }
     const ud = (obj.userData || {}) as any;
     if (ud.type === 'node' && ud.id != null) this.focusNode(ud.id);
-    else if (ud.id != null) this.focusMember(ud.id);
+    else if (ud.type === 'load' && typeof ud.id === 'string') {
+      // Load meshes carry a compound id: `load-<loadId>-<targetId>`.
+      const parts = String(ud.id).split('-');
+      const numeric = parts.map((p: string) => Number(p)).find((n: number) => !Number.isNaN(n));
+      if (parts[0] === 'load' && parts[1] != null && !Number.isNaN(Number(parts[1]))) {
+        this.focusLoad(Number(parts[1]));
+      } else if (numeric != null) {
+        this.focusLoad(numeric);
+      }
+    } else if (ud.id != null) this.focusMember(ud.id);
   };
   // Active bottom-bar navigation tool (select / zoom / pan / orbit)
   navTool: NavTool = 'select';

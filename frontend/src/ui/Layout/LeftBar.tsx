@@ -461,6 +461,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           {model?.boundaryConditions?.map((bc: BoundaryCondition) => (
             <Box
               key={bc.id}
+              onClick={() => model.focusBoundaryCondition(bc.id)}
               sx={{
                 px: 2,
                 pl: 6,
@@ -524,6 +525,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           {model?.loads?.map((load: Load) => (
             <Box
               key={load.id}
+              onClick={() => model.focusLoad(load.id)}
               sx={{
                 px: 2,
                 pl: 6,

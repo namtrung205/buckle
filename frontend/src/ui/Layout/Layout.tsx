@@ -69,7 +69,7 @@ const Layout = observer(({ children }: LayoutProps) => {
         </Box>
 
         {/* Right dock panel — inline property editing for the focused entity */}
-        {(model?.selectedMemberId != null || model?.selectedNodeId != null) && <RightPanel />}
+        {model?.hasFocus() && <RightPanel />}
       </Box>
 
       {/* Bottom Status Bar */}
