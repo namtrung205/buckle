@@ -10,7 +10,7 @@ import {
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import Draggable from 'react-draggable';
-import Paper from '@mui/material/Paper';
+import Paper, { PaperProps } from '@mui/material/Paper';
 import { colors, fontFamily } from '../../theme';
 
 interface DialogProps extends Omit<MuiDialogProps, 'title'> {
@@ -28,7 +28,7 @@ interface DialogProps extends Omit<MuiDialogProps, 'title'> {
   disableRestoreFocus?: boolean;
 }
 
-function DraggablePaper(props: any) {
+function DraggablePaper(props: PaperProps) {
   return (
     <Draggable
       handle="#draggable-dialog-title"
@@ -39,6 +39,15 @@ function DraggablePaper(props: any) {
   );
 }
 
+/**
+ * Shared application dialog.
+ *
+ * Default behaviour is a proper centred modal (mirroring Stabileo's
+ * `MaterialEditor`/`SectionEditor`): a visible backdrop that blocks interaction
+ * with the content behind it, click-outside-to-close, Esc-to-close and focus
+ * trapping. `hideBackdrop` opts into the floating non-modal behaviour used by
+ * a few panels (e.g. the Levels popover) that must stay interactive behind.
+ */
 const Dialog: React.FC<DialogProps> = ({
   open,
   onClose,
@@ -68,15 +77,19 @@ const Dialog: React.FC<DialogProps> = ({
       disableAutoFocus={disableAutoFocus}
       disableRestoreFocus={disableRestoreFocus}
       sx={{
-        pointerEvents: 'none',
-        '& .MuiDialog-container': {
-          alignItems: 'flex-start',
-          justifyContent: 'flex-start',
-          padding: 0,
-        },
-        '& .MuiPaper-root': {
-          pointerEvents: 'auto',
-        },
+        // Floating panels (hideBackdrop) must not eat pointer events outside
+        // their paper; every other dialog is a normal modal: MUI draws a visible
+        // backdrop and routes outside-clicks/Esc through `onClose` automatically.
+        ...(hideBackdrop
+          ? {
+              pointerEvents: 'none',
+              '& .MuiPaper-root': { pointerEvents: 'auto' },
+            }
+          : {
+              '& .MuiBackdrop-root': {
+                backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              },
+            }),
       }}
       PaperProps={{
         sx: {
@@ -86,12 +99,10 @@ const Dialog: React.FC<DialogProps> = ({
           boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
           overflow: 'hidden',
           color: colors.text,
-          maxHeight: '80vh',
-          overflowY: 'auto',
-          position: 'fixed',
-          top: '50px',
-          right: '0px',
-        }
+          maxHeight: '85vh',
+          display: 'flex',
+          flexDirection: 'column',
+        },
       }}
       {...rest}
     >
@@ -115,7 +126,7 @@ const Dialog: React.FC<DialogProps> = ({
             sx={{
               color: colors.text,
               fontSize: '0.9rem',
-              fontWeight: 400,
+              fontWeight: 500,
               fontFamily,
             }}
           >
@@ -137,11 +148,11 @@ const Dialog: React.FC<DialogProps> = ({
           </IconButton>
         </DialogTitle>
       )}
-      <DialogContent sx={{ p: 2, backgroundColor: colors.surface, pointerEvents: 'auto' }}>
+      <DialogContent sx={{ py: 2, px: 2, backgroundColor: colors.surface, overflowY: 'auto', flex: 1, minHeight: 0 }}>
         {children}
       </DialogContent>
       {actions && (
-        <DialogActions sx={{ pointerEvents: 'auto', p: 2, backgroundColor: colors.surface, borderTop: `1px solid ${colors.border}` }}>
+        <DialogActions sx={{ p: 2, backgroundColor: colors.surface, borderTop: `1px solid ${colors.border}` }}>
           {actions}
         </DialogActions>
       )}

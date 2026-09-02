@@ -201,7 +201,7 @@ const SectionChanger = observer(({ open, onClose, section }: SectionChangerProps
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" draggable hideBackdrop disableEnforceFocus disableAutoFocus title={section ? 'Change Section' : 'New Section'}
+    <Dialog open={open} onClose={onClose} maxWidth="md" draggable title={section ? 'Change Section' : 'New Section'}
       actions={null}>
       <Stack spacing={1.5}>
         {/* ── main tabs ── */}

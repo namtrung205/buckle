@@ -105,7 +105,7 @@ const MaterialSelector = observer(({ open, onClose, selectedMaterial = null }: M
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" draggable hideBackdrop disableEnforceFocus disableAutoFocus
+    <Dialog open={open} onClose={onClose} maxWidth="sm" draggable
       title={selectedMaterial ? 'Change Material' : 'New Material'} actions={null}>
       <Stack spacing={1.5}>
         {/* category tabs */}
