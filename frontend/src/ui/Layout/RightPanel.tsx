@@ -260,7 +260,10 @@ const RightPanel = observer(() => {
   };
 
   const updateLoadName = (name: string) => updateLoad({ name });
-  const updateLoadType = (type: Load['type']) => updateLoad({ type });
+  const updateLoadType = (type: Load['type']) => {
+    // Changing type invalidates the target set (nodes ⇄ members), mirroring the dialog.
+    updateLoad({ type, targets: [] });
+  };
   const updateLoadDirection = (direction: string) => updateLoad({ direction });
   const updateLoadValue = (value: number) => updateLoad({ value });
 
