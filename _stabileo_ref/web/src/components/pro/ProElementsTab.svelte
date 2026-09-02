@@ -1,0 +1,595 @@
+<script lang="ts">
+  import { modelStore, uiStore } from '../../lib/store';
+  import { t } from '../../lib/i18n';
+  import { arcPolyline } from '../../lib/engine/curved-beam';
+  import MemberOffsetEditor from '../property/MemberOffsetEditor.svelte';
+
+  const is3DMode = $derived(uiStore.analysisMode === '3d' || uiStore.analysisMode === 'pro');
+
+  interface ElemRow {
+    id: number | null;
+    nodeI: string;
+    nodeJ: string;
+    materialId: number;
+    sectionId: number;
+    hingeI: boolean;
+    hingeJ: boolean;
+  }
+
+  let rows = $state<ElemRow[]>([]);
+  let pasteError = $state<string | null>(null);
+  let selectedRowIdx = $state<number | null>(null);
+  let drawMode = $state(false);
+  let drawNodeI = $state<number | null>(null);
+
+  // Sync rows from store on mount. Preserve unsaved rows (id === null).
+  $effect(() => {
+    const storeElems = [...modelStore.elements.values()];
+    const savedRows = rows.filter(r => r.id !== null);
+    const unsavedRows = rows.filter(r => r.id === null);
+    const storeIds = storeElems.map(e => e.id).join(',');
+    const rowIds = savedRows.map(r => r.id).join(',');
+    if (storeIds !== rowIds || storeElems.length !== savedRows.length) {
+      rows = [
+        ...storeElems.map(e => ({
+          id: e.id,
+          nodeI: String(e.nodeI),
+          nodeJ: String(e.nodeJ),
+          materialId: e.materialId,
+          sectionId: e.sectionId,
+          hingeI: e.releaseI?.mz === true,
+          hingeJ: e.releaseJ?.mz === true,
+        })),
+        ...unsavedRows,
+      ];
+    }
+  });
+
+  // Listen for node clicks in draw mode
+  $effect(() => {
+    if (!drawMode) {
+      drawNodeI = null;
+      return;
+    }
+    // When a node is selected in the viewport, use it for drawing
+    if (uiStore.selectedNodes.size === 1) {
+      const nodeId = [...uiStore.selectedNodes][0];
+      if (drawNodeI === null) {
+        drawNodeI = nodeId;
+      } else if (nodeId !== drawNodeI) {
+        // Create element
+        const eid = modelStore.addElement(drawNodeI, nodeId);
+        rows = [...rows, {
+          id: eid,
+          nodeI: String(drawNodeI),
+          nodeJ: String(nodeId),
+          materialId: 1,
+          sectionId: 1,
+          hingeI: false,
+          hingeJ: false,
+        }];
+        // Chain: nodeJ becomes next nodeI
+        drawNodeI = nodeId;
+        uiStore.setSelection(new Set(), new Set());
+      }
+    }
+  });
+
+  // Listen for element selection from viewport
+  $effect(() => {
+    if (uiStore.selectedElements.size === 1) {
+      const elemId = [...uiStore.selectedElements][0];
+      const idx = rows.findIndex(r => r.id === elemId);
+      if (idx >= 0) selectedRowIdx = idx;
+    }
+  });
+
+  function addEmptyRow() {
+    rows = [...rows, { id: null, nodeI: '', nodeJ: '', materialId: 1, sectionId: 1, hingeI: false, hingeJ: false }];
+  }
+
+  function commitRow(idx: number) {
+    const row = rows[idx];
+    const ni = parseInt(row.nodeI);
+    const nj = parseInt(row.nodeJ);
+    if (isNaN(ni) || isNaN(nj) || ni === nj) return;
+    if (!modelStore.nodes.has(ni) || !modelStore.nodes.has(nj)) return;
+
+    if (row.id === null) {
+      const eid = modelStore.addElement(ni, nj);
+      modelStore.updateElementMaterial(eid, row.materialId);
+      modelStore.updateElementSection(eid, row.sectionId);
+      if (row.hingeI) modelStore.toggleHinge(eid, 'start');
+      if (row.hingeJ) modelStore.toggleHinge(eid, 'end');
+      rows[idx] = { ...rows[idx], id: eid };
+    } else {
+      // Update existing element properties
+      const elem = modelStore.elements.get(row.id);
+      if (!elem) return;
+      modelStore.updateElementMaterial(row.id, row.materialId);
+      modelStore.updateElementSection(row.id, row.sectionId);
+      // Sync hinges
+      if ((elem.releaseI?.mz === true) !== row.hingeI) modelStore.toggleHinge(row.id, 'start');
+      if ((elem.releaseJ?.mz === true) !== row.hingeJ) modelStore.toggleHinge(row.id, 'end');
+    }
+  }
+
+  function deleteRow(idx: number) {
+    const row = rows[idx];
+    if (row.id !== null) modelStore.removeElement(row.id);
+    rows = rows.filter((_, i) => i !== idx);
+  }
+
+  function handleKeydown(e: KeyboardEvent, idx: number) {
+    if (e.key === 'Enter') {
+      commitRow(idx);
+      if (idx === rows.length - 1) {
+        addEmptyRow();
+        setTimeout(() => {
+          const inputs = document.querySelectorAll('.pro-elems-table input[data-col="ni"]');
+          const lastInput = inputs[inputs.length - 1] as HTMLInputElement;
+          lastInput?.focus();
+        }, 10);
+      }
+    }
+  }
+
+  function handlePaste(e: ClipboardEvent) {
+    const text = e.clipboardData?.getData('text');
+    if (!text) return;
+    if (!text.includes('\t') && !text.includes('\n')) return;
+
+    e.preventDefault();
+    pasteError = null;
+
+    const lines = text.trim().split('\n').filter(l => l.trim());
+    for (let i = 0; i < lines.length; i++) {
+      const parts = lines[i].split('\t').map(s => s.trim());
+      if (parts.length < 2) {
+        pasteError = t('pro.pasteRowError').replace('{n}', String(i + 1)).replace('{cols}', '2').replace('{names}', t('pro.thNodeI') + ', ' + t('pro.thNodeJ'));
+        return;
+      }
+      const ni = parseInt(parts[0]);
+      const nj = parseInt(parts[1]);
+      if (isNaN(ni) || isNaN(nj)) {
+        pasteError = t('pro.pasteInvalidNodeIds').replace('{n}', String(i + 1));
+        return;
+      }
+      if (!modelStore.nodes.has(ni) || !modelStore.nodes.has(nj)) {
+        pasteError = t('pro.pasteNodeNotExist').replace('{n}', String(i + 1)).replace('{ni}', String(ni)).replace('{nj}', String(nj));
+        return;
+      }
+      const eid = modelStore.addElement(ni, nj);
+      rows = [...rows, {
+        id: eid,
+        nodeI: String(ni),
+        nodeJ: String(nj),
+        materialId: 1,
+        sectionId: 1,
+        hingeI: false,
+        hingeJ: false,
+      }];
+    }
+  }
+
+  function handleRowClick(idx: number) {
+    selectedRowIdx = idx;
+    const row = rows[idx];
+    if (row.id !== null) {
+      uiStore.selectMode = 'elements';
+      uiStore.setSelection(new Set(), new Set([row.id]), true); // manual row click
+    }
+  }
+
+  function toggleDrawMode() {
+    drawMode = !drawMode;
+    if (drawMode) {
+      drawNodeI = null;
+      uiStore.setSelection(new Set(), new Set());
+    }
+  }
+
+  // Available materials and sections
+  const materials = $derived([...modelStore.materials.values()]);
+  const sections = $derived([...modelStore.sections.values()]);
+  const elemCount = $derived(rows.filter(r => r.id !== null).length);
+
+  // ── Curved members (arc → straight frames) ──
+  // Fits the arc through 3 nodes and builds straight frame segments along it.
+  // Done web-side (real model nodes + frames) so diagrams/results work through
+  // the normal frame machinery.
+  let showCurved = $state(false);
+  let cbNodes = $state<[string, string, string]>(['', '', '']);
+  let cbSegments = $state(6);
+  let cbMaterialId = $state(1);
+  let cbSectionId = $state(1);
+  let cbError = $state<string | null>(null);
+  let cbSuccess = $state<string | null>(null);
+
+  function generateCurvedMember() {
+    cbError = null; cbSuccess = null;
+    const ids = cbNodes.map(s => parseInt(s));
+    if (ids.some(isNaN) || new Set(ids).size !== 3 || ids.some(id => !modelStore.nodes.has(id))) { cbError = t('pro.curvedErr3Nodes'); return; }
+    if (cbSegments < 2) { cbError = t('pro.curvedErrSegments'); return; }
+    if (!modelStore.materials.has(cbMaterialId) || !modelStore.sections.has(cbSectionId)) { cbError = t('pro.curvedErrMatSec'); return; }
+    const [s, m, e] = ids.map(id => modelStore.nodes.get(id)!);
+    const pts = arcPolyline(
+      { x: s.x, y: s.y, z: s.z ?? 0 }, { x: m.x, y: m.y, z: m.z ?? 0 }, { x: e.x, y: e.y, z: e.z ?? 0 }, cbSegments,
+    );
+    const nodeIds: number[] = [ids[0]];
+    for (let i = 1; i < pts.length - 1; i++) nodeIds.push(modelStore.addNode(pts[i].x, pts[i].y, pts[i].z !== 0 ? pts[i].z : undefined));
+    nodeIds.push(ids[2]);
+    let made = 0;
+    for (let i = 0; i < nodeIds.length - 1; i++) {
+      const elId = modelStore.addElement(nodeIds[i], nodeIds[i + 1], 'frame');
+      modelStore.updateElementMaterial(elId, cbMaterialId);
+      modelStore.updateElementSection(elId, cbSectionId);
+      made++;
+    }
+    cbSuccess = t('pro.curvedMemberSuccess').replace('{frames}', String(made)).replace('{nodes}', String(nodeIds.length - 2));
+    cbNodes = ['', '', ''];
+  }
+</script>
+
+<div class="pro-elems">
+  {#if uiStore.selectedElements.size > 0}
+    <div style="padding: 6px 10px;"><MemberOffsetEditor /></div>
+  {/if}
+  <div class="pro-elems-header">
+    <span class="pro-elems-count">{t('pro.nElements').replace('{n}', String(elemCount))}</span>
+    <div class="pro-elems-actions">
+      <button class="pro-btn" onclick={addEmptyRow}>{t('pro.addElement')}</button>
+      <button class="pro-btn" class:pro-btn-active={drawMode} onclick={toggleDrawMode}>
+        {drawMode ? t('pro.stopDrawing') : t('pro.draw')}
+      </button>
+    </div>
+  </div>
+
+  {#if drawMode}
+    <div class="pro-draw-status">
+      {#if drawNodeI === null}
+        {t('pro.drawClickNodeI')}
+      {:else}
+        {@html t('pro.drawNodeISelected').replace('{id}', String(drawNodeI))}
+      {/if}
+    </div>
+  {/if}
+
+  {#if pasteError}
+    <div class="pro-paste-error">{pasteError}</div>
+  {/if}
+
+  <div class="pro-paste-hint">
+    {t('pro.pasteHintElems')}
+  </div>
+
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="pro-elems-table-wrap" onpaste={handlePaste}>
+    <table class="pro-elems-table">
+      <thead>
+        <tr>
+          <th class="col-id">ID</th>
+          <th class="col-node">{t('pro.thNodeI')}</th>
+          <th class="col-node">{t('pro.thNodeJ')}</th>
+          <th class="col-mat">{t('pro.thMaterial')}</th>
+          <th class="col-sec">{t('pro.thSection')}</th>
+          <th class="col-hinge" title={is3DMode ? t('prop.hinge3DDisclosure') : ''}>{t('pro.thHingeI')}{is3DMode ? ` ${t('prop.hinges3DSuffix')}` : ''}</th>
+          <th class="col-hinge" title={is3DMode ? t('prop.hinge3DDisclosure') : ''}>{t('pro.thHingeJ')}{is3DMode ? ` ${t('prop.hinges3DSuffix')}` : ''}</th>
+          <th class="col-actions"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each rows as row, idx}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <tr
+            class:selected={selectedRowIdx === idx}
+            class:unsaved={row.id === null}
+            onclick={() => handleRowClick(idx)}
+          >
+            <td class="col-id">{row.id ?? '—'}</td>
+            <td class="col-node">
+              <input type="text" data-col="ni" bind:value={row.nodeI}
+                onkeydown={(e) => handleKeydown(e, idx)}
+                onblur={() => commitRow(idx)} placeholder="—" />
+            </td>
+            <td class="col-node">
+              <input type="text" data-col="nj" bind:value={row.nodeJ}
+                onkeydown={(e) => handleKeydown(e, idx)}
+                onblur={() => commitRow(idx)} placeholder="—" />
+            </td>
+            <td class="col-mat">
+              <select value={String(row.materialId)} onchange={(e) => {
+                row.materialId = parseInt(e.currentTarget.value);
+                if (row.id !== null) commitRow(idx);
+              }}>
+                {#each materials as m}
+                  <option value={String(m.id)}>{m.name}</option>
+                {/each}
+              </select>
+            </td>
+            <td class="col-sec">
+              <select value={String(row.sectionId)} onchange={(e) => {
+                row.sectionId = parseInt(e.currentTarget.value);
+                if (row.id !== null) commitRow(idx);
+              }}>
+                {#each sections as s}
+                  <option value={String(s.id)}>{s.name}</option>
+                {/each}
+              </select>
+            </td>
+            <td class="col-hinge">
+              <button class="hinge-btn" class:hinged={row.hingeI} onclick={() => {
+                row.hingeI = !row.hingeI;
+                if (row.id !== null) commitRow(idx);
+              }}>{row.hingeI ? t('pro.hingeArt') : t('pro.hingeEmp')}</button>
+            </td>
+            <td class="col-hinge">
+              <button class="hinge-btn" class:hinged={row.hingeJ} onclick={() => {
+                row.hingeJ = !row.hingeJ;
+                if (row.id !== null) commitRow(idx);
+              }}>{row.hingeJ ? t('pro.hingeArt') : t('pro.hingeEmp')}</button>
+            </td>
+            <td class="col-actions">
+              <button class="pro-delete-btn" onclick={() => deleteRow(idx)}>×</button>
+            </td>
+          </tr>
+        {/each}
+        {#if rows.length === 0}
+          <tr>
+            <td colspan="8" class="pro-empty">{t('pro.emptyElements')}</td>
+          </tr>
+        {/if}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Curved members (arc → straight frames) -->
+  <div class="curved-section">
+    <button class="curved-toggle" onclick={() => showCurved = !showCurved}>
+      <span>{showCurved ? '▾' : '▸'}</span> {t('pro.curvedMembers')}
+    </button>
+    {#if showCurved}
+      <div class="curved-body">
+        <div class="curved-hint">{t('pro.curvedMembersHint')}</div>
+        <div class="curved-row">
+          <label>{t('pro.startMidEnd')}</label>
+          <input type="text" bind:value={cbNodes[0]} placeholder="start" />
+          <input type="text" bind:value={cbNodes[1]} placeholder="mid" />
+          <input type="text" bind:value={cbNodes[2]} placeholder="end" />
+        </div>
+        <div class="curved-row">
+          <label>{t('pro.segments')}</label>
+          <input type="number" bind:value={cbSegments} min="2" max="100" />
+        </div>
+        <div class="curved-row">
+          <label>{t('pro.material')}</label>
+          <select bind:value={cbMaterialId}>{#each materials as m}<option value={m.id}>{m.name}</option>{/each}</select>
+        </div>
+        <div class="curved-row">
+          <label>{t('pro.section')}</label>
+          <select bind:value={cbSectionId}>{#each sections as s}<option value={s.id}>{s.name}</option>{/each}</select>
+        </div>
+        {#if cbError}<div class="curved-error">{cbError}</div>{/if}
+        {#if cbSuccess}<div class="curved-success">{cbSuccess}</div>{/if}
+        <button class="pro-btn pro-btn-active" onclick={generateCurvedMember}>{t('pro.generateCurvedMember')}</button>
+      </div>
+    {/if}
+  </div>
+</div>
+
+<style>
+  .curved-section { border-top: 1px solid var(--st-surface-3); margin-top: 6px; }
+  .curved-toggle {
+    width: 100%; text-align: left; background: none; border:  1px solid var(--st-hair); color: var(--st-text);
+    font-size: 0.78rem; font-weight: 600; padding: 8px 10px; cursor: pointer;
+  }
+  .curved-body { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .curved-hint { font-size: 0.68rem; color: var(--st-text-2); line-height: 1.3; }
+  .curved-row { display: flex; align-items: center; gap: 6px; }
+  .curved-row label { font-size: 0.7rem; color: var(--st-text-2); min-width: 70px; }
+  .curved-row input[type="text"] { width: 48px; }
+  .curved-row input, .curved-row select {
+    background: var(--st-surface); border: 1px solid var(--st-surface-3); color: var(--st-text); border-radius: 3px; padding: 3px 5px; font-size: 0.7rem;
+  }
+  .curved-error { color: var(--st-danger); font-size: 0.68rem; }
+  .curved-success { color: var(--st-value); font-size: 0.68rem; }
+  .pro-elems {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .pro-elems-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--st-surface-3);
+    flex-shrink: 0;
+  }
+
+  .pro-elems-count {
+    font-size: 0.82rem;
+    color: var(--st-value);
+    font-weight: 600;
+  }
+
+  .pro-elems-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .pro-btn {
+    padding: 5px 12px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--st-text-2);
+    background: var(--st-surface-3);
+    border: 1px solid var(--st-surface-3);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .pro-btn:hover { background: var(--st-surface-3); color: var(--st-text); }
+
+  .pro-btn-active {
+    background: var(--st-accent) !important;
+    border-color: var(--st-danger) !important;
+    color: var(--st-text) !important;
+  }
+
+  .pro-draw-status {
+    padding: 8px 12px;
+    font-size: 0.78rem;
+    color: var(--st-value);
+    background: rgba(127, 212, 204, 0.08);
+    border-bottom: 1px solid var(--st-surface-3);
+  }
+
+  .pro-draw-status strong {
+    color: var(--st-text);
+  }
+
+  .pro-paste-error {
+    padding: 4px 10px;
+    font-size: 0.7rem;
+    color: var(--st-danger);
+    background: rgba(229, 72, 42, 0.1);
+    border-bottom: 1px solid var(--st-hair-strong);
+  }
+
+  .pro-paste-hint {
+    padding: 6px 12px;
+    font-size: 0.72rem;
+    color: var(--st-text-3);
+    font-style: italic;
+    border-bottom: 1px solid var(--st-surface-3);
+    flex-shrink: 0;
+  }
+
+  .pro-elems-table-wrap {
+    flex: 1;
+    overflow: auto;
+  }
+
+  .pro-elems-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    table-layout: fixed;
+  }
+
+  .pro-elems-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  .pro-elems-table th {
+    padding: 6px 4px;
+    text-align: left;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--st-text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    background: var(--st-surface);
+    border-bottom: 1px solid var(--st-surface-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pro-elems-table td {
+    padding: 3px 3px;
+    border-bottom: 1px solid var(--st-surface-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .pro-elems-table tbody tr { cursor: pointer; transition: background 0.1s; }
+  .pro-elems-table tbody tr:hover { background: rgba(127, 212, 204, 0.08); }
+  .pro-elems-table tr.selected { background: rgba(127, 212, 204, 0.18); box-shadow: inset 3px 0 0 var(--st-value); }
+  .pro-elems-table tr.unsaved td { opacity: 0.6; }
+
+  .col-id {
+    width: 32px;
+    color: var(--st-text-3);
+    font-family: monospace;
+    font-size: 0.75rem;
+    text-align: center;
+  }
+
+  .col-node { width: 50px; }
+  .col-node input {
+    width: 100%;
+    padding: 4px 5px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--st-text);
+    font-size: 0.78rem;
+    font-family: monospace;
+  }
+  .col-node input:focus {
+    background: var(--st-surface-3);
+    border-color: var(--st-surface-3);
+    outline: none;
+  }
+
+  .col-mat, .col-sec { width: auto; }
+  .col-mat select, .col-sec select {
+    width: 100%;
+    padding: 3px 3px;
+    background: var(--st-surface-3);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    color: var(--st-text-2);
+    font-size: 0.72rem;
+    cursor: pointer;
+  }
+  .col-mat select:focus, .col-sec select:focus {
+    border-color: var(--st-surface-3);
+    outline: none;
+  }
+
+  .col-hinge { width: 40px; text-align: center; }
+
+  .hinge-btn {
+    padding: 3px 6px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border: 1px solid var(--st-surface-3);
+    border-radius: 3px;
+    cursor: pointer;
+    background: var(--st-surface-3);
+    color: var(--st-text-3);
+    min-width: 34px;
+  }
+
+  .hinge-btn.hinged {
+    background: var(--st-surface-2);
+    border-color: var(--st-warn);
+    color: var(--st-warn);
+  }
+
+  .col-actions { width: 20px; text-align: center; }
+
+  .pro-delete-btn {
+    background: none;
+    border:  none;
+    color: var(--st-text-3);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+  .pro-delete-btn:hover { color: var(--st-danger); }
+
+  .pro-empty {
+    text-align: center;
+    color: var(--st-text-3);
+    font-style: italic;
+    padding: 20px 10px !important;
+  }
+</style>

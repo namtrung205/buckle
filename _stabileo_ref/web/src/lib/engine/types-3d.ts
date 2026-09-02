@@ -1,0 +1,538 @@
+// 3D Structural Analysis Types
+// Phase 1: Engine Core — types for 3D frame/truss solver (6 DOF/node)
+
+import type { SolverMaterial, SolverDiagnostic, ConstraintForce, DiagnosticSeverity, SolveTimings } from './types';
+export type { SolverMaterial, SolverDiagnostic, ConstraintForce, DiagnosticSeverity, SolveTimings };
+
+// ─── Geometry ────────────────────────────────────────────────────
+
+export interface SolverNode3D {
+  id: number;
+  x: number;  // m (global X)
+  y: number;  // m (global Y — plan depth)
+  z: number;  // m (global Z — elevation)
+}
+
+// ─── Section ─────────────────────────────────────────────────────
+
+export interface SolverSection3D {
+  id: number;
+  name?: string;
+  a: number;   // m² — cross-section area
+  iy: number;  // m⁴ — moment of inertia about local Y
+  iz: number;  // m⁴ — moment of inertia about local Z
+  j: number;   // m⁴ — torsional constant (Saint-Venant)
+}
+
+// ─── Elements ────────────────────────────────────────────────────
+
+export interface SolverElement3D {
+  id: number;
+  type: 'frame' | 'truss';
+  nodeI: number;
+  nodeJ: number;
+  materialId: number;
+  sectionId: number;
+  // Per-axis end releases (replaces legacy hingeStart/hingeEnd booleans).
+  // Bending releases (My = around local y, Mz = around local z) and torsion (T = around local x)
+  // are independent flags so a true "pin" hinge releases ONLY the in-plane bending rotation.
+  // Legacy mapping (preserved by current solver): a hinge at an end ⇒
+  //   releaseMyStart = releaseMzStart = true (and analogous for end).
+  releaseMyStart: boolean;
+  releaseMyEnd: boolean;
+  releaseMzStart: boolean;
+  releaseMzEnd: boolean;
+  releaseTStart: boolean;
+  releaseTEnd: boolean;
+  // Optional orientation vector for local Y axis (perpendicular to element).
+  // If not provided, computed automatically by the solver's local-axis helper.
+  localYx?: number;
+  localYy?: number;
+  localYz?: number;
+  // Roll angle: rotation of local Y/Z around local X (degrees, 0/90/180/270)
+  rollAngle?: number;
+}
+
+// ─── Supports ────────────────────────────────────────────────────
+
+export interface SolverSupport3D {
+  nodeId: number;
+  // Which DOFs are restrained (true = fixed, false = free)
+  rx: boolean;   // translation X
+  ry: boolean;   // translation Y
+  rz: boolean;   // translation Z
+  rrx: boolean;  // rotation about X (torsion)
+  rry: boolean;  // rotation about Y
+  rrz: boolean;  // rotation about Z
+  // Spring stiffnesses (kN/m or kN·m/rad). 0 or undefined = no spring.
+  kx?: number;
+  ky?: number;
+  kz?: number;
+  krx?: number;
+  kry?: number;
+  krz?: number;
+  // Prescribed displacements (m or rad). Only for restrained DOFs.
+  dx?: number;
+  dy?: number;
+  dz?: number;
+  drx?: number;
+  dry?: number;
+  drz?: number;
+  // Inclined support: normal vector of the constraint plane.
+  // When isInclined=true, displacement is restrained along this normal direction
+  // using the penalty method. The translational DOFs (rx,ry,rz) should be false
+  // so the penalty stiffness acts on free DOFs.
+  normalX?: number;
+  normalY?: number;
+  normalZ?: number;
+  isInclined?: boolean;
+}
+
+// ─── Loads ────────────────────────────────────────────────────────
+
+export interface SolverNodalLoad3D {
+  nodeId: number;
+  fx: number;  // kN (global X)
+  fy: number;  // kN (global Y)
+  fz: number;  // kN (global Z)
+  mx: number;  // kN·m (about global X)
+  my: number;  // kN·m (about global Y)
+  mz: number;  // kN·m (about global Z)
+}
+
+export interface SolverDistributedLoad3D {
+  elementId: number;
+  qYI: number;  // kN/m in local Y at node I
+  qYJ: number;  // kN/m in local Y at node J
+  qZI: number;  // kN/m in local Z at node I
+  qZJ: number;  // kN/m in local Z at node J
+  a?: number;   // start position from node I (m). Default: 0
+  b?: number;   // end position from node I (m). Default: L
+}
+
+export interface SolverPointLoad3D {
+  elementId: number;
+  a: number;   // distance from node I (m)
+  py: number;  // kN in local Y
+  pz: number;  // kN in local Z
+}
+
+export interface SolverThermalLoad3D {
+  elementId: number;
+  dtUniform: number;    // °C → axial (E·A·α·ΔT)
+  dtGradientY: number;  // °C → My (E·Iy·α·ΔTy/hy)
+  dtGradientZ: number;  // °C → Mz (E·Iz·α·ΔTz/hz)
+}
+
+export type SolverLoad3D =
+  | { type: 'nodal'; data: SolverNodalLoad3D }
+  | { type: 'distributed'; data: SolverDistributedLoad3D }
+  | { type: 'pointOnElement'; data: SolverPointLoad3D }
+  | { type: 'thermal'; data: SolverThermalLoad3D };
+
+// ─── Shell / Plate Elements ─────────────────────────────────────
+
+/** Shell element families — currently implemented + planned */
+export type ShellFamily =
+  | 'DKT'       // 3-node thin plate (Kirchhoff) — implemented
+  | 'DKMT'      // 3-node thick plate (Mindlin)  — planned
+  | 'MITC4'     // 4-node quad, thin/thick        — implemented
+  | 'MITC9'     // 9-node quad, higher accuracy   — planned
+  | 'SHB8PS';   // 8-node solid-shell (ANS)       — planned
+
+/** Families that are actually available in the solver */
+export const AVAILABLE_SHELL_FAMILIES: readonly ShellFamily[] = ['DKT', 'MITC4'] as const;
+
+/** Result of the shell family selector — choice + explanation */
+export interface ShellRecommendation {
+  family: ShellFamily;
+  reason: string;            // human-readable explanation
+  confidence: 'high' | 'medium' | 'low';
+  alternatives: Array<{
+    family: ShellFamily;
+    reason: string;
+    available: boolean;      // implemented in solver?
+  }>;
+  warnings: string[];        // e.g. "element is highly warped"
+  metrics: {                 // computed geometry diagnostics
+    aspectRatio?: number;    // max edge / min edge
+    warpAngle?: number;      // degrees, 0 = perfectly flat (quads only)
+    skewAngle?: number;      // degrees, 90 = perfect (quads only)
+    thicknessRatio?: number; // t / min_edge_length
+  };
+}
+
+/** DKT triangular plate element (3-node shell) */
+export interface SolverPlateElement {
+  id: number;
+  nodes: [number, number, number]; // 3 node IDs
+  materialId: number;
+  thickness: number; // m
+  shellFamily?: ShellFamily;
+}
+
+/** MITC4 quadrilateral shell element (4-node shell) */
+export interface SolverQuadElement {
+  id: number;
+  nodes: [number, number, number, number]; // 4 node IDs
+  materialId: number;
+  thickness: number; // m
+  shellFamily?: ShellFamily;
+}
+
+/** Degenerated-continuum curved shell (4-node, captures curvature via covariant
+ *  bases). Solver-ready in the engine; stresses return in quadStresses keyed by
+ *  this id. `normals` optional (auto-computed from geometry if omitted). */
+export interface SolverCurvedShellElement {
+  id: number;
+  nodes: [number, number, number, number];
+  materialId: number;
+  thickness: number; // m
+  normals?: [[number, number, number], [number, number, number], [number, number, number], [number, number, number]];
+}
+
+// ─── Constraints ────────────────────────────────────────────────
+
+// NOTE: Discriminators must match the Rust serde rename for each Constraint variant
+// in `engine/src/types/input.rs` exactly. `equalDOF` and `linearMPC` keep the all-caps
+// acronym; the others are camelCase. Diverging here surfaces as a runtime
+// `Parse error: unknown variant ...` from the solver.
+export type ConstraintType = 'rigidLink' | 'diaphragm' | 'equalDOF' | 'linearMPC' | 'eccentricConnection';
+
+export interface RigidLinkConstraint {
+  type: 'rigidLink';
+  masterNode: number;
+  slaveNode: number;
+  /** Integer DOF indices to constrain on the slave (Rust `Vec<usize>`).
+   *  3D: 0=ux, 1=uy, 2=uz, 3=rx, 4=ry, 5=rz. Empty = all translational.
+   *  Do NOT pass DOF name strings; the solver expects indices. */
+  dofs?: number[];
+}
+
+export interface DiaphragmConstraint {
+  type: 'diaphragm';
+  masterNode: number;
+  slaveNodes: number[];
+  plane?: string; // default "XY" horizontal diaphragm plane in the Z-up product contract
+}
+
+export interface EqualDofConstraint {
+  // Discriminator is `equalDOF` to match the Rust serde rename, NOT `equalDof`.
+  type: 'equalDOF';
+  masterNode: number;
+  slaveNode: number;
+  /** Integer DOF indices (Rust `Vec<usize>`); see RigidLinkConstraint for the mapping. */
+  dofs: number[];
+}
+
+export interface LinearMpcConstraint {
+  // Discriminator is `linearMPC` to match the Rust serde rename, NOT `linearMpc`.
+  type: 'linearMPC';
+  // Term shape mirrors Rust MPCTerm: { node_id, dof: usize, coefficient: f64 }.
+  // Field names are camelCased by the Rust serde rule (rename_all = "camelCase"),
+  // so JS-side: { nodeId, dof: number, coefficient: number }.
+  // The constraint sums to 0 by definition — there is no `rhs` field.
+  terms: Array<{ nodeId: number; dof: number; coefficient: number }>;
+}
+
+/**
+ * Eccentric connection: rigid link with explicit offset and per-DOF releases at the
+ * connection point. This is where translational releases live in the solver model
+ * (mirrors Rust EccentricConnectionConstraint).
+ *
+ * `releases` length follows the dimension: 3 in 2D `[ux, uz, ry]`, 6 in 3D
+ * `[ux, uy, uz, rx, ry, rz]`. A `true` entry means that DOF is NOT constrained.
+ */
+export interface EccentricConnectionConstraint {
+  type: 'eccentricConnection';
+  masterNode: number;
+  slaveNode: number;
+  /** Offset from master to connection point (m). */
+  offsetX?: number;
+  offsetY?: number;
+  offsetZ?: number;
+  /** Per-DOF release flags at the connection (true = released/hinged). */
+  releases?: boolean[];
+}
+
+export type Constraint3D =
+  | RigidLinkConstraint
+  | DiaphragmConstraint
+  | EqualDofConstraint
+  | LinearMpcConstraint
+  | EccentricConnectionConstraint;
+
+// ─── Connector element (joint / spring / bearing between two nodes) ──────
+//
+// Mirrors Rust `ConnectorElement`. Lives parallel to `elements` in the
+// solver input — NOT a structural beam-like element (no section properties,
+// no internal-force diagrams). Its job is point-to-point stiffness in named
+// directions, so it expresses sliders, bearings, isolators, point springs,
+// joint flexibility, etc.
+//
+// Translational releases are expressed by setting the relevant stiffness to
+// 0 (or near-zero). Do NOT add release-style boolean fields here — that
+// would diverge from the solver shape.
+
+export interface ConnectorElement {
+  id: number;
+  nodeI: number;
+  nodeJ: number;
+  /** Axial stiffness along connector axis (kN/m). */
+  kAxial?: number;
+  /** Shear stiffness perpendicular to axis. 2D: in-plane perpendicular; 3D: local Y (kN/m). */
+  kShear?: number;
+  /** Rotational stiffness. 2D: about Z (kN·m/rad); 3D: torsional about local X (kN·m/rad). */
+  kMoment?: number;
+  /** 3D only — shear stiffness in local Z direction (kN/m). */
+  kShearZ?: number;
+  /** 3D only — bending stiffness about local Y (kN·m/rad). */
+  kBendY?: number;
+  /** 3D only — bending stiffness about local Z (kN·m/rad). */
+  kBendZ?: number;
+}
+
+// ─── Input ───────────────────────────────────────────────────────
+
+export interface SolverInput3D {
+  nodes: Map<number, SolverNode3D>;
+  materials: Map<number, SolverMaterial>;
+  sections: Map<number, SolverSection3D>;
+  elements: Map<number, SolverElement3D>;
+  supports: Map<number, SolverSupport3D>;
+  loads: SolverLoad3D[];
+  plates?: Map<number, SolverPlateElement>;
+  quads?: Map<number, SolverQuadElement>;
+  curvedShells?: Map<number, SolverCurvedShellElement>;
+  constraints?: Constraint3D[];
+  /** Joint/spring/bearing primitives, parallel to `elements`. Solver-side: top-level
+   *  `connectors: HashMap<String, ConnectorElement>` (see Rust ConnectorElement). */
+  connectors?: Map<number, ConnectorElement>;
+  leftHand?: boolean;  // Terna izquierda: negate ey in local axes
+}
+
+// ─── Results ─────────────────────────────────────────────────────
+
+export interface Displacement3D {
+  nodeId: number;
+  ux: number;  // m
+  uy: number;  // m
+  uz: number;  // m
+  rx: number;  // rad (rotation about global X)
+  ry: number;  // rad (rotation about global Y)
+  rz: number;  // rad (rotation about global Z)
+}
+
+export interface Reaction3D {
+  nodeId: number;
+  fx: number;  // kN
+  fy: number;  // kN
+  fz: number;  // kN
+  mx: number;  // kN·m
+  my: number;  // kN·m
+  mz: number;  // kN·m
+}
+
+export interface ElementForces3D {
+  elementId: number;
+  length: number;  // m
+  // Axial force (+ = tension)
+  nStart: number;
+  nEnd: number;
+  // Shear in local Y
+  vyStart: number;
+  vyEnd: number;
+  // Shear in local Z
+  vzStart: number;
+  vzEnd: number;
+  // Torsion (about local X)
+  mxStart: number;
+  mxEnd: number;
+  // My — moment about local y; bends over the section depth (uses Iy).
+  myStart: number;
+  myEnd: number;
+  // Mz — moment about local z; bends over the section width (uses Iz).
+  mzStart: number;
+  mzEnd: number;
+  // Per-axis end releases (matches solver input contract). My = about local y
+  // (over the depth, Iy), Mz = about local z (over the width, Iz), T = torsion
+  // about local x. A real pin releases ONE bending axis. (For the default
+  // unrolled tall section My is the strong/vertical axis; a roll rotates this.)
+  releaseMyStart: boolean;
+  releaseMyEnd: boolean;
+  releaseMzStart: boolean;
+  releaseMzEnd: boolean;
+  releaseTStart: boolean;
+  releaseTEnd: boolean;
+  // Loads on this element (for diagram/deformed shape computation)
+  // Local-Y load → Vy + Mz (bends over the width, Iz)
+  qYI: number;      // kN/m full-length equivalent at node I (local Y)
+  qYJ: number;      // kN/m full-length equivalent at node J (local Y)
+  distributedLoadsY: Array<{ qI: number; qJ: number; a: number; b: number }>;
+  pointLoadsY: Array<{ a: number; p: number }>;
+  // Local-Z load → Vz + My (bends over the depth, Iy)
+  qZI: number;
+  qZJ: number;
+  distributedLoadsZ: Array<{ qI: number; qJ: number; a: number; b: number }>;
+  pointLoadsZ: Array<{ a: number; p: number }>;
+}
+
+/** Plate stress output (triangular) */
+export interface PlateStress {
+  elementId: number;
+  sigmaXx: number;
+  sigmaYy: number;
+  tauXy: number;
+  mx: number;
+  my: number;
+  mxy: number;
+  sigma1: number;
+  sigma2: number;
+  vonMises: number;
+  nodalVonMises?: number[];
+}
+
+/** Quad stress output */
+export interface QuadStress {
+  elementId: number;
+  sigmaXx: number;
+  sigmaYy: number;
+  tauXy: number;
+  mx: number;
+  my: number;
+  mxy: number;
+  vonMises: number;
+  nodalVonMises?: number[];
+}
+
+export interface AnalysisResults3D {
+  displacements: Displacement3D[];
+  reactions: Reaction3D[];
+  elementForces: ElementForces3D[];
+  constraintForces?: import('./types').ConstraintForce[];
+  diagnostics?: import('./types').AssemblyDiagnostic[];
+  solverDiagnostics?: import('./types').SolverDiagnostic[];
+  plateStresses?: PlateStress[];
+  quadStresses?: QuadStress[];
+  timings?: SolveTimings;
+}
+
+// ─── Envelope types for 3D load combinations ─────────────────
+
+export interface ElementEnvelopeDiagram3D {
+  elementId: number;
+  tPositions: number[];
+  posValues: number[];
+  negValues: number[];
+}
+
+export interface EnvelopeDiagramData3D {
+  kind: 'momentY' | 'momentZ' | 'shearY' | 'shearZ' | 'axial' | 'torsion';
+  elements: ElementEnvelopeDiagram3D[];
+  globalMax: number;
+}
+
+export interface FullEnvelope3D {
+  momentY: EnvelopeDiagramData3D;
+  momentZ: EnvelopeDiagramData3D;
+  shearY: EnvelopeDiagramData3D;
+  shearZ: EnvelopeDiagramData3D;
+  axial: EnvelopeDiagramData3D;
+  torsion: EnvelopeDiagramData3D;
+  maxAbsResults3D: AnalysisResults3D;
+}
+
+// ─── Beam Station Extraction (3D) ────────────────────────────────
+
+import type { BeamMemberInfo, GoverningEntry, MemberGoverningEntry } from './types';
+export type { BeamMemberInfo, GoverningEntry, MemberGoverningEntry };
+
+export interface LabeledResults3D {
+  comboId: number;
+  comboName?: string;
+  results: AnalysisResults3D;
+}
+
+export interface BeamStationInput3D {
+  members: BeamMemberInfo[];
+  combinations: LabeledResults3D[];
+  numStations?: number;
+}
+
+export interface StationComboForces3D {
+  comboId: number;
+  comboName?: string;
+  n: number;
+  vy: number;
+  vz: number;
+  my: number;
+  mz: number;
+  torsion: number;
+}
+
+export interface GoverningInfo3D {
+  axial?: GoverningEntry;
+  shearY?: GoverningEntry;
+  shearZ?: GoverningEntry;
+  momentY?: GoverningEntry;
+  momentZ?: GoverningEntry;
+  torsion?: GoverningEntry;
+}
+
+export interface BeamStation3D {
+  memberId: number;
+  label?: string;
+  stationIndex: number;
+  t: number;
+  stationX: number;
+  sectionId: number;
+  materialId: number;
+  comboForces: StationComboForces3D[];
+  governing: GoverningInfo3D;
+}
+
+export interface SignConvention3D {
+  localX: string;
+  localYz: string;
+  axial: string;
+  shearY: string;
+  shearZ: string;
+  momentZ: string;
+  momentY: string;
+  torsion: string;
+  stationX: string;
+}
+
+export interface BeamStationResult3D {
+  stations: BeamStation3D[];
+  numMembers: number;
+  numCombinations: number;
+  numStationsPerMember: number;
+  signConvention: SignConvention3D;
+}
+
+export interface MemberGoverning3D {
+  axial?: MemberGoverningEntry;
+  shearY?: MemberGoverningEntry;
+  shearZ?: MemberGoverningEntry;
+  momentY?: MemberGoverningEntry;
+  momentZ?: MemberGoverningEntry;
+  torsion?: MemberGoverningEntry;
+}
+
+export interface MemberStationGroup3D {
+  memberId: number;
+  label?: string;
+  sectionId: number;
+  materialId: number;
+  length: number;
+  stations: BeamStation3D[];
+  memberGoverning: MemberGoverning3D;
+}
+
+export interface GroupedBeamStationResult3D {
+  members: MemberStationGroup3D[];
+  numCombinations: number;
+  numStationsPerMember: number;
+  signConvention: SignConvention3D;
+}
