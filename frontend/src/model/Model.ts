@@ -114,7 +114,14 @@ export class Model {
     const right = Model.GIZMO_RIGHT_BASE + (dockOpen ? Model.RIGHT_PANEL_WIDTH : 0);
     if (right !== this.gizmoOptions.offset.right) {
       this.gizmoOptions.offset.right = right;
+      // `ViewportGizmo.set()` regenerates the whole widget and — because its
+      // internal `dispose()` detaches controls and clears the internal
+      // `_controls` ref — the `this._controls && this.attachControls(...)` inside
+      // `set()` is a no-op. The widget is therefore left without its OrbitControls
+      // binding (its `target` goes stale and face-click camera animation breaks).
+      // Re-attach controls right after every rebuild to keep the cube functional.
       this.gizmo.set({ ...this.gizmoOptions, offset: { ...this.gizmoOptions.offset } });
+      this.gizmo.attachControls(this.camera.controls);
     }
   };
 
