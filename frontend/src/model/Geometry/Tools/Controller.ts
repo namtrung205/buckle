@@ -2,6 +2,7 @@ import { Tool, ToolsId } from './types';
 import { Model } from '../../Model';
 import Line from './Line';
 import CopyTool from './Copy';
+import PlanePick from './PlanePick';
 import { ElementType } from '../../../types';
 import { makeAutoObservable } from 'mobx';
 
@@ -29,6 +30,9 @@ class ToolsController {
           break
         case 'copy':
           tool = CopyTool.getInstance();
+          break
+        case 'planePick':
+          tool = PlanePick.getInstance();
           break
       }
     }

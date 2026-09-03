@@ -15,7 +15,8 @@ import {
   Visibility,
   WebSocketHandler,
   Shell,
-  GridSystem
+  GridSystem,
+  WorkingPlane,
 } from "./index";
 import ReactionViz from "./PostProcessing/ReactionViz";
 import { makeAutoObservable } from "mobx";
@@ -72,6 +73,8 @@ export class Model {
   materials : Material[] = mockMaterials
   // SAP2000/ETABS style structural axis grids
   grids : GridSystem[] = []
+  // Active drawing surface — re-orients picking, the square grid and the camera
+  workingPlane : WorkingPlane
   gui : GUI | null = null
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
@@ -246,7 +249,7 @@ export class Model {
   navTool: NavTool = 'select';
   // Zoom navigation tool handling fit / window / drag modes
   zoomTool: ZoomTool;
-  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard', 'grids'];
+  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard', 'grids', 'workplane'];
   ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
 
   closeContextMenu = () => {
@@ -391,6 +394,7 @@ export class Model {
     this.worldPlane =  new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     
     this.snapper = new Snapper(this)
+    this.workingPlane = new WorkingPlane(this)
  
     this.update()
     this.init()
@@ -605,8 +609,9 @@ export class Model {
       this.gridHelper.show()
     }
     const elevation = level.value
-    this.worldPlane.constant = -elevation
-    this.gridHelper.grid.position.y = elevation -0.005
+    // Level = horizontal working plane at that elevation (aligns grid + picking).
+    // alignCamera:false keeps the camera fit/handle2dView behaviour unchanged.
+    this.workingPlane.setLevel(elevation, level.label, { alignCamera: false })
     this.layer = this.levels.findIndex(l => l.value === level.value)
     this.snapper.snap?.layers.set(this.layer)
     this.gridHelper.grid.layers.set(this.layer)

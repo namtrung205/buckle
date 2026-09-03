@@ -75,6 +75,13 @@ const DrawPanel = observer(() => {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.6, borderRadius: '4px', border: `1px solid ${colors.border}`, backgroundColor: 'rgba(0,0,0,0.12)' }}>
+        <Typography sx={{ fontSize: '0.68rem', color: colors.textFaint, flexShrink: 0 }}>Plane:</Typography>
+        <Typography sx={{ fontSize: '0.72rem', color: colors.accentSoft, fontWeight: 600, fontFamily: '"Consolas", "Roboto Mono", ui-monospace, monospace' }}>
+          {model?.workingPlane?.label ?? '—'}
+        </Typography>
+      </Box>
+
       <PropertyRow label="Section">
         <Select
           label={''}

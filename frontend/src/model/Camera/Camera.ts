@@ -287,6 +287,29 @@ export class Camera {
     this.controls.update();
     this.applyNavTool(this.model.navTool)
   }
+
+  /**
+   * Look straight at a working plane: positions the camera along the plane's
+   * normal (plan-like view of that plane), picks a sensible screen "up" and
+   * orbits around the plane origin. No model-fit is performed so an existing
+   * zoom/frustum is preserved.
+   */
+  alignToPlane(normal: THREE.Vector3, origin: THREE.Vector3) {
+    this.viewMode = '2d'
+    this.controls.enableRotate = false
+    this.model.snapper.enable()
+    const n = normal.clone().normalize()
+    // Keep the world Y as screen-up unless it is (anti)parallel to the normal
+    // (horizontal plan) — then fall back to -Z so the letters stay upright.
+    const up = new THREE.Vector3(0, 1, 0)
+    if (Math.abs(n.dot(up)) > 0.99) up.set(0, 0, -1)
+    this.cam.up.copy(up)
+    const dist = Math.max(30, this.frustumSize * 2)
+    this.cam.position.copy(origin).addScaledVector(n, dist)
+    this.cam.lookAt(origin)
+    this.controls.target.copy(origin)
+    this.controls.update()
+  }
 }
 
 export default Camera

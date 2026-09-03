@@ -16,6 +16,7 @@ import {
   ThreeDRotation,
   Mouse,
   Check,
+  Home,
 } from '@mui/icons-material';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
@@ -193,6 +194,14 @@ const BottomBar = observer(() => {
         <Tooltip title="Orbit — rotate the view in 3D">
           <IconButton onClick={() => selectNavTool('orbit')} sx={activeStyle(isActive('orbit'))}>
             <ThreeDRotation sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+
+        <Divider orientation="vertical" flexItem sx={{ bgcolor: colors.border, mx: 0.5 }} />
+
+        <Tooltip title="Home — reset the working plane to the OXY plan and fit the view">
+          <IconButton onClick={() => model.workingPlane.home()} sx={activeStyle(false)}>
+            <Home sx={{ fontSize: 18 }} />
           </IconButton>
         </Tooltip>
       </Box>
