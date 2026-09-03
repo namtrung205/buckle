@@ -14,6 +14,7 @@ import Snapper from './Geometry/Helpers/Snapper'
 import Sections from './Section/Section'
 import GridSystem from './Grid/GridSystem'
 import WorkingPlane from './Geometry/WorkingPlane/WorkingPlane'
+import LevelVisual from './Level/LevelVisual'
 import Console from './Console/Console'
 // Geometry
 import Line from './Geometry/Tools/Line'
@@ -49,5 +50,6 @@ export {
   CopyTool,
   ZoomTool,
   PlanePick,
+  LevelVisual,
   Shell
 }

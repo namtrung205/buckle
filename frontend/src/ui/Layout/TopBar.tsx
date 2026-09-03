@@ -11,6 +11,7 @@ import {
   Download as DownloadIcon,
   GridOn as GridOnIcon,
   Layers as LayersIcon,
+  Height as HeightIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
@@ -30,6 +31,7 @@ import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
 import AddOrEditGrid from '../Model/Grids/AddOrEdit';
 import AddOrEditWorkPlane from '../Model/WorkPlane/AddOrEdit';
+import AddOrEditLevel from '../Model/Levels/AddOrEdit';
 import WarehouseWizard from '../Model/Generator/WarehouseWizard';
 import AnalysisProgress from '../Results/AnalysisProgress';
 import Dialog from '../../components/Dialog/Dialog';
@@ -173,6 +175,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     materials: activeDialog === 'materials',
     grids: activeDialog === 'grids',
     workplane: activeDialog === 'workplane',
+    levels: activeDialog === 'levels',
     copy: activeDialog === 'copy',
     warehouseWizard: activeDialog === 'warehouseWizard',
     analysisProgress: activeDialog === 'analysisProgress',
@@ -497,6 +500,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             </RibbonPanel>
             <RibbonPanel label="System">
               <RibbonButton title="New structural grid" label="Grid" onClick={() => open('grids')} disabled={isLocked} icon={<GridOnIcon sx={{ fontSize: 15 }} />} />
+              <RibbonButton title="New level datum (Revit style)" label="Level" onClick={() => open('levels')} disabled={isLocked} icon={<HeightIcon sx={{ fontSize: 15 }} />} />
               <RibbonButton title="Set the active drawing plane" label="Workplane" onClick={() => open('workplane')} disabled={isLocked} icon={<LayersIcon sx={{ fontSize: 15 }} />} />
             </RibbonPanel>
           </>
@@ -549,6 +553,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       <AddOrEditMaterial open={dialogs.materials} onClose={close} selectedMaterial={null} />
       <AddOrEditGrid open={dialogs.grids} onClose={close} grid={null} />
       <AddOrEditWorkPlane open={dialogs.workplane} onClose={close} />
+      <AddOrEditLevel open={dialogs.levels} onClose={close} level={null} />
       <Copy open={dialogs.copy} onClose={close} />
       <WarehouseWizard open={dialogs.warehouseWizard} onClose={close} />
       <AnalysisProgress 

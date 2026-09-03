@@ -290,6 +290,22 @@ class Labeler {
         }
       }
       
+      else if (type === 'level') {
+        // Revit-style level datum label: level name + elevation, bold green text.
+        pContainer.style.backgroundColor = 'transparent';
+        pContainer.style.height = 'auto';
+        pContainer.style.width = 'auto';
+        pContainer.style.minWidth = '0';
+        pContainer.style.boxShadow = 'none';
+        pContainer.style.border = 'none';
+        pContainer.style.padding = '0';
+        p.style.color = '#6ee7a0';
+        p.style.fontSize = '11.5px';
+        p.style.fontWeight = '700';
+        p.style.lineHeight = '1';
+        p.style.textAlign = 'left';
+        p.style.textShadow = '0 1px 3px rgba(0, 0, 0, 0.9)';
+      }
       else {
         pContainer.style.backgroundColor = 'transparent';
         pContainer.style.height = '20px';

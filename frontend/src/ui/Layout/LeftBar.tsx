@@ -11,6 +11,7 @@ import {
   GridOn as GridIcon,
   Visibility as VisibleIcon,
   VisibilityOff as HiddenIcon,
+  Straighten as LevelsIcon,
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
@@ -28,6 +29,8 @@ import { ElasticIsotropicMaterial, Section as SectionType } from '../../types';
 import AddOrEditMaterial from '../Model/Materials/AddOrEdit';
 import AddOrEditGrid from '../Model/Grids/AddOrEdit';
 import GridSystem from '../../model/Grid/GridSystem';
+import AddOrEditLevel from '../Model/Levels/AddOrEdit';
+import { Level } from '../../types';
 import ElasticBeamColumn from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
 interface LeftBarProps {
@@ -158,6 +161,9 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
 
   const [addOrEditGrid, setAddOrEditGrid] = useState(false);
   const [selectedGrid, setSelectedGrid] = useState<GridSystem | null>(null);
+
+  const [addOrEditLevel, setAddOrEditLevel] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState<Level | null>(null);
 
   
 
@@ -406,6 +412,73 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               </Typography>
             </Box>
           )}
+        </TreeItem>
+
+        {/* Levels (Revit-style horizontal datums) */}
+        <TreeItem
+          id="levels"
+          label="Levels"
+          icon={<LevelsIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
+          onAdd={() => {
+            setSelectedLevel(null);
+            setAddOrEditLevel(true);
+          }}
+        >
+          {model?.levels?.map((level: Level) => (
+            <Box
+              key={level.value}
+              onClick={() => model.handleLevelChange(level)}
+              sx={{
+                px: 2,
+                pl: 6,
+                py: 0.8,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                '&:hover': {
+                  backgroundColor: colors.hover,
+                },
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
+                  {level.label || `Level ${level.value}`}
+                </Typography>
+                <Typography sx={{ fontSize: '0.65rem', color: colors.textFaint, fontFamily: '"Consolas", "Roboto Mono", ui-monospace, monospace' }}>
+                  {level.value.toFixed(3)} m
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                <IconButton
+                  size="small"
+                  disabled={isLocked}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedLevel(level);
+                    setAddOrEditLevel(true);
+                  }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
+                >
+                  <EditIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  disabled={isLocked || (model?.levels?.length ?? 0) <= 1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(`Delete level ${level.label}?`)) {
+                      model.deleteLevel(level.value);
+                    }
+                  }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
+                >
+                  <DeleteIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </Box>
+            </Box>
+          ))}
         </TreeItem>
 
         {/* Nodes */}
@@ -687,6 +760,15 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           setSelectedGrid(null);
         }}
         grid={selectedGrid}
+      />
+
+      <AddOrEditLevel
+        open={addOrEditLevel}
+        onClose={() => {
+          setAddOrEditLevel(false);
+          setSelectedLevel(null);
+        }}
+        level={selectedLevel}
       />
 
       <AddOrEditMaterial

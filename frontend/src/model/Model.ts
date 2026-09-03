@@ -17,6 +17,7 @@ import {
   Shell,
   GridSystem,
   WorkingPlane,
+  LevelVisual,
 } from "./index";
 import ReactionViz from "./PostProcessing/ReactionViz";
 import { makeAutoObservable } from "mobx";
@@ -75,6 +76,8 @@ export class Model {
   grids : GridSystem[] = []
   // Active drawing surface — re-orients picking, the square grid and the camera
   workingPlane : WorkingPlane
+  // Revit-style level datums rendered in the scene
+  levelVisual : LevelVisual
   gui : GUI | null = null
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
@@ -249,7 +252,7 @@ export class Model {
   navTool: NavTool = 'select';
   // Zoom navigation tool handling fit / window / drag modes
   zoomTool: ZoomTool;
-  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard', 'grids', 'workplane'];
+  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard', 'grids', 'workplane', 'levels'];
   ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
 
   closeContextMenu = () => {
@@ -409,6 +412,7 @@ export class Model {
     this.levels = mockLevels
     this.postProcessing = new PostProcessing(this)
     this.labeler = new Labeler(this)
+    this.levelVisual = new LevelVisual(this)
     this.reactionViz = new ReactionViz(this)
     // this.sections = new Sections(this)
     this.gizmo = new ViewportGizmo(
@@ -514,6 +518,7 @@ export class Model {
     this.container.removeChild(this.renderer.domElement)
     this.selector.dispose()
     this.labeler.dispose()
+    this.levelVisual?.dispose()
     this.gizmo.dispose()
     this.removeListeners()
     this.zoomTool.stop()
@@ -619,6 +624,28 @@ export class Model {
     this.camera.cam.layers.set(this.layer)
     // this.light.directionalLight.layers.set(this.layer)
 
+  }
+
+  /** Add a level (Revit-style datum) and switch to its plan view. */
+  addLevel(level: Level) {
+    this.levels.push(level)
+    this.handleLevelChange(level)
+  }
+
+  /** Update a level's name / elevation in place. */
+  updateLevel(oldValue: number, patch: Partial<Level>) {
+    const lv = this.levels.find((l) => l.value === oldValue)
+    if (lv) Object.assign(lv, patch)
+  }
+
+  /** Remove a level datum. Returns false if it is the last remaining level. */
+  deleteLevel(value: number): boolean {
+    if (this.levels.length <= 1) return false
+    this.levels = this.levels.filter((l) => l.value !== value)
+    // If the active layer pointed at the deleted level, fall back to the first.
+    const active = this.levels[0]
+    this.handleLevelChange(active)
+    return true
   }
 }
 
