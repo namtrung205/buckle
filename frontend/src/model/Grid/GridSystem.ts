@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { makeAutoObservable } from 'mobx'
 import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js'
+import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js'
 import helvetiker from 'three/examples/fonts/helvetiker_regular.typeface.json'
 import Model from '../Model'
 
@@ -46,22 +47,25 @@ export type GridSystemDef = {
 }
 
 const GRID_COLOR = 0x64b5f6
-const TEXT_COLOR = 0xcfe6ff
+const TEXT_COLOR = 0xdcebff
 // Slightly above the ground plane mesh (-0.0015) and the drawing grid (-0.005)
 // so the axis lines never z-fight with them.
 const GRID_ELEVATION = 0.02
 const BUBBLE_RADIUS_PX = 13
+// Gap (px) left between the end of a grid line and its bubble circle.
+const BUBBLE_GAP_PX = 4
 // Extent used for a direction when the crossing family has no lines yet.
 const FALLBACK_EXTENT = 10
 
 const _worldPos = new THREE.Vector3()
 
 /* ── line-drawn bubble assets ───────────────────────────────────────────────
- * The end bubbles are drawn with plain LINES (a circle outline + vector text
- * strokes, SHX-style) instead of filled meshes so they never z-fight, flicker
- * or look banded at screen size. The geometries are cached per content and
- * SHARED by every grid — only the per-grid axis lines are owned per grid, so
- * a grid rebuild must never dispose these shared geometries.
+ * The end bubbles are drawn with LINES (a circle outline) + FILLED vector text
+ * (a real font, courtesy of the shared Typeface JSON) instead of stroke text.
+ * The text lies FLAT on the grid plane (no camera-facing billboard) and the
+ * geometries are cached per content and SHARED by every grid — only the
+ * per-grid axis lines are owned per grid, so a grid rebuild must never dispose
+ * these shared geometries.
  */
 const GRID_FONT = new FontLoader().parse(helvetiker as unknown as Parameters<typeof FontLoader.prototype.parse>[0])
 
@@ -86,44 +90,27 @@ function unitCircleGeometry(): THREE.BufferGeometry {
 const textCache = new Map<string, THREE.BufferGeometry>()
 
 /**
- * Stroke the label text its vector outlines (like an SHX font) as LineSegments.
- * The result is centred on the origin at a height of ~1 unit, scaled down if
- * needed so it always fits inside the unit bubble circle.
+ * Build a FILLED, real-font glyph mesh (like a raster text, but vector) for the
+ * bubble label. It is centred on the origin and scaled so it always fits inside
+ * the unit bubble circle. The text is a flat shape on XY — the bubble group is
+ * rotated flat onto the grid plane, so it never billboards around the camera.
  */
-function textGeometry(text: string): THREE.BufferGeometry {
+function textFillGeometry(text: string): THREE.BufferGeometry {
   let geo = textCache.get(text)
   if (geo) return geo
 
-  const shapes = GRID_FONT.generateShapes(text, 1)
-  const shapeGeo = new THREE.ShapeGeometry(shapes, 12)
-  const edges = new THREE.EdgesGeometry(shapeGeo, 1)
-  const raw = (edges.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>
-  const positions = new Float32Array(raw.length)
-  for (let i = 0; i < raw.length; i++) positions[i] = raw[i] as number
-  shapeGeo.dispose()
-  edges.dispose()
+  const textGeo = new TextGeometry(text, { font: GRID_FONT, size: 1, depth: 0.06, curveSegments: 3, bevelEnabled: false })
+  textGeo.computeBoundingBox()
+  const bb = textGeo.boundingBox!
+  const cx = (bb.min.x + bb.max.x) / 2
+  const cy = (bb.min.y + bb.max.y) / 2
+  const maxDim = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, 1e-6)
+  // Fit the glyphs inside ~62% of the unit bubble radius, keeping a margin.
+  const scale = Math.min(1, 0.62 / maxDim)
+  textGeo.translate(-cx, -cy, 0)
+  textGeo.scale(scale, scale, 1)
 
-  // Centre the glyphs and cap them so they fit inside the unit bubble.
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-  for (let i = 0; i < positions.length; i += 3) {
-    if (positions[i] < minX) minX = positions[i]
-    if (positions[i] > maxX) maxX = positions[i]
-    if (positions[i + 1] < minY) minY = positions[i + 1]
-    if (positions[i + 1] > maxY) maxY = positions[i + 1]
-  }
-  const w = Math.max(1e-6, maxX - minX)
-  const h = Math.max(1e-6, maxY - minY)
-  const cx = (minX + maxX) / 2
-  const cy = (minY + maxY) / 2
-  const scale = Math.min(1, 1.2 / Math.max(w, h))
-  for (let i = 0; i < positions.length; i += 3) {
-    positions[i] = (positions[i] - cx) * scale
-    positions[i + 1] = (positions[i + 1] - cy) * scale
-  }
-
-  geo = new THREE.BufferGeometry()
-  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geo.computeBoundingSphere()
+  geo = textGeo
   textCache.set(text, geo)
   return geo
 }
@@ -170,9 +157,12 @@ class GridSystem {
   yLines: GridLine[] = []
   group: THREE.Group = new THREE.Group()
   private bubbles: THREE.Group[] = []
+  // Line ↔ bubble links used to trim each grid line just before its bubble
+  // circle (a constant on-screen gap, recomputed every frame).
+  private bubbleTies: { line: THREE.Line; bubble: THREE.Group; dir: THREE.Vector3; isStart: boolean }[] = []
   private lineMaterial: THREE.LineBasicMaterial
   private circleMaterial: THREE.LineBasicMaterial
-  private textMaterial: THREE.LineBasicMaterial
+  private textMaterial: THREE.MeshBasicMaterial
 
   constructor(model: Model, def: GridSystemDef) {
     this.model = model
@@ -185,7 +175,7 @@ class GridSystem {
 
     this.lineMaterial = new THREE.LineBasicMaterial({ color: GRID_COLOR })
     this.circleMaterial = new THREE.LineBasicMaterial({ color: GRID_COLOR })
-    this.textMaterial = new THREE.LineBasicMaterial({ color: TEXT_COLOR })
+    this.textMaterial = new THREE.MeshBasicMaterial({ color: TEXT_COLOR, side: THREE.DoubleSide })
 
     makeAutoObservable(this)
   }
@@ -233,13 +223,16 @@ class GridSystem {
     this.xLines.forEach((line) => {
       const zStart = zCoords.length ? zMin - ext : -FALLBACK_EXTENT
       const zEnd = zCoords.length ? zMax + ext : FALLBACK_EXTENT
-      this.addLine(
+      const lineObj = this.addLine(
         new THREE.Vector3(line.coord, GRID_ELEVATION, zStart),
         new THREE.Vector3(line.coord, GRID_ELEVATION, zEnd),
       )
       if (this.showBubbles) {
-        this.addBubble(new THREE.Vector3(line.coord, GRID_ELEVATION, zStart), line.label)
-        this.addBubble(new THREE.Vector3(line.coord, GRID_ELEVATION, zEnd), line.label)
+        const bStart = this.addBubble(new THREE.Vector3(line.coord, GRID_ELEVATION, zStart), line.label)
+        const bEnd = this.addBubble(new THREE.Vector3(line.coord, GRID_ELEVATION, zEnd), line.label)
+        // Interior direction (from each end toward the line body) — +Z / −Z.
+        this.tieBubble(lineObj, bStart, new THREE.Vector3(0, 0, 1), true)
+        this.tieBubble(lineObj, bEnd, new THREE.Vector3(0, 0, -1), false)
       }
     })
 
@@ -247,13 +240,16 @@ class GridSystem {
     this.yLines.forEach((line) => {
       const xStart = xCoords.length ? xMin - ext : -FALLBACK_EXTENT
       const xEnd = xCoords.length ? xMax + ext : FALLBACK_EXTENT
-      this.addLine(
+      const lineObj = this.addLine(
         new THREE.Vector3(xStart, GRID_ELEVATION, line.coord),
         new THREE.Vector3(xEnd, GRID_ELEVATION, line.coord),
       )
       if (this.showBubbles) {
-        this.addBubble(new THREE.Vector3(xStart, GRID_ELEVATION, line.coord), line.label)
-        this.addBubble(new THREE.Vector3(xEnd, GRID_ELEVATION, line.coord), line.label)
+        const bStart = this.addBubble(new THREE.Vector3(xStart, GRID_ELEVATION, line.coord), line.label)
+        const bEnd = this.addBubble(new THREE.Vector3(xEnd, GRID_ELEVATION, line.coord), line.label)
+        // Interior direction (from each end toward the line body) — +X / −X.
+        this.tieBubble(lineObj, bStart, new THREE.Vector3(1, 0, 0), true)
+        this.tieBubble(lineObj, bEnd, new THREE.Vector3(-1, 0, 0), false)
       }
     })
 
@@ -265,35 +261,61 @@ class GridSystem {
     this.updateScreenScale()
   }
 
-  private addLine(start: THREE.Vector3, end: THREE.Vector3) {
+  private addLine(start: THREE.Vector3, end: THREE.Vector3): THREE.Line {
     const geometry = new THREE.BufferGeometry().setFromPoints([start, end])
     const line = new THREE.Line(geometry, this.lineMaterial)
     line.raycast = () => {} // never block member / node picking
     this.group.add(line)
+    return line
   }
 
-  private addBubble(position: THREE.Vector3, text: string) {
+  private addBubble(position: THREE.Vector3, text: string): THREE.Group {
     const bubble = new THREE.Group()
-    // Line-drawn bubble (SAP/ETABS style): a circle outline + stroked text,
-    // both plain LINES so they never z-fight or flicker like filled meshes.
-    // Unit size — updateScreenScale() keeps them at a constant on-screen size.
+    // Line-drawn bubble (SAP/ETABS style): a circle outline + a FILLED text
+    // mesh using a real font. Both sit flat on the grid plane — the text does
+    // NOT billboard around the camera. Unit size, kept constant on screen by
+    // updateScreenScale().
     const circle = new THREE.LineLoop(unitCircleGeometry(), this.circleMaterial)
     circle.raycast = () => {}
-    const textLines = new THREE.LineSegments(textGeometry(text), this.textMaterial)
-    textLines.raycast = () => {}
-    bubble.add(circle, textLines)
+    const textMesh = new THREE.Mesh(textFillGeometry(text), this.textMaterial)
+    textMesh.raycast = () => {}
+    textMesh.position.z = 0.031 // raise the glyphs just above the circle line
+    bubble.add(circle, textMesh)
     bubble.rotation.x = -Math.PI / 2
     bubble.position.copy(position)
     this.bubbles.push(bubble)
     this.group.add(bubble)
+    return bubble
+  }
+
+  /** Link an axis line to its end bubble for per-frame edge trimming. */
+  private tieBubble(line: THREE.Line, bubble: THREE.Group, dir: THREE.Vector3, isStart: boolean) {
+    this.bubbleTies.push({ line, bubble, dir, isStart })
   }
 
   /** Keep the bubbles at a constant on-screen size (same trick as nodes). */
   updateScreenScale() {
     if (!this.visible) return
-    this.bubbles.forEach((bubble) => {
-      bubble.getWorldPosition(_worldPos)
-      bubble.scale.setScalar(this.model.pixelToWorld(_worldPos, BUBBLE_RADIUS_PX))
+    // px→world factor at the bubble's depth (constant for this ortho/iso frame).
+    const px = this.bubbleTies.length
+      ? this.model.pixelToWorld(this.bubbleTies[0].bubble.position, 1)
+      : this.model.pixelToWorld(_worldPos.set(0, 0, 0), 1)
+
+    this.bubbleTies.forEach((tie) => {
+      const pos = tie.bubble.position
+      tie.bubble.scale.setScalar(px * BUBBLE_RADIUS_PX)
+
+      // Trim the axis line just before the circle so the two never intersect,
+      // keeping a constant on-screen gap regardless of zoom.
+      const trim = px * (BUBBLE_RADIUS_PX + BUBBLE_GAP_PX)
+      const attr = (tie.line.geometry.attributes.position as THREE.BufferAttribute)
+      attr.setXYZ(
+        tie.isStart ? 0 : 1,
+        pos.x + tie.dir.x * trim,
+        pos.y,
+        pos.z + tie.dir.z * trim,
+      )
+      attr.needsUpdate = true
     })
   }
 
@@ -317,6 +339,7 @@ class GridSystem {
     this.model.scene.remove(this.group)
     this.group.clear()
     this.bubbles = []
+    this.bubbleTies = []
     this.xLines = []
     this.yLines = []
   }
