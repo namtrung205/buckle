@@ -120,6 +120,10 @@ const RightPanel = observer(() => {
   const isDraw = model?.activeDialog === 'draw';
   // Results tab follows the ribbon button that opened it (Reactions vs Forces).
   const [resultsTab, setResultsTab] = useState<number>(model?.activeDialog === 'reactions' ? 0 : 1);
+  // Section dialog context: which section the dock dialog edits. `null` means
+  // the "+" new-section flow — the dialog then creates a fresh section that is
+  // added to the project's section list and assigned to this member on save.
+  const [sectionDialogSection, setSectionDialogSection] = useState<Section | null>(null);
 
   // Re-sync the initial tab when switching between the two ribbon buttons while
   // the dock stays mounted (Results → Forces, Reactions → Reactions).
@@ -388,7 +392,16 @@ const RightPanel = observer(() => {
 
               <PropertyRow
                 label="Section"
-                handlers={{ onPick: () => { model.selectedMemberDialogs.section = true; }, onEdit: () => { model.selectedMemberDialogs.section = true; }, onNew: () => { model.selectedMemberDialogs.section = true; } }}
+                handlers={{
+                  // ⊞/✎ edit the member's current section in place (a confirm
+                  // warns when other members share it — SectionModel then
+                  // re-points and rebuilds every linked member). + creates a
+                  // brand-new section that joins the project list and is
+                  // assigned to this member only.
+                  onPick: () => { setSectionDialogSection(member.section ?? null); model.selectedMemberDialogs.section = true; },
+                  onEdit: () => { setSectionDialogSection(member.section ?? null); model.selectedMemberDialogs.section = true; },
+                  onNew: () => { setSectionDialogSection(null); model.selectedMemberDialogs.section = true; },
+                }}
                 titles={{ pick: 'Choose from catalogue', edit: 'Edit section', new: 'New section' }}
               >
                 <Select label="" size="small" list={sectionOptions} value={section?.id ?? ''} onChange={(e: any) => reassignSection(e.target.value)} />
@@ -554,8 +567,16 @@ const RightPanel = observer(() => {
       {/* pickers triggered by the dock (kept here so they render beside the panel) */}
       <SectionChanger
         open={model.selectedMemberDialogs.section}
-        onClose={() => { model.selectedMemberDialogs.section = false; }}
-        section={section}
+        onClose={() => { model.selectedMemberDialogs.section = false; setSectionDialogSection(null); }}
+        section={sectionDialogSection}
+        onSaved={(sec) => {
+          if (!member) return;
+          // Same-id save = section edit: SectionModel.createOrUpdate already
+          // re-pointed every linked member and rebuilt its geometry. A brand
+          // new id (the + flow) still has to be assigned to this member here.
+          if (member.section && sec.id === member.section.id) return;
+          member.update(member.nodes, sec, member.gamma, member.label, member.release);
+        }}
       />
       <MaterialPresetSelector
         open={model.selectedMemberDialogs.material}

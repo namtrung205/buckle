@@ -256,7 +256,12 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           label="Sections"
           icon={<SectionsIcon sx={{ fontSize: 20 }} />}
           disabled={isLocked}
-          onAdd={() => setAddOrEditSection(true)}
+          onAdd={() => {
+            // "+" must create a NEW section — never re-edit the one left over
+            // from a previous tree edit.
+            setSelectedSection(null);
+            setAddOrEditSection(true);
+          }}
         >
           {model?.sections?.map((section: SectionType) => (
             <Box
@@ -571,7 +576,10 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
 
       <AddOrEditSection
         open={addOrEditSection}
-        onClose={() => setAddOrEditSection(false)}
+        onClose={() => {
+          setAddOrEditSection(false);
+          setSelectedSection(null);
+        }}
         section={selectedSection}
       />
 

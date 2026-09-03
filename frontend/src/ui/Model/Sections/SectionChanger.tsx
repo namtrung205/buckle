@@ -24,6 +24,13 @@ interface SectionChangerProps {
   open: boolean;
   onClose: () => void;
   section: Section | null;
+  /**
+   * Called after the section has been written to the model (created or
+   * updated). Lets a caller (e.g. the member right-dock "new section" flow)
+   * assign the fresh section object to the focused member and rebuild its
+   * 3D geometry.
+   */
+  onSaved?: (section: Section) => void;
 }
 
 type MainTab = 'profile' | 'shape' | 'amorphous';
@@ -84,9 +91,17 @@ const SHAPES: ShapeDef[] = [
 
 /* ────────────────────────────────────────────────────────────────────────── */
 
-const SectionChanger = observer(({ open, onClose, section }: SectionChangerProps) => {
+const SectionChanger = observer(({ open, onClose, section, onSaved }: SectionChangerProps) => {
   const model = useModel();
   const [tab, setTab] = useState<MainTab>('profile');
+
+  // ── "apply to linked members" confirm state ──────────────────────────────
+  // Editing a section that members already use rewrites the shared data and
+  // rebuilds every linked member's geometry, so gate it behind a confirm.
+  // The staged applier is stored in state via the updater form on purpose —
+  // passing the function directly would make React execute it as an updater.
+  const [pendingApply, setPendingApply] = useState<(() => void) | null>(null);
+  const affectedMembers = section ? model.members.filter((m) => m.section?.id === section.id) : [];
 
   // ── standard-profile tab state ──
   const [codeId, setCodeId] = useState<string | null>(null);
@@ -119,6 +134,7 @@ const SectionChanger = observer(({ open, onClose, section }: SectionChangerProps
   const activeShape = shapes.find((s) => s.key === shapeKey) ?? shapes[0];
 
   useEffect(() => {
+    setPendingApply(null);
     if (!open) return;
     setTab('profile');
     // reset shape params to the active shape's defaults
@@ -151,11 +167,24 @@ const SectionChanger = observer(({ open, onClose, section }: SectionChangerProps
     return steel ? materialFromPreset(steel) : { id: 0, name: 'Steel', E: 210e9, nu: 0.3, rho: 7850 };
   };
 
-  const saveSection = (base: Record<string, unknown>) => {
+  /** Write the section into the project's section list, notify the caller, close. */
+  const writeSection = (base: Record<string, unknown>) => {
     const mat = model.materials.find((m) => m.id === Number(base.material)) ?? defaultMaterial();
     const instance = new SectionModel(model, { id: section?.id, name: String(base.name || 'Section'), type: base.type as Section['type'], material: mat, ...(base.fields as object) } as Section);
     instance.createOrUpdate();
+    onSaved?.(instance.section);
     onClose();
+  };
+
+  /**
+   * Gate every save entry point behind the linked-members confirm: when the
+   * section being edited is already used by members, ask before rewriting it
+   * for all of them. Brand-new sections (section === null) apply directly.
+   */
+  const saveSection = (base: Record<string, unknown>) => {
+    const apply = () => writeSection(base);
+    if (section && affectedMembers.length > 0) setPendingApply(() => apply);
+    else apply();
   };
 
   // ── profile select ──
@@ -184,7 +213,7 @@ const SectionChanger = observer(({ open, onClose, section }: SectionChangerProps
   };
 
   // ── amorphous confirm: declare A/Iy/Iz directly (properties-only section) ──
-  const confirmAmorphous = () => {
+  const writeAmorphous = () => {
     const a = num(amorph.a), iy = num(amorph.iy), iz = num(amorph.iz), j = num(amorph.j);
     const mat = model.materials.find((m) => m.id === defaultMaterial().id) ?? defaultMaterial();
     const instance = new SectionModel(model, {
@@ -197,10 +226,25 @@ const SectionChanger = observer(({ open, onClose, section }: SectionChangerProps
       properties: { A: a, Iy: iy, Iz: iz, Jxx: j, E: mat.E, G: (mat.E as number) / (2 * (1 + (mat.nu as number))), v: mat.nu as number },
     } as Section);
     instance.createOrUpdate();
+    onSaved?.(instance.section);
     onClose();
   };
+  const confirmAmorphous = () => {
+    const apply = () => writeAmorphous();
+    if (section && affectedMembers.length > 0) setPendingApply(() => apply);
+    else apply();
+  };
+
+  // ── linked-members confirm handlers ──
+  const confirmApply = () => {
+    const run = pendingApply;
+    setPendingApply(null);
+    run?.();
+  };
+  const cancelApply = () => setPendingApply(null);
 
   return (
+    <>
     <Dialog open={open} onClose={onClose} maxWidth="md" draggable title={section ? 'Change Section' : 'New Section'}
       actions={null}>
       <Stack spacing={1.5}>
@@ -416,6 +460,28 @@ const SectionChanger = observer(({ open, onClose, section }: SectionChangerProps
         )}
       </Stack>
     </Dialog>
+
+    {/* confirm before rewriting a section that members already use */}
+    <Dialog
+      open={pendingApply !== null}
+      onClose={cancelApply}
+      maxWidth="xs"
+      title="Update linked members?"
+      actions={(
+        <>
+          <Button size="small" onClick={cancelApply}>Cancel</Button>
+          <Button size="small" variant="contained" onClick={confirmApply}>
+            Apply to {affectedMembers.length} member{affectedMembers.length === 1 ? '' : 's'}
+          </Button>
+        </>
+      )}
+    >
+      <Typography sx={{ fontSize: '0.82rem', color: colors.textDim, lineHeight: 1.5 }}>
+        “{section?.name}” is assigned to {affectedMembers.length} member{affectedMembers.length === 1 ? '' : 's'}.
+        Applying will replace the section data and rebuild the 3D geometry of every linked member.
+      </Typography>
+    </Dialog>
+    </>
   );
 });
 
