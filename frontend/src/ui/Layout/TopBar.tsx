@@ -9,6 +9,7 @@ import {
   LockOpen as LockOpenIcon,
   WarningAmber as WarningAmberIcon,
   Download as DownloadIcon,
+  GridOn as GridOnIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
@@ -26,6 +27,7 @@ import { exportModelJson, buildModelFromJson } from '../../helpers';
 import * as THREE from 'three';
 import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
+import AddOrEditGrid from '../Model/Grids/AddOrEdit';
 import WarehouseWizard from '../Model/Generator/WarehouseWizard';
 import AnalysisProgress from '../Results/AnalysisProgress';
 import Dialog from '../../components/Dialog/Dialog';
@@ -167,6 +169,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     loads: activeDialog === 'loads',
     supports: activeDialog === 'supports',
     materials: activeDialog === 'materials',
+    grids: activeDialog === 'grids',
     copy: activeDialog === 'copy',
     warehouseWizard: activeDialog === 'warehouseWizard',
     analysisProgress: activeDialog === 'analysisProgress',
@@ -489,6 +492,9 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             <RibbonPanel label="Generate">
               <RibbonButton title="Warehouse generator" label="Warehouse" onClick={() => open('warehouseWizard')} disabled={isLocked} iconImage={{ src: '/warehouse.png', alt: 'Generator', size: 15 }} />
             </RibbonPanel>
+            <RibbonPanel label="System">
+              <RibbonButton title="New structural grid" label="Grid" onClick={() => open('grids')} disabled={isLocked} icon={<GridOnIcon sx={{ fontSize: 15 }} />} />
+            </RibbonPanel>
           </>
         )}
         {activeTab === 'view' && (
@@ -537,6 +543,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       <Docs open={dialogs.docs} onClose={close} />
       <AddOrEditSection open={dialogs.sections} onClose={close} section={null} />
       <AddOrEditMaterial open={dialogs.materials} onClose={close} selectedMaterial={null} />
+      <AddOrEditGrid open={dialogs.grids} onClose={close} grid={null} />
       <Copy open={dialogs.copy} onClose={close} />
       <WarehouseWizard open={dialogs.warehouseWizard} onClose={close} />
       <AnalysisProgress 

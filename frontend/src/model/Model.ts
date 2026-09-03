@@ -246,7 +246,7 @@ export class Model {
   navTool: NavTool = 'select';
   // Zoom navigation tool handling fit / window / drag modes
   zoomTool: ZoomTool;
-  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard'];
+  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard', 'grids'];
   ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
 
   closeContextMenu = () => {

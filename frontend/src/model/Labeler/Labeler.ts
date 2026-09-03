@@ -290,22 +290,6 @@ class Labeler {
         }
       }
       
-      else if (type === 'grid') {
-        // ETABS/SAP2000-style grid bubble text: small, bold, centred on the
-        // constant-screen-size bubble circle drawn in the 3D scene.
-        pContainer.style.backgroundColor = 'transparent';
-        pContainer.style.height = 'auto';
-        pContainer.style.width = 'auto';
-        pContainer.style.minWidth = '0';
-        pContainer.style.boxShadow = 'none';
-        pContainer.style.border = 'none';
-        pContainer.style.padding = '0';
-        p.style.color = '#eaf2fb';
-        p.style.fontSize = '11px';
-        p.style.fontWeight = '700';
-        p.style.lineHeight = '1';
-        p.style.textShadow = '0 1px 3px rgba(0, 0, 0, 0.9)';
-      }
       else {
         pContainer.style.backgroundColor = 'transparent';
         pContainer.style.height = '20px';
