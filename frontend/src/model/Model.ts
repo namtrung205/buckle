@@ -14,7 +14,8 @@ import {
   Console,
   Visibility,
   WebSocketHandler,
-  Shell
+  Shell,
+  GridSystem
 } from "./index";
 import ReactionViz from "./PostProcessing/ReactionViz";
 import { makeAutoObservable } from "mobx";
@@ -69,6 +70,8 @@ export class Model {
   output : any
   sections : Section[] = mockSections
   materials : Material[] = mockMaterials
+  // SAP2000/ETABS style structural axis grids
+  grids : GridSystem[] = []
   gui : GUI | null = null
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
@@ -469,6 +472,8 @@ export class Model {
     this.camera.cam.updateProjectionMatrix();
     this.reactionViz?.onFrame();
     this.nodes?.forEach((node: any) => node.updateScreenScale?.());
+    // Grid end bubbles keep a constant on-screen size, just like the nodes.
+    this.grids?.forEach((grid) => grid.updateScreenScale());
     this.renderer.render(this.scene, this.camera.cam);
     this.camera.controls.update()
     this.camera.directionalLight.target.position.copy(this.camera.controls.target)
@@ -545,6 +550,11 @@ export class Model {
     const shells = [...this.shells]
     shells.forEach(shell => shell.remove())
     this.shells = []
+    
+    // Dispose of grid systems
+    const grids = [...this.grids]
+    grids.forEach(grid => grid.delete())
+    this.grids = []
     
     // Dispose of all nodes
     // Create a copy of the array to avoid issues when dispose() modifies the original array

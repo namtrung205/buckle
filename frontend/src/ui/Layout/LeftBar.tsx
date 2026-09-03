@@ -8,6 +8,9 @@ import {
   ViewInAr as SectionsIcon,
   Lock as BoundaryConditionsIcon,
   TrendingDown as LoadsIcon,
+  GridOn as GridIcon,
+  Visibility as VisibleIcon,
+  VisibilityOff as HiddenIcon,
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
@@ -23,6 +26,8 @@ import Node from '../../model/Elements/Node/Node';
 import { Load } from '../../model';
 import { ElasticIsotropicMaterial, Section as SectionType } from '../../types';
 import AddOrEditMaterial from '../Model/Materials/AddOrEdit';
+import AddOrEditGrid from '../Model/Grids/AddOrEdit';
+import GridSystem from '../../model/Grid/GridSystem';
 import ElasticBeamColumn from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
 interface LeftBarProps {
@@ -150,6 +155,9 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
 
   const [addOrEditMember, setAddOrEditMember] = useState(false);
   const [selectedMember, setSelectedMember] = useState<ElasticBeamColumn | null>(null);
+
+  const [addOrEditGrid, setAddOrEditGrid] = useState(false);
+  const [selectedGrid, setSelectedGrid] = useState<GridSystem | null>(null);
 
   
 
@@ -309,6 +317,95 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               </Box>
             </Box>
           ))}
+        </TreeItem>
+
+        {/* Grid systems (SAP2000/ETABS-style axis grids) */}
+        <TreeItem
+          id="grids"
+          label="Grid"
+          icon={<GridIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
+          onAdd={() => {
+            setSelectedGrid(null);
+            setAddOrEditGrid(true);
+          }}
+        >
+          {(model?.grids?.length || 0) > 0 ? (
+            model.grids.map((grid) => (
+              <Box
+                key={grid.id}
+                sx={{
+                  px: 2,
+                  pl: 6,
+                  py: 0.8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  '&:hover': {
+                    backgroundColor: colors.hover,
+                  },
+                }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                  <Typography sx={{
+                    fontSize: '0.75rem',
+                    color: grid.visible ? colors.textDim : colors.textFaint,
+                    textDecoration: grid.visible ? 'none' : 'line-through',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {grid.name}
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.65rem', color: colors.textFaint, flexShrink: 0 }}>
+                    {grid.xLines.length}×{grid.yLines.length}
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      grid.toggleVisible();
+                    }}
+                    title={grid.visible ? 'Hide grid' : 'Show grid'}
+                    sx={{ padding: '2px', color: grid.visible ? colors.accentSoft : colors.textFaint, '&:hover': { color: colors.text } }}
+                  >
+                    {grid.visible ? <VisibleIcon sx={{ fontSize: 14 }} /> : <HiddenIcon sx={{ fontSize: 14 }} />}
+                  </IconButton>
+                  <IconButton
+                    size="small"
+                    disabled={isLocked}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedGrid(grid);
+                      setAddOrEditGrid(true);
+                    }}
+                    sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
+                  >
+                    <EditIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                  <IconButton
+                    size="small"
+                    disabled={isLocked}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      grid.delete();
+                    }}
+                    sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
+                  >
+                    <DeleteIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                </Box>
+              </Box>
+            ))
+          ) : (
+            <Box sx={{ px: 2, pl: 6, py: 0.8 }}>
+              <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint, fontStyle: 'italic' }}>
+                No grid defined yet
+              </Typography>
+            </Box>
+          )}
         </TreeItem>
 
         {/* Nodes */}
@@ -581,6 +678,15 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           setSelectedSection(null);
         }}
         section={selectedSection}
+      />
+
+      <AddOrEditGrid
+        open={addOrEditGrid}
+        onClose={() => {
+          setAddOrEditGrid(false);
+          setSelectedGrid(null);
+        }}
+        grid={selectedGrid}
       />
 
       <AddOrEditMaterial

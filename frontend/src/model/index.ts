@@ -12,6 +12,7 @@ import PostProcessing from './PostProcessing/PostProcessing'
 import ReactionViz from './PostProcessing/ReactionViz'
 import Snapper from './Geometry/Helpers/Snapper'
 import Sections from './Section/Section'
+import GridSystem from './Grid/GridSystem'
 import Console from './Console/Console'
 // Geometry
 import Line from './Geometry/Tools/Line'
@@ -35,6 +36,7 @@ export {
   ReactionViz,
   Snapper,
   Sections, 
+  GridSystem,
   Line,
   Console,
   Visibility,
