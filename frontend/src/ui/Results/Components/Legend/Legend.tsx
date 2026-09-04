@@ -19,19 +19,20 @@ const TYPE_UNITS: Record<string, string> = {
   N: 'kN', Vy: 'kN', Vz: 'kN', T: 'kN', My: 'kNm', Mz: 'kNm', defl: 'mm',
 };
 
-/** Vertical colour-bar gradient — the same diverging colormap as the contour,
- *  reading blue (most negative) at the top → red (most positive) at the bottom. */
+/** Vertical colour-bar gradient — the same diverging colormap as the contour:
+ *  deep blue (most negative) at the top → green (zero) → deep red (most positive)
+ *  at the bottom, with no white in the middle. */
 const BAR_GRADIENT = `linear-gradient(to bottom, ${[0, 0.25, 0.5, 0.75, 1]
   .map((t) => `${colorToCss(lerpStops(t))} ${t * 100}%`)
   .join(', ')})`;
 
-const BAR_MIN = colorToCss(lerpStops(0)); // blue — most negative
-const BAR_MAX = colorToCss(lerpStops(1)); // red — most positive
+const BAR_MIN = colorToCss(lerpStops(0)); // deep blue — most negative
+const BAR_MAX = colorToCss(lerpStops(1)); // deep red — most positive
 
 /**
  * Contour legend floating directly over the 3D viewer (ETABS-style, left edge)
  * instead of living inside the Results dock: a vertical colour bar reading
- * blue → red top-to-bottom with the min value at the top and the max value at
+ * deep blue → green (0) → deep red top-to-bottom with the min value at the top and the max value at
  * the bottom, each labelled with the member that carries it. Pure display —
  * pointer events pass through so orbit / pan / zoom keep working, it only
  * appears while a result type is active, and the Results tabs can hide it.

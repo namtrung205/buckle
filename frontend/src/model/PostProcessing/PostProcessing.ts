@@ -16,6 +16,9 @@ export const DEFLECTION_TYPE = 'defl'
 
 const SFAC = 1E-5 // displacement scale the backend applies to SI forces: plot_offset = value_SI * SFAC * localAxis
 const FORCE_UNITS: Record<string, string> = { N: 'kN', Vy: 'kN', Vz: 'kN', T: 'kN', My: 'kNm', Mz: 'kNm' }
+// Hatch lines drawn per member in the diagram (both ends included) — will be
+// exposed in Settings later.
+const HATCH_COUNT = 20
 
 export type StationPoint = {
   s: number // arc position along the member
@@ -482,11 +485,14 @@ class PostProcessing {
     const colors: number[] = []
     const stations = data.stations
     const color = new THREE.Color()
-    // Five evenly spaced hatch lines per member (both ends included)
-    const count = Math.min(5, stations.length)
-    for (let k = 0; k < count; k++) {
-      const i = Math.round((k * (stations.length - 1)) / Math.max(1, count - 1))
-      const { base, offset, value } = stations[i]
+    if (stations.length < 2) return
+    // Dense hatching: HATCH_COUNT evenly spaced lines per member (both ends
+    // included), linearly interpolated between stations so the density stays
+    // constant regardless of how many stations the backend sampled.
+    const sMax = stations[stations.length - 1].s
+    for (let k = 0; k < HATCH_COUNT; k++) {
+      const s = (sMax * k) / (HATCH_COUNT - 1)
+      const { base, offset, value } = this.stationSample(stations, s)
       positions.push(base.x, base.y, base.z, offset.x, offset.y, offset.z)
       if (colored) {
         // Both vertices of a hatch share its station colour (forces contour mode)
@@ -725,6 +731,25 @@ class PostProcessing {
     return a.value + (b.value - a.value) * t
   }
 
+  /** Linearly interpolated station point (base / offset / value) at arc position s. */
+  private stationSample(stations: StationPoint[], s: number) {
+    let lo = 0
+    let hi = stations.length - 1
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1
+      if (stations[mid].s <= s) lo = mid
+      else hi = mid
+    }
+    const a = stations[lo]
+    const b = stations[hi]
+    const t = (s - a.s) / (b.s - a.s || 1)
+    return {
+      base: a.base.clone().lerp(b.base, t),
+      offset: a.offset.clone().lerp(b.offset, t),
+      value: a.value + (b.value - a.value) * t,
+    }
+  }
+
   /** Max/min tags for a member — pill labels coloured to match the diverging colormap. */
   private collectExtremes(data: MemberDiagramData, type: string) {
     let max = { value: -Infinity, station: null as StationPoint | null }
@@ -733,9 +758,9 @@ class PostProcessing {
       if (station.value > max.value) max = { value: station.value, station }
       if (station.value < min.value) min = { value: station.value, station }
     }
-    // Colours follow the diagram colormap: blue = positive lobe, red = negative lobe
-    const POS = '#2f6fed'
-    const NEG = '#e5484d'
+    // Colours follow the diagram colormap: red = positive lobe, blue = negative lobe
+    const POS = '#c62828'
+    const NEG = '#1e56b4'
     const suffix = type === DEFLECTION_TYPE ? 'defl' : type
     if (max.station) {
       const isDefl = type === DEFLECTION_TYPE
