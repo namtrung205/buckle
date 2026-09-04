@@ -113,12 +113,16 @@ class Snapper {
     if(this.onNode && snappedEndPoint && elementId){
       const node = this.model?.nodes?.find((node) => node.id === elementId)
       if(node){
+        const plane = this.model.worldPlane
         // Only snap a node that lies on the active working plane — never let a
         // draw pick snap to a node sitting on another level / axis.
-        const onPlane = Math.abs(this.model.worldPlane.distanceToPoint(snappedEndPoint)) <= this.planeThreshold
-        if (onPlane) {
-          // Keep the node ON the plane by stripping any normal-axis offset.
-          const p = snappedEndPoint.clone().projectOnPlane(this.model.worldPlane.normal)
+        const distance = Math.abs(plane.distanceToPoint(snappedEndPoint))
+        if (distance <= this.planeThreshold) {
+          // Project the point ONTO the active plane. Plane.projectPoint
+          // respects the plane's constant/offset; Vector3.projectOnPlane only
+          // strips the normal component and would move the point onto the
+          // parallel plane THROUGH THE ORIGIN (wrong elevation/offset).
+          const p = plane.projectPoint(snappedEndPoint.clone(), new THREE.Vector3())
           this.model?.labeler?.batchUpdateOrCreate([{
             id : 'endPointSnap',
             position : p,
@@ -126,7 +130,11 @@ class Snapper {
             type : 'endPointSnap'
           }])
           this.snappedCoords = p
-          this.snappedNode = node
+          // Reuse the existing node's id only when it truly lies ON the plane:
+          // a node merely NEAR the plane is projected to a free point so the
+          // drawn member lands on the working plane without re-binding to (and
+          // contradicting) the off-plane node.
+          this.snappedNode = distance <= 1e-4 ? node : undefined
           const projected = this.snappedCoords.clone().project(this.model.camera.cam)
           this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
         }
@@ -189,6 +197,8 @@ class Snapper {
     let vertices: number[][] = [];
     switch(type){
       case '3dLine':
+        // Guard: non-instanced meshes carry no instanceEnd attribute.
+        if(!instanceEnd) break
         v1 = [instanceEnd[0], instanceEnd[1], instanceEnd[2]]   
         v2 = [instanceEnd[3], instanceEnd[4], instanceEnd[5]]
         vertices = [v1 , v2]  

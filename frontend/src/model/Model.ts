@@ -487,7 +487,9 @@ export class Model {
     // Grid end bubbles keep a constant on-screen size, just like the nodes.
     this.grids?.forEach((grid) => grid.updateScreenScale());
     this.renderer.render(this.scene, this.camera.cam);
-    this.camera.controls.update()
+    // While the nav cube animates a face-click it owns the camera pose; a
+    // concurrent OrbitControls update() would re-roll the orientation mid-flight.
+    if (!this.gizmo?.animating) this.camera.controls.update()
     this.camera.directionalLight.target.position.copy(this.camera.controls.target)
     this.camera.directionalLight.target.updateMatrixWorld()
     requestAnimationFrame(this.update);

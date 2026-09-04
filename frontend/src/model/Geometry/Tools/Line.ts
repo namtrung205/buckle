@@ -362,9 +362,13 @@ export default class Line implements Tool {
    * Project a picked point onto the active working plane and return a fresh
    * vector. Guarantees every member endpoint lies ON the plane, so drawing
    * never creates a member whose node sits on another level / axis.
+   *
+   * Uses Plane.projectPoint (respects the plane's `constant`/offset) — NOT
+   * Vector3.projectOnPlane, which projects onto the parallel plane THROUGH THE
+   * ORIGIN and silently moves every point to e.g. elevation 0 on offset plans.
    */
   clampToPlane = (p: THREE.Vector3): THREE.Vector3 =>
-    p.clone().projectOnPlane(this.model.worldPlane.normal)
+    this.model.worldPlane.projectPoint(p, new THREE.Vector3())
 
   getMouseLocation (
     event : MouseEvent,  

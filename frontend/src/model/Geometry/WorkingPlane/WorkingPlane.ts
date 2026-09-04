@@ -43,6 +43,28 @@ class WorkingPlane {
     makeAutoObservable(this)
   }
 
+  /**
+   * The point the camera orbits when this plane is aligned: the projection of
+   * the model's centre onto the plane (falls back to the plane's own origin
+   * for an empty model) so the aligned view frames the model region that lies
+   * ON the active plane instead of the world origin.
+   * Must be called AFTER `model.worldPlane` has been pushed to this plane.
+   */
+  private orbitTarget(): THREE.Vector3 {
+    // Structural cast mirrors Camera.getModelBox — Node exposes x/y/z.
+    const nodes = this.model.nodes as unknown as { x: number; y: number; z: number }[] | undefined
+    if (nodes && nodes.length > 0) {
+      const box = new THREE.Box3()
+      const v = new THREE.Vector3()
+      for (const node of nodes) box.expandByPoint(v.set(node.x, node.y, node.z))
+      if (!box.isEmpty()) {
+        const center = box.getCenter(new THREE.Vector3())
+        return this.model.worldPlane.projectPoint(center, new THREE.Vector3())
+      }
+    }
+    return this.origin.clone()
+  }
+
   /** Push this working plane into the model: picking plane + square grid + camera. */
   apply(opts: { alignCamera?: boolean } = {}) {
     const alignCamera = opts.alignCamera !== false
@@ -53,7 +75,7 @@ class WorkingPlane {
     // Re-orient the visible square grid (ô vuông) to lie in this plane.
     this.model.gridHelper.applyWorkingPlane(n, this.constant)
     if (alignCamera) {
-      this.model.camera.alignToPlane(n, this.origin)
+      this.model.camera.alignToPlane(n, this.orbitTarget())
     }
   }
 
@@ -73,6 +95,14 @@ class WorkingPlane {
    * camera afterwards.
    */
   home() {
+    // Cancel any in-flight nav-cube animation FIRST: ViewportGizmo._animate()
+    // rewrites the camera position/quaternion on every frame while it runs and
+    // would otherwise override the reset pose (so Home seemed to do nothing).
+    // `animating` is a public flag on the gizmo (three-viewport-gizmo typings).
+    if (this.model.gizmo) this.model.gizmo.animating = false
+    // The gizmo disables OrbitControls for the duration of its animation; since
+    // we just cancelled it, restore them so navigation keeps working.
+    this.model.camera.controls.enabled = true
     this.setWorld()
     this.model.camera.handle2dView()
     this.model.gridHelper.applyWorkingPlane(this.normal, this.constant)
@@ -149,6 +179,12 @@ class WorkingPlane {
     const n = ab.clone().cross(ac)
     if (n.lengthSq() < 1e-12) return false
     n.normalize()
+    // Orient the normal TOWARDS the viewer: the pick order fixes the
+    // right-hand-rule direction, while alignToPlane() places the camera along
+    // +normal — without this flip the camera would jump to the plane's back
+    // side right after picking.
+    const toCamera = this.model.camera.cam.position.clone().sub(p1)
+    if (n.dot(toCamera) < 0) n.negate()
     this.source = '3points'
     this.normal.copy(n)
     this.constant = -n.dot(p1)
