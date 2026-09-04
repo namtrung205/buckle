@@ -206,23 +206,18 @@ export class Camera {
     this.frustumSize = maxDim * 1.4;
     if (this.cam instanceof THREE.OrthographicCamera) this.cam.zoom = 1;
 
-    // Orbit around the element centre, keeping the current view direction
+    // Orbit around the element centre, keeping the current view direction + roll.
     this.controls.target.copy(center);
 
-    if (this.viewMode === '2d') {
-      // Top view: stay straight above the element centre, far enough for the far plane
-      this.cam.position.set(center.x, center.y + Math.max(50, radius * 3), center.z);
-    } else {
-      const dir = this.cam.position.clone().sub(this.controls.target);
-      // Degenerate case (camera exactly on the target): fall back to the iso direction
-      if (dir.lengthSq() < 1e-12) {
-        dir.set(0.65, 1, 0.65);
-      }
-      dir.normalize();
-      this.cam.position.copy(center).addScaledVector(dir, radius * 3 + 1);
+    const dir = this.cam.position.clone().sub(this.controls.target);
+    // Degenerate case (camera exactly on the target): fall back to a sane dir.
+    if (dir.lengthSq() < 1e-12) {
+      dir.set(this.viewMode === '2d' ? 0 : 0.65, 1, this.viewMode === '2d' ? 0 : 0.65);
     }
-    // Normalize the camera up to the world default (same reason as fitModelToView).
-    this.cam.up.set(0, 1, 0);
+    dir.normalize();
+    this.cam.position.copy(center).addScaledVector(dir, radius * 3 + 1);
+
+    // Keep the camera up untouched so double-click zoom never re-rolls the view.
     this.cam.lookAt(center);
 
     this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
@@ -310,9 +305,10 @@ export class Camera {
 
   handle3dView(){
     this.viewMode = '3d'
-    // Fit to the model when one exists (prevents far-plane culling on large models)
+    // Keep the current view pose — enabling orbit must NOT snap the camera to a
+    // canonical iso pose. Fit only (re-target + distance) along the current dir.
     if (!this.getModelBox().isEmpty()) {
-      this.fitModelToView();
+      this.fitModelKeepOrientation()
     } else {
       this.cam.position.set(20, 30, 20);
     }
