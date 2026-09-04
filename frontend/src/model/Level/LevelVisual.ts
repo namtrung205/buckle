@@ -21,6 +21,9 @@ const LEVEL_HEAD_HORIZ = 1.2
 class LevelVisual {
   model: Model
   group: THREE.Group = new THREE.Group()
+  /** Master switch for the level datum set (Settings → Visibility). Starts
+   *  hidden — the constructor syncs this with Visibility.levels. */
+  visible: boolean = false
   private lineMaterial: THREE.LineBasicMaterial
   private knownLabelIds: string[] = []
   private disposer: () => void
@@ -28,8 +31,12 @@ class LevelVisual {
   constructor(model: Model) {
     this.model = model
     this.lineMaterial = new THREE.LineBasicMaterial({ color: LEVEL_COLOR })
-    // Visible on every layer, like the grid / grid-system datums.
+    // Sync with the global Levels toggle (Settings → Visibility). Visibility is
+    // created before this class in Model's constructor; levels start hidden.
+    this.visible = this.model.visibility?.levels ?? false
+    // On every layer, like the grid / grid-system datums.
     this.group.layers.enableAll()
+    this.group.visible = this.visible
     this.model.scene.add(this.group)
 
     this.disposer = reaction(
@@ -76,15 +83,18 @@ class LevelVisual {
     ])
     this.group.add(new THREE.Line(headGeo, this.lineMaterial))
 
-    // Text label: name + elevation.
+    // Text label: name + elevation. Suppressed while the level set is hidden —
+    // showing it again re-creates the labels through rebuild().
     const id = `level-${level.value}`
     this.knownLabelIds.push(id)
-    this.model.labeler.batchUpdateOrCreate([{
-      id,
-      position: new THREE.Vector3(x0 + LEVEL_HEAD_HORIZ + 0.6, y + LEVEL_HEAD_HEIGHT + 0.3, 0),
-      text: `${level.label}   ${this.fmtElevation(level.value)}`,
-      type: 'level',
-    }])
+    if (this.visible) {
+      this.model.labeler.batchUpdateOrCreate([{
+        id,
+        position: new THREE.Vector3(x0 + LEVEL_HEAD_HORIZ + 0.6, y + LEVEL_HEAD_HEIGHT + 0.3, 0),
+        text: `${level.label}   ${this.fmtElevation(level.value)}`,
+        type: 'level',
+      }])
+    }
   }
 
   private clear() {
@@ -99,6 +109,20 @@ class LevelVisual {
   private rebuild() {
     this.clear()
     this.model.levels.forEach((level) => this.addLevel(level))
+  }
+
+  /** Show/hide the whole level datum set — 3D datums and their text labels. */
+  setVisible(visible: boolean) {
+    if (this.visible === visible && this.group.visible === visible) return
+    this.visible = visible
+    this.group.visible = visible
+    if (!visible) {
+      // Floating "Level N +x.xxx" labels follow the datums off-screen.
+      if (this.knownLabelIds.length) this.model.labeler.batchDelete([...this.knownLabelIds])
+    } else {
+      // Rebuild restores the datums and re-creates their labels.
+      this.rebuild()
+    }
   }
 
   dispose() {

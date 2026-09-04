@@ -12,6 +12,12 @@ class Visibility {
   memberLabels : boolean = false
   sections : boolean = true
   loads : boolean = true
+  // Startup defaults: structural axis grids and the level datum set stay
+  // HIDDEN until enabled in Settings → Visibility. GridSystem / LevelVisual
+  // read these flags when they are created, so the 3D view and this dialog
+  // always start in sync.
+  grids : boolean = false
+  levels : boolean = false
   
   constructor(model : Model) {
     this.model = model
@@ -107,6 +113,20 @@ class Visibility {
         load.removeAllLabels()
       }
     })
+  }
+
+  /** Show/hide every structural axis grid (Settings → Visibility). */
+  showOrHideGrids(visible : boolean){
+    this.grids = visible
+    this.model.grids.forEach((grid) => {
+      grid.setVisible(visible)
+    })
+  }
+
+  /** Show/hide the level datum set (3D datums + their text labels). */
+  showOrHideLevels(visible : boolean){
+    this.levels = visible
+    this.model.levelVisual?.setVisible(visible)
   }
 
 }

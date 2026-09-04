@@ -71,6 +71,12 @@ class PostProcessing {
   showContour = false
   showLabels = true
   showRefLine = true
+  /** On-canvas contour legend visibility — toggled from the Results tabs. */
+  showLegend = true
+  /** Members carrying the active diagram's extremes — display-only info shown
+   *  by the on-canvas contour legend (which member holds max / min). */
+  extremeMax: { label: string; value: number } | null = null
+  extremeMin: { label: string; value: number } | null = null
 
   private membersData: MemberDiagramData[] = []
   private hoverMeshes: THREE.Mesh[] = []
@@ -357,18 +363,23 @@ class PostProcessing {
       if (data) membersData.push(data)
     }
     if (membersData.length === 0) {
+      this.extremeMax = null
+      this.extremeMin = null
       this.updateHoverTargets()
       return
     }
 
-    // Active scalar value per station + global range
+    // Active scalar value per station + global range, remembering which member
+    // carries each extreme (displayed by the on-canvas contour legend).
     let min = Infinity
     let max = -Infinity
+    let minHolder: MemberDiagramData | null = null
+    let maxHolder: MemberDiagramData | null = null
     for (const data of membersData) {
       for (const station of data.stations) {
         station.value = this.stationValue(type, station)
-        if (station.value < min) min = station.value
-        if (station.value > max) max = station.value
+        if (station.value < min) { min = station.value; minHolder = data }
+        if (station.value > max) { max = station.value; maxHolder = data }
       }
     }
     if (!isFinite(min) || !isFinite(max)) { min = 0; max = 0 }
@@ -377,6 +388,8 @@ class PostProcessing {
     this.max = max
     this.currentMin = min
     this.currentMax = max
+    this.extremeMax = maxHolder ? { label: maxHolder.label, value: max } : null
+    this.extremeMin = minHolder ? { label: minHolder.label, value: min } : null
 
     this.modelSize = this.computeModelSize()
     const maxAbs = Math.max(Math.abs(min), Math.abs(max)) || 1
@@ -794,6 +807,8 @@ class PostProcessing {
     this.activeType = null
     this.min = 0
     this.max = 0
+    this.extremeMax = null
+    this.extremeMin = null
     this.removeLabels()
   }
 

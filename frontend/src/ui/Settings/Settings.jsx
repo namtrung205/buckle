@@ -17,7 +17,6 @@ import { observer } from 'mobx-react-lite';
 
 const Settings = ({open, onClose}) => {
   const model = useModel()
-  console.log('MODEL VISI', model?.visibility)
   const [selectedType, setSelectedType] = useState('Visibility');
 
   const snapOptions = {
@@ -31,7 +30,9 @@ const Settings = ({open, onClose}) => {
     members : { label: 'Members', value: 'members'},
     memberLabels : { label: 'Member Labels', value: 'memberLabels', },
     sections: { label: 'Sections', value: 'sections' },
-    loads: { label: 'Loads', value: 'loads' }
+    loads: { label: 'Loads', value: 'loads' },
+    grids: { label: 'Grids', value: 'grids' },
+    levels: { label: 'Levels', value: 'levels' }
   }
 
   const handleChangeSnap = (e) => {
@@ -69,6 +70,12 @@ const Settings = ({open, onClose}) => {
         break;
       case 'loads':
         model.visibility.showOrHideLoads(checked)
+        break;
+      case 'grids':
+        model.visibility.showOrHideGrids(checked)
+        break;
+      case 'levels':
+        model.visibility.showOrHideLevels(checked)
         break;
       default:
         break;

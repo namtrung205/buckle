@@ -1,6 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { Box, Typography } from '@mui/material';
 import { observer } from 'mobx-react-lite';
+import { Box, Typography } from '@mui/material';
 import { useModel } from '../../../../model/Context';
 import { lerpStops, colorToCss } from '../../../../model/PostProcessing/Colormap';
 import { DEFLECTION_TYPE } from '../../../../model/PostProcessing/PostProcessing';
@@ -16,55 +15,98 @@ const TYPE_TITLES: Record<string, string> = {
   defl: 'Deflection |Δ|',
 };
 
+const TYPE_UNITS: Record<string, string> = {
+  N: 'kN', Vy: 'kN', Vz: 'kN', T: 'kN', My: 'kNm', Mz: 'kNm', defl: 'mm',
+};
+
+/** Vertical colour-bar gradient — the same diverging colormap as the contour,
+ *  reading blue (most negative) at the top → red (most positive) at the bottom. */
+const BAR_GRADIENT = `linear-gradient(to bottom, ${[0, 0.25, 0.5, 0.75, 1]
+  .map((t) => `${colorToCss(lerpStops(t))} ${t * 100}%`)
+  .join(', ')})`;
+
+const BAR_MIN = colorToCss(lerpStops(0)); // blue — most negative
+const BAR_MAX = colorToCss(lerpStops(1)); // red — most positive
+
+/**
+ * Contour legend floating directly over the 3D viewer (ETABS-style, left edge)
+ * instead of living inside the Results dock: a vertical colour bar reading
+ * blue → red top-to-bottom with the min value at the top and the max value at
+ * the bottom, each labelled with the member that carries it. Pure display —
+ * pointer events pass through so orbit / pan / zoom keep working, it only
+ * appears while a result type is active, and the Results tabs can hide it.
+ */
 const Legend = observer(() => {
   const model = useModel();
+  // The Viewer provides the model asynchronously — it is still null during the
+  // very first render(s) of the Layout, so bail out instead of crashing.
+  if (!model) return null;
   const post = model.postProcessing;
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const activeType = post.activeType;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !activeType) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const width = canvas.width;
-    const height = canvas.height;
-    ctx.clearRect(0, 0, width, height);
-    for (let x = 0; x < width; x++) {
-      const t = x / (width - 1);
-      ctx.fillStyle = colorToCss(lerpStops(t));
-      ctx.fillRect(x, 0, 1, height);
-    }
-  }, [activeType]);
-
-  if (!activeType) return null;
+  if (!activeType || !post.showLegend) return null;
 
   const isDefl = activeType === DEFLECTION_TYPE;
-  // Min/max are plain numbers — the unit reference lives in the status bar
-  const minValue = isDefl ? post.max * 1000 : post.min;
-  const maxValue = isDefl ? post.max * 1000 : post.max;
+  const display = (v: number | null | undefined) =>
+    v === null || v === undefined ? '—' : fmtValue(isDefl ? v * 1000 : v);
+
+  const rowSx = { fontFamily: UI.mono, fontSize: '10.5px', lineHeight: 1.25 } as const;
 
   return (
-    <Box sx={{ mt: 1.5, p: 1.25, border: `1px solid ${UI.border}`, borderRadius: 1.5, backgroundColor: UI.panel2 }}>
-      <Typography sx={{ fontFamily: UI.mono, fontSize: '11px', fontWeight: 700, letterSpacing: '0.04em', color: UI.text }}>
+    <Box
+      sx={{
+        position: 'absolute',
+        left: 14,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        zIndex: 45,
+        width: 138,
+        p: 1.25,
+        borderRadius: 2,
+        backgroundColor: 'rgba(33, 40, 48, 0.88)',
+        border: '1px solid rgba(90, 100, 114, 0.55)',
+        backdropFilter: 'blur(4px)',
+        pointerEvents: 'none',
+        userSelect: 'none',
+      }}
+    >
+      {/* Title + unit */}
+      <Typography sx={{ fontFamily: UI.mono, fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em', color: UI.text }}>
         {TYPE_TITLES[activeType] ?? activeType}
       </Typography>
-      <canvas
-        ref={canvasRef}
-        width={220}
-        height={14}
-        style={{
-          width: '100%',
-          height: 14,
-          borderRadius: 4,
-          border: `1px solid ${UI.borderDark}`,
-          display: 'block',
-          marginTop: 6,
-        }}
-      />
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', fontFamily: UI.mono, fontSize: '10.5px', color: UI.dim, mt: 0.5 }}>
-        <span>{fmtValue(minValue)}</span>
-        <span>{fmtValue(maxValue)}</span>
+      <Typography sx={{ fontFamily: UI.mono, fontSize: '9px', color: UI.dim, mb: 0.75 }}>
+        {TYPE_UNITS[activeType] ?? ''}
+      </Typography>
+
+      {/* Colour bar (blue → red, top → bottom) + the members holding the extremes */}
+      <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box
+          sx={{
+            width: 14,
+            height: 148,
+            borderRadius: 1,
+            border: '1px solid rgba(90, 100, 114, 0.8)',
+            background: BAR_GRADIENT,
+            flexShrink: 0,
+          }}
+        />
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', py: 0.25 }}>
+          <Box>
+            <Typography sx={{ ...rowSx, fontWeight: 700, color: BAR_MIN }}>
+              {display(post.extremeMin?.value)}
+            </Typography>
+            <Typography sx={{ ...rowSx, color: UI.dim }}>
+              {post.extremeMin?.label ?? ''}
+            </Typography>
+          </Box>
+          <Box>
+            <Typography sx={{ ...rowSx, fontWeight: 700, color: BAR_MAX }}>
+              {display(post.extremeMax?.value)}
+            </Typography>
+            <Typography sx={{ ...rowSx, color: UI.dim }}>
+              {post.extremeMax?.label ?? ''}
+            </Typography>
+          </Box>
+        </Box>
       </Box>
     </Box>
   );

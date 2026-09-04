@@ -7,6 +7,7 @@ import TopBar from './TopBar';
 import LeftBar from './LeftBar';
 import RightPanel from './RightPanel';
 import BottomBar from '../BottomBar';
+import Legend from '../Results/Components/Legend/Legend';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
 
@@ -60,6 +61,10 @@ const Layout = observer(({ children }: LayoutProps) => {
 
           {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
           <BottomBar />
+
+          {/* Contour legend floating over the viewer — colour bar + min/max and
+              the members that carry them (display-only, no pointer events) */}
+          <Legend />
         </Box>
 
         {/* Right dock panel — inline properties for the focused entity, Results, or Draw */}

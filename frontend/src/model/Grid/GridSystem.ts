@@ -184,6 +184,9 @@ class GridSystem {
     this.extension = def.extension
     this.showBubbles = def.showBubbles
     this.showRise = def.showRise !== false
+    // Respect the global Grids visibility toggle (Settings → Visibility) so a
+    // grid created while grids are hidden stays hidden too (default: hidden).
+    this.visible = model.visibility?.grids ?? false
 
     this.lineMaterial = new THREE.LineBasicMaterial({ color: GRID_COLOR })
     this.circleMaterial = new THREE.LineBasicMaterial({ color: GRID_COLOR })

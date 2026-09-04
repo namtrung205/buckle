@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { Box, IconButton, Typography, Chip, Checkbox, FormControlLabel, Tabs, Tab } from '@mui/material';
+import { Box, Button, Chip, Checkbox, FormControl, FormControlLabel, FormHelperText, IconButton, MenuItem, Select as MUISelect, Typography, Tabs, Tab } from '@mui/material';
 import * as THREE from 'three';
 import {
   Close as CloseIcon,
@@ -92,6 +92,115 @@ const LOAD_DIRECTIONS = [
   { id: 'y', name: 'Z' },
 ];
 
+/* ── staged-draft types for the Apply-button workflow ────────────────────
+ * Support/Load edits in the dock are staged in a local draft and only pushed
+ * to the model (rebuilding the 3D visuals) when the user presses Apply — the
+ * same explicit-commit language as the Add/Edit dialogs. */
+interface SupportDraft {
+  name: string;
+  type: BoundaryCondition['type'];
+  rotation: string;
+  dx: number;
+  dy: number;
+  dz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+  targets: number[];
+}
+
+interface LoadDraft {
+  name: string;
+  type: Load['type'];
+  direction: string;
+  value: string;
+  targets: number[];
+}
+
+const supportDraftOf = (s: BoundaryCondition): SupportDraft => ({
+  name: s.name ?? '',
+  type: s.type,
+  rotation: String(s.rotation ?? 0),
+  dx: Number(s.dx ?? 0),
+  dy: Number(s.dy ?? 0),
+  dz: Number(s.dz ?? 0),
+  rx: Number(s.rx ?? 0),
+  ry: Number(s.ry ?? 0),
+  rz: Number(s.rz ?? 0),
+  targets: [...(s.targets ?? [])],
+});
+
+const loadDraftOf = (l: Load): LoadDraft => ({
+  name: l.name ?? '',
+  type: l.type,
+  direction: loadDirectionOf(l),
+  value: String(loadMagnitudeOf(l)),
+  targets: [...(l.targets ?? [])],
+});
+
+/* ── load direction/magnitude helpers (module scope — no component deps) ── */
+const loadDirectionOf = (l: Load): string => {
+  let dir = 'x';
+  Object.entries(base_vectors).forEach(([axis, vec]) => {
+    const v = (l.value ?? new THREE.Vector3()).clone();
+    const cross = vec.clone().cross(v.normalize()).length();
+    if (cross < 0.001) dir = axis;
+  });
+  return dir;
+};
+
+const loadMagnitudeOf = (l: Load): number => {
+  const dir = base_vectors[loadDirectionOf(l) as 'x' | 'y' | 'z'];
+  return (l.value ?? new THREE.Vector3()).dot(dir);
+};
+
+/* ── shared target multi-select (identical in Support & Load docks) ────── */
+const TARGET_SELECT_SX = {
+  backgroundColor: colors.surfaceAlt,
+  fontSize: '0.875rem',
+  '& .MuiSelect-select': {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 0.5,
+    minHeight: '32px',
+    alignItems: 'center',
+    py: '4px',
+  },
+};
+
+const TARGET_MENU_PROPS = {
+  PaperProps: { sx: { maxHeight: 300 } },
+};
+
+/** Chips renderer for the selected targets — shared by Support & Load docks. */
+const renderTargetValue = (
+  selected: number[],
+  placeholder: string,
+  labelOf: (id: number) => string,
+  onRemove: (id: number) => void,
+) => {
+  if (!selected.length) {
+    return <Typography sx={{ fontSize: '0.875rem', color: colors.textFaint }}>{placeholder}</Typography>;
+  }
+  return (
+    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+      {selected.map((id) => (
+        <Chip key={id} label={labelOf(id)} size="small" onDelete={() => onRemove(id)} />
+      ))}
+    </Box>
+  );
+};
+
+/** Compact action row used by every dock that stages edits behind Apply. */
+const ApplyRow: React.FC<{ onClick: () => void }> = ({ onClick }) => (
+  <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1 }}>
+    <Button size="small" variant="contained" disableElevation onClick={onClick} sx={{ minWidth: 72 }}>
+      Apply
+    </Button>
+  </Box>
+);
+
+
 const RightPanel = observer(() => {
   const model = useModel();
 
@@ -132,12 +241,30 @@ const RightPanel = observer(() => {
     else if (model?.activeDialog === 'results') setResultsTab(1);
   }, [model?.activeDialog]);
 
+  /* ── staged drafts for the Support / Load docks (Apply to commit) ─────── */
+  const [supportDraft, setSupportDraft] = useState<SupportDraft | null>(null);
+  const [loadDraft, setLoadDraft] = useState<LoadDraft | null>(null);
+  const [targetsError, setTargetsError] = useState(false);
+
+  // (Re)seed the drafts whenever the focused entity changes or the dock reopens.
+  React.useEffect(() => {
+    setSupportDraft(support ? supportDraftOf(support) : null);
+    setTargetsError(false);
+  }, [support?.id, model?.rightPanelOpen]);
+
+  React.useEffect(() => {
+    setLoadDraft(load ? loadDraftOf(load) : null);
+    setTargetsError(false);
+  }, [load?.id, model?.rightPanelOpen]);
+
+
   if (!model?.rightPanelOpen) return null;
   if (!isResults && !isDraw && !model?.hasFocus()) return null;
 
   const sectionOptions = model.sections.map((s) => ({ id: s.id, name: s.name }));
   const materialOptions = model.materials.map((m) => ({ id: m.id, name: m.name }));
   const nodeOptions = model.nodes.map((n) => ({ id: n.id, name: n.name ?? `Node ${n.id}` }));
+  const memberOptions = model.members.map((m) => ({ id: m.id, name: m.label || `Member ${m.id}` }));
 
   /* ── header title + icon per entity type ──────────────────────────────── */
   let title = 'Properties';
@@ -206,97 +333,79 @@ const RightPanel = observer(() => {
     node.update(new THREE.Vector3(pos.x, pos.y, pos.z), node.name);
   };
 
-  /* ── support helpers ──────────────────────────────────────────────────── */
-  const applySupportPreset = (preset: string) => {
-    if (!support) return;
+  /* ── support draft handlers (staged — committed by Apply) ─────────────── */
+  const updateSupportDraft = (patch: Partial<SupportDraft>) =>
+    setSupportDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+
+  const applySupportDraftPreset = (preset: string) => {
     const flags: Record<string, string> = {
       fixed: '111111',
       pinned: '111100',
       roller: '011100',
     };
     const f = flags[preset];
-    if (!f) return;
-    // Presets apply to translations/rotations; custom type left as-is otherwise.
-    support.type = preset as BoundaryCondition['type'];
-    if (!['elastic', 'roller-x', 'roller-y'].includes(support.type)) {
-      support.dx = Number(f[0]);
-      support.dy = Number(f[1]);
-      support.dz = Number(f[2]);
-      support.rx = Number(f[3]);
-      support.ry = Number(f[4]);
-      support.rz = Number(f[5]);
-    }
-    support.createOrUpdate();
-  };
-
-  const toggleSupportRestraint = (field: RestraintKey, checked: boolean) => {
-    if (!support) return;
-    support.type = support.type === 'elastic' ? 'elastic' : 'custom';
-    support[field] = checked ? 1 : 0;
-    support.createOrUpdate();
-  };
-
-  const updateSupportName = (name: string) => {
-    if (!support) return;
-    support.name = name;
-    support.createOrUpdate();
-  };
-
-  const updateSupportRotation = (rotation: number) => {
-    if (!support) return;
-    support.rotation = rotation;
-    support.createOrUpdate();
-  };
-
-  const updateSupportElastic = (field: 'dx' | 'dy' | 'dz' | 'rx' | 'ry' | 'rz', value: number) => {
-    if (!support) return;
-    (support as any)[field] = value;
-    support.createOrUpdate();
-  };
-
-  /* ── load helpers ─────────────────────────────────────────────────────── */
-  const loadDirectionOf = (l: Load): string => {
-    let dir = 'x';
-    Object.entries(base_vectors).forEach(([axis, vec]) => {
-      const v = (l.value ?? new THREE.Vector3()).clone();
-      const cross = vec.clone().cross(v.normalize()).length();
-      if (cross < 0.001) dir = axis;
+    if (!f || !supportDraft) return;
+    setSupportDraft({
+      ...supportDraft,
+      type: preset as BoundaryCondition['type'],
+      dx: Number(f[0]),
+      dy: Number(f[1]),
+      dz: Number(f[2]),
+      rx: Number(f[3]),
+      ry: Number(f[4]),
+      rz: Number(f[5]),
     });
-    return dir;
   };
 
-  const loadMagnitudeOf = (l: Load): number => {
-    const dir = base_vectors[loadDirectionOf(l) as 'x' | 'y' | 'z'];
-    return (l.value ?? new THREE.Vector3()).dot(dir);
+  const toggleSupportDraftRestraint = (field: RestraintKey, checked: boolean) => {
+    setSupportDraft((prev) =>
+      prev ? { ...prev, type: prev.type === 'elastic' ? 'elastic' : 'custom', [field]: checked ? 1 : 0 } : prev,
+    );
   };
 
-  const updateLoad = (patch: Partial<{ name: string; type: Load['type']; direction: string; value: number; targets: number[] }>) => {
-    if (!load) return;
-    const nextType = patch.type ?? load.type;
-    const nextDirection = patch.direction ?? loadDirectionOf(load);
-    const nextMagnitude = patch.value ?? loadMagnitudeOf(load);
-    const dir = base_vectors[nextDirection as 'x' | 'y' | 'z'] ?? base_vectors.x;
-    const data: any = {
-      id: load.id,
-      name: patch.name ?? load.name,
-      type: nextType,
-      targets: patch.targets ?? load.targets,
-      value: dir.clone().multiplyScalar(nextMagnitude),
-    };
-    load.targets = data.targets;
-    load.name = data.name;
-    load.type = data.type;
-    load.value = data.value;
+  const applySupport = () => {
+    if (!support || !supportDraft) return;
+    // A support must reference at least one node (mirrors the support dialog).
+    if (!supportDraft.targets.length) {
+      setTargetsError(true);
+      return;
+    }
+    support.name = supportDraft.name;
+    support.type = supportDraft.type;
+    support.rotation = Number(supportDraft.rotation) || 0;
+    support.targets = supportDraft.targets;
+    support.dx = supportDraft.dx;
+    support.dy = supportDraft.dy;
+    support.dz = supportDraft.dz;
+    support.rx = supportDraft.rx;
+    support.ry = supportDraft.ry;
+    support.rz = supportDraft.rz;
+    support.createOrUpdate();
+    // Re-seed the draft from the model object — createOrUpdate normalises the
+    // per-DOF flags for the preset types (fixed/pinned/roller).
+    setSupportDraft(supportDraftOf(support));
+  };
+
+  /* ── load draft handlers (staged — committed by Apply) ────────────────── */
+  const updateLoadDraft = (patch: Partial<LoadDraft>) =>
+    setLoadDraft((prev) => (prev ? { ...prev, ...patch } : prev));
+
+  const applyLoad = () => {
+    if (!load || !loadDraft) return;
+    // A load must reference at least one node/member.
+    if (!loadDraft.targets.length) {
+      setTargetsError(true);
+      return;
+    }
+    const dir = base_vectors[loadDraft.direction as 'x' | 'y' | 'z'] ?? base_vectors.x;
+    load.name = loadDraft.name;
+    load.type = loadDraft.type;
+    load.targets = loadDraft.targets;
+    load.value = dir.clone().multiplyScalar(Number(loadDraft.value) || 0);
     load.createOrUpdate();
+    // Re-seed the draft from the committed model object.
+    setLoadDraft(loadDraftOf(load));
   };
-
-  const updateLoadName = (name: string) => updateLoad({ name });
-  const updateLoadType = (type: Load['type']) => {
-    // Changing type invalidates the target set (nodes ⇄ members), mirroring the dialog.
-    updateLoad({ type, targets: [] });
-  };
-  const updateLoadDirection = (direction: string) => updateLoad({ direction });
-  const updateLoadValue = (value: number) => updateLoad({ value });
 
   /* ── delete helpers ───────────────────────────────────────────────────── */
   const deleteEntity = () => {
@@ -451,17 +560,17 @@ const RightPanel = observer(() => {
           )}
 
           {/* ── SUPPORT (boundary condition) ────────────────────────── */}
-          {support && (
+          {support && supportDraft && (
             <>
               <PropertyRow label="Name">
-                <TextField name="name" value={support.name ?? ''} onChange={(e: any) => updateSupportName(e.target.value)} placeholder="Support name" size="small" />
+                <TextField name="name" value={supportDraft.name} onChange={(e: any) => updateSupportDraft({ name: e.target.value })} placeholder="Support name" size="small" />
               </PropertyRow>
 
               <PropertyRow label="Type">
-                <Select label="" size="small" list={SUPPORT_TYPES} value={support.type === 'elastic' ? 'fixed' : support.type} onChange={(e: any) => applySupportPreset(e.target.value)} />
+                <Select label="" size="small" list={SUPPORT_TYPES} value={supportDraft.type === 'elastic' ? 'fixed' : supportDraft.type} onChange={(e: any) => applySupportDraftPreset(e.target.value)} />
               </PropertyRow>
 
-              {support.type !== 'elastic' ? (
+              {supportDraft.type !== 'elastic' ? (
                 <>
                   <Box sx={{ my: 0.5 }}>
                     <Typography sx={{ fontSize: '0.75rem', color: colors.textDim, mb: 0.5, fontWeight: 500 }}>Restraints</Typography>
@@ -471,8 +580,8 @@ const RightPanel = observer(() => {
                           key={def.key}
                           control={
                             <Checkbox
-                              checked={(support[def.key] as any) === 1}
-                              onChange={(e) => toggleSupportRestraint(def.key, e.target.checked)}
+                              checked={supportDraft[def.key] === 1}
+                              onChange={(e) => toggleSupportDraftRestraint(def.key, e.target.checked)}
                               size="small"
                               sx={{ color: colors.textDim, p: 0.25, '&.Mui-checked': { color: colors.accent } }}
                             />
@@ -485,8 +594,8 @@ const RightPanel = observer(() => {
                   </Box>
 
                   <PropertyRow label="Rotation">
-                    <input type="number" value={support.rotation ?? 0}
-                      onChange={(e) => updateSupportRotation(Number(e.target.value) || 0)}
+                    <input type="number" value={supportDraft.rotation}
+                      onChange={(e) => updateSupportDraft({ rotation: e.target.value })}
                       style={INLINE_INPUT_SX} />
                   </PropertyRow>
                 </>
@@ -494,54 +603,114 @@ const RightPanel = observer(() => {
                 <>
                   {(['dx', 'dy', 'dz', 'rx', 'ry', 'rz'] as const).map((field) => (
                     <PropertyRow key={field} label={`${field.toUpperCase()} (kN/m)`}>
-                      <input type="number" value={(support as any)[field] ?? 0}
-                        onChange={(e) => updateSupportElastic(field, Number(e.target.value) || 0)}
+                      <input type="number" value={supportDraft[field] ?? 0}
+                        onChange={(e) => updateSupportDraft({ [field]: Number(e.target.value) || 0 })}
                         style={INLINE_INPUT_SX} />
                     </PropertyRow>
                   ))}
                 </>
               )}
 
-              <Box sx={{ mt: 0.5 }}>
-                <Typography sx={{ fontSize: '0.75rem', color: colors.textDim, mb: 0.5, fontWeight: 500 }}>Targets</Typography>
-                {support.targets.map((id) => (
-                  <Chip key={id} label={getNodeName(id)} size="small" sx={{ mr: 0.5, mb: 0.5, backgroundColor: colors.surfaceAlt, color: colors.text }} />
-                ))}
-              </Box>
+              <PropertyRow label="Targets">
+                <FormControl fullWidth size="small" error={targetsError}>
+                  <MUISelect
+                    multiple
+                    value={supportDraft.targets}
+                    onChange={(e: any) => {
+                      setTargetsError(false);
+                      updateSupportDraft({ targets: e.target.value as number[] });
+                    }}
+                    size="small"
+                    fullWidth
+                    renderValue={(selected) =>
+                      renderTargetValue(
+                        selected as number[],
+                        'Select nodes',
+                        getNodeName,
+                        (id) => updateSupportDraft({ targets: supportDraft.targets.filter((t) => t !== id) }),
+                      )
+                    }
+                    sx={TARGET_SELECT_SX}
+                    MenuProps={TARGET_MENU_PROPS}
+                  >
+                    {nodeOptions.map((option) => (
+                      <MenuItem key={option.id} value={option.id}>
+                        {option.name}
+                      </MenuItem>
+                    ))}
+                  </MUISelect>
+                  {targetsError && (
+                    <FormHelperText>Select at least one node</FormHelperText>
+                  )}
+                </FormControl>
+              </PropertyRow>
+
+              <ApplyRow onClick={applySupport} />
             </>
           )}
 
           {/* ── LOAD ────────────────────────────────────────────────── */}
-          {load && (
+          {load && loadDraft && (
             <>
               <PropertyRow label="Name">
-                <TextField name="name" value={load.name ?? ''} onChange={(e: any) => updateLoadName(e.target.value)} placeholder="Load name" size="small" />
+                <TextField name="name" value={loadDraft.name} onChange={(e: any) => updateLoadDraft({ name: e.target.value })} placeholder="Load name" size="small" />
               </PropertyRow>
 
               <PropertyRow label="Type">
-                <Select label="" size="small" list={LOAD_TYPES} value={load.type} onChange={(e: any) => updateLoadType(e.target.value)} />
+                {/* Changing type invalidates the target set (nodes ⇄ members), mirroring the dialog. */}
+                <Select label="" size="small" list={LOAD_TYPES} value={loadDraft.type} onChange={(e: any) => updateLoadDraft({ type: e.target.value, targets: [] })} />
               </PropertyRow>
 
               <PropertyRow label="Direction">
-                <Select label="" size="small" list={LOAD_DIRECTIONS} value={loadDirectionOf(load)} onChange={(e: any) => updateLoadDirection(e.target.value)} />
+                <Select label="" size="small" list={LOAD_DIRECTIONS} value={loadDraft.direction} onChange={(e: any) => updateLoadDraft({ direction: e.target.value })} />
               </PropertyRow>
 
               <PropertyRow label="Value">
-                <input type="number" value={loadMagnitudeOf(load)}
-                  onChange={(e) => updateLoadValue(Number(e.target.value) || 0)}
+                <input type="number" value={loadDraft.value}
+                  onChange={(e) => updateLoadDraft({ value: e.target.value })}
                   style={INLINE_INPUT_SX} />
               </PropertyRow>
 
-              <Box sx={{ mt: 0.5 }}>
-                <Typography sx={{ fontSize: '0.75rem', color: colors.textDim, mb: 0.5, fontWeight: 500 }}>
-                  {load.type === 'nodal' ? 'Target nodes' : 'Target members'}
-                </Typography>
-                {load.targets.map((id) => (
-                  <Chip key={id} label={load.type === 'nodal' ? getNodeName(id) : getMemberName(id)} size="small" sx={{ mr: 0.5, mb: 0.5, backgroundColor: colors.surfaceAlt, color: colors.text }} />
-                ))}
-              </Box>
+              <PropertyRow label="Targets">
+                <FormControl fullWidth size="small" error={targetsError}>
+                  <MUISelect
+                    multiple
+                    value={loadDraft.targets}
+                    onChange={(e: any) => {
+                      setTargetsError(false);
+                      updateLoadDraft({ targets: e.target.value as number[] });
+                    }}
+                    size="small"
+                    fullWidth
+                    renderValue={(selected) =>
+                      renderTargetValue(
+                        selected as number[],
+                        loadDraft.type === 'nodal' ? 'Select nodes' : 'Select members',
+                        (id) => (loadDraft.type === 'nodal' ? getNodeName(id) : getMemberName(id)),
+                        (id) => updateLoadDraft({ targets: loadDraft.targets.filter((t) => t !== id) }),
+                      )
+                    }
+                    sx={TARGET_SELECT_SX}
+                    MenuProps={TARGET_MENU_PROPS}
+                  >
+                    {(loadDraft.type === 'nodal' ? nodeOptions : memberOptions).map((option) => (
+                      <MenuItem key={option.id} value={option.id}>
+                        {option.name}
+                      </MenuItem>
+                    ))}
+                  </MUISelect>
+                  {targetsError && (
+                    <FormHelperText>
+                      {loadDraft.type === 'nodal' ? 'Select at least one node' : 'Select at least one member'}
+                    </FormHelperText>
+                  )}
+                </FormControl>
+              </PropertyRow>
+
+              <ApplyRow onClick={applyLoad} />
             </>
           )}
+
           </>
           )}
         </Box>
@@ -556,9 +725,9 @@ const RightPanel = observer(() => {
                 : member
                   ? '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.'
                   : support
-                    ? 'Checked DOF = restrained. Pick a preset (Fixed/Pinned/Roller) or toggle for a custom support.'
+                    ? 'Pick target nodes, choose a preset (Fixed/Pinned/Roller) or toggle DOF restraints, then press Apply to commit.'
                     : load
-                      ? 'Choose load type, direction and magnitude. Targets are shown as chips.'
+                      ? 'Pick target nodes or members, set type, direction and magnitude, then press Apply to commit.'
                       : 'Edit the node name and its coordinates.'}
           </Typography>
         </Box>

@@ -415,6 +415,9 @@ export class Model {
     this.levels = mockLevels
     this.postProcessing = new PostProcessing(this)
     this.labeler = new Labeler(this)
+    // Visibility must exist before the datum visuals: GridSystem and LevelVisual
+    // read the startup show/hide defaults from it (grids & levels start hidden).
+    this.visibility = new Visibility(this)
     this.levelVisual = new LevelVisual(this)
     this.workPlaneReferenceVisual = new WorkPlaneReferenceVisual(this)
     this.reactionViz = new ReactionViz(this)
@@ -429,7 +432,6 @@ export class Model {
     this.members = []
     this.shells = []
     this.layer = 0
-    this.visibility = new Visibility(this)
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
     makeAutoObservable(this)

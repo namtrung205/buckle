@@ -16,7 +16,6 @@ import {
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../../model/Context';
 import { DEFLECTION_TYPE, DIAGRAM_TYPES } from '../../../../model/PostProcessing/PostProcessing';
-import Legend from '../Legend/Legend';
 import SummaryTable from '../SummaryTable/SummaryTable';
 import StationTable from '../StationTable/StationTable';
 import { UI, SecTitle } from '../ui';
@@ -75,9 +74,10 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     else if (post.activeType) applyForce(post.activeType);
   };
 
-  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine') =>
+  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine' | 'showLegend') =>
     (event: ChangeEvent<HTMLInputElement>) => {
       post[key] = event.target.checked;
+      if (key === 'showLegend') return; // pure on-canvas UI flag — no 3D re-render needed
       if (key === 'showContour') {
         // Line-only display: sections always hidden; contour paints the centreline
         // strips, so the neutral grey line only shows when the colours are off
@@ -180,12 +180,12 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
         )}
         <FormControlLabel control={<Switch size="small" checked={post.showContour} onChange={handleToggle('showContour')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Contour trên thanh</Typography>} sx={{ margin: 0 }} />
         <FormControlLabel control={<Switch size="small" checked={post.showLabels} onChange={handleToggle('showLabels')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Max / Min tags</Typography>} sx={{ margin: 0 }} />
+        <FormControlLabel control={<Switch size="small" checked={post.showLegend} onChange={handleToggle('showLegend')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Show legend</Typography>} sx={{ margin: 0 }} />
         {isDefl && (
           <FormControlLabel control={<Switch size="small" checked={post.showRefLine} onChange={handleToggle('showRefLine')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Reference line (dashed)</Typography>} sx={{ margin: 0 }} />
         )}
       </Box>
 
-      <Legend />
       {post.activeType && (
         <Box sx={{ mt: 1.5 }}>
           <SummaryTable />
