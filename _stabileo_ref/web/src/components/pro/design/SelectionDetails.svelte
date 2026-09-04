@@ -1,0 +1,142 @@
+<script lang="ts">
+  /**
+   * What the current selection IS, whatever kind of thing it is.
+   *
+   * ── Why one component for four cases ───────────────────────────
+   *
+   * A click in this workspace can land on four different things — a bar, a conflict marker, a
+   * member's concrete, or nothing — and the panel that answers has to say something useful for
+   * each without the four drifting into four different layouts. Keeping them in one place is
+   * what makes "every selection reports its member and its state" a property rather than a
+   * coincidence: the status block below the branch runs for all of them.
+   *
+   * The order of the branches is the order of specificity. A bar names itself; a conflict names
+   * a pair of bars; a member names only itself. Asking the most specific first is what stops a
+   * clicked marker being reported as "member 88" and nothing else.
+   */
+  import { t } from '../../../lib/i18n';
+  import { rebarWorkspace } from '../../../lib/store/rebar-workspace.svelte';
+  import ConflictInspector from './ConflictInspector.svelte';
+  import type {
+    SceneBar, SceneConflictMarker, SceneSolid,
+  } from '../../../lib/engine/detailing/scene-model';
+  import type { ElementStatusEntry } from '../../../lib/engine/detailing/element-status';
+
+  interface Props {
+    bar: SceneBar | null | undefined;
+    solid: SceneSolid | null | undefined;
+    conflict: SceneConflictMarker | null;
+    elementIds: number[];
+    status: ElementStatusEntry | null | undefined;
+    /** The design's own sentence for this member, already translated. */
+    reason: string | null;
+    /**
+     * True when the selected member carries torsion this application does not evaluate.
+     *
+     * Beside the member's STATE rather than folded into it. The state is what the design
+     * achieved and it is unchanged — a MODELLED member with unevaluated torsion is still
+     * modelled — and the missing verification is a separate fact the reader has to be given
+     * next to it. See `torsion-notice.ts`.
+     */
+    torsionUnevaluated?: boolean;
+  }
+  const {
+    bar, solid, conflict, elementIds, status, reason, torsionUnevaluated = false,
+  }: Props = $props();
+
+  const fmt = (n: number, d = 2): string => n.toFixed(d);
+</script>
+
+{#if bar}
+  <dl>
+    <dt>{t('detailing.scene.mark')}</dt>
+    <dd data-testid="rebar-sel-mark">{bar.mark ?? t('detailing.scene.unmarked')}</dd>
+    <dt>{t('detailing.scene.diameter')}</dt>
+    <dd>Ø{bar.diameterMm}</dd>
+    <dt>{t('detailing.scene.pieces.title')}</dt>
+    <dd data-testid="rebar-sel-piece">{t(`detailing.scene.piece.${bar.piece}`)}</dd>
+    <dt>{t('detailing.scene.cuttingLength')}</dt>
+    <dd>{fmt(bar.cuttingLength)} m</dd>
+    <dt>{t('detailing.scene.parentElement')}</dt>
+    <dd data-testid="rebar-sel-parent">{bar.elementIds.join(', ') || '—'}</dd>
+    <dt>{t('detailing.scene.layer')}</dt>
+    <dd>{bar.layerId ?? '—'}</dd>
+    <dt>{t('detailing.scene.assembly')}</dt>
+    <dd>{bar.assemblyId}</dd>
+  </dl>
+{:else if conflict}
+  <!--
+    A clicked marker answers about the CONFLICT, not about whichever bar happens to be behind
+    it. Its own inspector, because the conflict is what the user asked about.
+  -->
+  <ConflictInspector {conflict} />
+{:else if elementIds.length > 0}
+  <dl>
+    <dt>{t('detailing.scene.selectedElement')}</dt>
+    <dd data-testid="rebar-sel-parent">{elementIds.join(', ')}</dd>
+    {#if solid}
+      <dt>{t('detailing.scene.families')}</dt>
+      <dd>{t(`detailing.scene.kind.${solid.kind}`)}</dd>
+    {/if}
+  </dl>
+{:else}
+  <p class="hint">{t('detailing.scene.noSelection')}</p>
+{/if}
+
+{#if status}
+  <p class="sel-status" data-testid="rebar-sel-status">
+    {t(`detailing.scene.status.${status.status}`)}
+    {#if status.limiting.length > 0}
+      <span class="lim">({status.limiting.join(', ')})</span>
+    {/if}
+  </p>
+  {#if reason}
+    <p class="sel-reason" data-testid="rebar-sel-reason">
+      {t('detailing.scene.reason')}: {reason}
+    </p>
+  {/if}
+  {#if torsionUnevaluated}
+    <p class="sel-torsion" data-testid="rebar-sel-torsion">
+      <strong>{t('detailing.scene.torsionLabel')}</strong>
+      {t('detailing.scene.torsionMember')}
+    </p>
+  {/if}
+  <div class="sel-actions">
+    {#if rebarWorkspace.isolated.length > 0}
+      <button type="button" data-testid="rebar-clear-isolation"
+              onclick={() => rebarWorkspace.clearIsolation()}>
+        {t('detailing.scene.clearIsolation')}
+      </button>
+    {:else}
+      <button type="button" data-testid="rebar-isolate"
+              onclick={() => rebarWorkspace.isolate(rebarWorkspace.selection?.elementIds ?? [])}>
+        {t('detailing.scene.isolate')}
+      </button>
+    {/if}
+  </div>
+{/if}
+
+<style>
+  dl {
+    display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.5rem;
+    margin: 0; font-size: 0.74rem;
+  }
+  dt { color: var(--text-muted, #8b93a3); }
+  dd { margin: 0; }
+  .hint { margin: 0; font-size: 0.72rem; color: var(--text-muted, #8b93a3); }
+  .sel-status { margin: 0.3rem 0 0; font-size: 0.74rem; }
+  /* The same amber the workspace banner uses. One colour, one meaning. */
+  .sel-torsion { margin: 0.25rem 0 0; font-size: 0.74rem; color: #f2ddc6; }
+  .sel-torsion strong { color: #ffbe7a; }
+  .lim { color: var(--text-muted, #8b93a3); }
+  .sel-reason {
+    margin: 0.15rem 0 0; font-size: 0.7rem; line-height: 1.35;
+    color: var(--text-muted, #8b93a3);
+  }
+  .sel-actions { display: flex; gap: 0.35rem; margin-top: 0.3rem; }
+  .sel-actions button {
+    background: none; border: 1px solid var(--st-border, #2c3444); border-radius: 4px;
+    color: inherit; font-size: 0.72rem; padding: 0.2rem 0.45rem; cursor: pointer;
+  }
+  .sel-actions button:hover { border-color: #6fa8ff; color: #d7dce6; }
+</style>

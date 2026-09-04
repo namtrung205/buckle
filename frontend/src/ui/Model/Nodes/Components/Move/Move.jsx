@@ -155,9 +155,6 @@ const Move = ({
       onClose={onClose}
       maxWidth="xs"
       fullWidth={false}
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
       draggable
       title="Move Nodes"
     >

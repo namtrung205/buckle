@@ -89,7 +89,9 @@ def compute_section_properties(section: Dict) -> Dict[str, float]:
             "Iz": iz,
             "Jxx": jxx,
             "Sy": 0.0,
+            "Sy_bot": 0.0,
             "Sz": 0.0,
+            "Sz_left": 0.0,
             "ry": math.sqrt(iy / a) if a > 0 else 0.0,
             "rz": math.sqrt(iz / a) if a > 0 else 0.0,
         }
@@ -183,7 +185,9 @@ def compute_section_properties(section: Dict) -> Dict[str, float]:
         "Iz": p.iz,
         "Jxx": p.j,
         "Sy": p.sy_top,
+        "Sy_bot": p.sy_bot,
         "Sz": p.sz_right,
+        "Sz_left": p.sz_left,
         "ry": p.ry,
         "rz": p.rz,
     }

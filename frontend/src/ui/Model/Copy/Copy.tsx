@@ -48,9 +48,6 @@ const Copy = observer(({ open, onClose }: CopyProps) => {
       onClose={handleClose}
       maxWidth="xs"
       fullWidth={false}
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
       draggable
       title="Copy"
     >

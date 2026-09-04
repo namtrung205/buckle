@@ -13,9 +13,16 @@ import { jsonArrayToThree, jsonToThree } from '../../utils/axis'
 export const DIAGRAM_TYPES = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz'] as const
 export type DiagramType = (typeof DIAGRAM_TYPES)[number]
 export const DEFLECTION_TYPE = 'defl'
+/** Stress (MPa) quantities derived by the backend from end-efforts + section properties. */
+export const STRESS_TYPES = ['Smax', 'Sabs', 'SvonM'] as const
+export type StressType = (typeof STRESS_TYPES)[number]
+export const STRESS_UNIT = 'MPa'
 
 const SFAC = 1E-5 // displacement scale the backend applies to SI forces: plot_offset = value_SI * SFAC * localAxis
 const FORCE_UNITS: Record<string, string> = { N: 'kN', Vy: 'kN', Vz: 'kN', T: 'kN', My: 'kNm', Mz: 'kNm' }
+// Hatch lines drawn per member in the diagram (both ends included) — will be
+// exposed in Settings later.
+const HATCH_COUNT = 20
 
 export type StationPoint = {
   s: number // arc position along the member
@@ -71,6 +78,15 @@ class PostProcessing {
   showContour = false
   showLabels = true
   showRefLine = true
+  /** On-canvas contour legend visibility — toggled from the Results tabs. */
+  showLegend = true
+  /** Stress: paint the full 3D extruded solid (true cross-section colours)
+   *  instead of the thin centreline strip. Rendered only for stress types. */
+  showStressSolid = true
+  /** Members carrying the active diagram's extremes — display-only info shown
+   *  by the on-canvas contour legend (which member holds max / min). */
+  extremeMax: { label: string; value: number } | null = null
+  extremeMin: { label: string; value: number } | null = null
 
   private membersData: MemberDiagramData[] = []
   private hoverMeshes: THREE.Mesh[] = []
@@ -346,7 +362,8 @@ class PostProcessing {
     if (!output?.members) return
 
     this.activeType = type
-    this.unit = type === DEFLECTION_TYPE ? 'mm' : (FORCE_UNITS[type] ?? '')
+    const isStress = (STRESS_TYPES as readonly string[]).includes(type)
+    this.unit = type === DEFLECTION_TYPE ? 'mm' : isStress ? STRESS_UNIT : (FORCE_UNITS[type] ?? '')
 
     const selected = output.members.filter(
       (member: any) => selectedMemberIds.length === 0 || selectedMemberIds.includes(member.id)
@@ -357,18 +374,23 @@ class PostProcessing {
       if (data) membersData.push(data)
     }
     if (membersData.length === 0) {
+      this.extremeMax = null
+      this.extremeMin = null
       this.updateHoverTargets()
       return
     }
 
-    // Active scalar value per station + global range
+    // Active scalar value per station + global range, remembering which member
+    // carries each extreme (displayed by the on-canvas contour legend).
     let min = Infinity
     let max = -Infinity
+    let minHolder: MemberDiagramData | null = null
+    let maxHolder: MemberDiagramData | null = null
     for (const data of membersData) {
       for (const station of data.stations) {
         station.value = this.stationValue(type, station)
-        if (station.value < min) min = station.value
-        if (station.value > max) max = station.value
+        if (station.value < min) { min = station.value; minHolder = data }
+        if (station.value > max) { max = station.value; maxHolder = data }
       }
     }
     if (!isFinite(min) || !isFinite(max)) { min = 0; max = 0 }
@@ -377,6 +399,8 @@ class PostProcessing {
     this.max = max
     this.currentMin = min
     this.currentMax = max
+    this.extremeMax = maxHolder ? { label: maxHolder.label, value: max } : null
+    this.extremeMin = minHolder ? { label: minHolder.label, value: min } : null
 
     this.modelSize = this.computeModelSize()
     const maxAbs = Math.max(Math.abs(min), Math.abs(max)) || 1
@@ -385,18 +409,26 @@ class PostProcessing {
 
     for (const data of membersData) {
       for (const station of data.stations) {
-        station.offset.copy(this.stationOffset(type, data, station, scale))
+        // Stress contours colour the member itself — no diagram offset geometry
+        // is produced, so keep the offset pinned to the undeformed axis.
+        station.offset.copy(isStress ? station.base : this.stationOffset(type, data, station, scale))
       }
       if (type === DEFLECTION_TYPE) {
         this.buildOutline(data, this.showContour)
         if (this.showRefLine) this.buildRefLine(data)
-      } else {
+      } else if (!isStress) {
         if (this.showRibbon) this.buildRibbon(data)
         if (this.showHatch) this.buildHatch(data, this.showContour)
         this.buildBaseline(data)
         this.buildOutline(data, this.showContour)
       }
-      if (this.showContour) this.colorMemberLine(type, data)
+      if (isStress) {
+        // Full cross-section extrude: paint the member solid mesh itself so the
+        // stress colouring is seen on the real 3D member, or fall back to the
+        // centreline strip for a line-only stress contour.
+        if (this.showStressSolid) this.colorMemberSolids(data)
+        else if (this.showContour) this.colorMemberLine(type, data)
+      } else if (this.showContour) this.colorMemberLine(type, data)
       if (this.showLabels) this.collectExtremes(data, type)
     }
 
@@ -469,11 +501,14 @@ class PostProcessing {
     const colors: number[] = []
     const stations = data.stations
     const color = new THREE.Color()
-    // Five evenly spaced hatch lines per member (both ends included)
-    const count = Math.min(5, stations.length)
-    for (let k = 0; k < count; k++) {
-      const i = Math.round((k * (stations.length - 1)) / Math.max(1, count - 1))
-      const { base, offset, value } = stations[i]
+    if (stations.length < 2) return
+    // Dense hatching: HATCH_COUNT evenly spaced lines per member (both ends
+    // included), linearly interpolated between stations so the density stays
+    // constant regardless of how many stations the backend sampled.
+    const sMax = stations[stations.length - 1].s
+    for (let k = 0; k < HATCH_COUNT; k++) {
+      const s = (sMax * k) / (HATCH_COUNT - 1)
+      const { base, offset, value } = this.stationSample(stations, s)
       positions.push(base.x, base.y, base.z, offset.x, offset.y, offset.z)
       if (colored) {
         // Both vertices of a hatch share its station colour (forces contour mode)
@@ -712,6 +747,25 @@ class PostProcessing {
     return a.value + (b.value - a.value) * t
   }
 
+  /** Linearly interpolated station point (base / offset / value) at arc position s. */
+  private stationSample(stations: StationPoint[], s: number) {
+    let lo = 0
+    let hi = stations.length - 1
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1
+      if (stations[mid].s <= s) lo = mid
+      else hi = mid
+    }
+    const a = stations[lo]
+    const b = stations[hi]
+    const t = (s - a.s) / (b.s - a.s || 1)
+    return {
+      base: a.base.clone().lerp(b.base, t),
+      offset: a.offset.clone().lerp(b.offset, t),
+      value: a.value + (b.value - a.value) * t,
+    }
+  }
+
   /** Max/min tags for a member — pill labels coloured to match the diverging colormap. */
   private collectExtremes(data: MemberDiagramData, type: string) {
     let max = { value: -Infinity, station: null as StationPoint | null }
@@ -720,9 +774,9 @@ class PostProcessing {
       if (station.value > max.value) max = { value: station.value, station }
       if (station.value < min.value) min = { value: station.value, station }
     }
-    // Colours follow the diagram colormap: blue = positive lobe, red = negative lobe
-    const POS = '#2f6fed'
-    const NEG = '#e5484d'
+    // Colours follow the diagram colormap: red = positive lobe, blue = negative lobe
+    const POS = '#c62828'
+    const NEG = '#1e56b4'
     const suffix = type === DEFLECTION_TYPE ? 'defl' : type
     if (max.station) {
       const isDefl = type === DEFLECTION_TYPE
@@ -794,6 +848,8 @@ class PostProcessing {
     this.activeType = null
     this.min = 0
     this.max = 0
+    this.extremeMax = null
+    this.extremeMin = null
     this.removeLabels()
   }
 

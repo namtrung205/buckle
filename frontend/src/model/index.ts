@@ -12,6 +12,10 @@ import PostProcessing from './PostProcessing/PostProcessing'
 import ReactionViz from './PostProcessing/ReactionViz'
 import Snapper from './Geometry/Helpers/Snapper'
 import Sections from './Section/Section'
+import GridSystem from './Grid/GridSystem'
+import WorkingPlane from './Geometry/WorkingPlane/WorkingPlane'
+import WorkPlaneReferenceVisual from './Geometry/WorkingPlane/WorkPlaneReferenceVisual'
+import LevelVisual from './Level/LevelVisual'
 import Console from './Console/Console'
 // Geometry
 import Line from './Geometry/Tools/Line'
@@ -21,6 +25,7 @@ import Load from './Load/Load'
 import WebSocketHandler  from './WebSocket/WebSocket'
 import CopyTool from './Geometry/Tools/Copy'
 import ZoomTool from './Geometry/Tools/Zoom'
+import PlanePick from './Geometry/Tools/PlanePick'
 export {
   Node,
   Camera,
@@ -35,6 +40,9 @@ export {
   ReactionViz,
   Snapper,
   Sections, 
+  GridSystem,
+  WorkingPlane,
+  WorkPlaneReferenceVisual,
   Line,
   Console,
   Visibility,
@@ -43,5 +51,7 @@ export {
   WebSocketHandler,
   CopyTool,
   ZoomTool,
+  PlanePick,
+  LevelVisual,
   Shell
 }

@@ -118,6 +118,10 @@ export class Camera {
       const dir = new THREE.Vector3(0.65, 1, 0.65).normalize();
       this.cam.position.copy(center).addScaledVector(dir, radius * 3 + 1);
     }
+    // Normalize the camera up to the world default — the nav cube (gizmo) and
+    // OrbitControls both assume the standard Y-up convention; a leftover
+    // custom up (e.g. from a working-plane alignment) rolls the fitted view.
+    this.cam.up.set(0, 1, 0);
     this.cam.lookAt(center);
 
     this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
@@ -168,6 +172,8 @@ export class Camera {
       dir.normalize();
       this.cam.position.copy(center).addScaledVector(dir, radius * 3 + 1);
     }
+    // Normalize the camera up to the world default (same reason as fitModelToView).
+    this.cam.up.set(0, 1, 0);
     this.cam.lookAt(center);
 
     this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
@@ -261,6 +267,9 @@ export class Camera {
     } else {
       this.cam.position.set(20, 30, 20);
     }
+    // Normalize the camera up to the world default (nav cube / OrbitControls
+    // Y-up convention) so orbiting never inherits a rolled orientation.
+    this.cam.up.set(0, 1, 0);
     this.controls.enableDamping = false;
     this.controls.enableRotate = true;
     this.controls.mouseButtons = {
@@ -275,6 +284,10 @@ export class Camera {
     this.viewMode = '2d'
     this.model.snapper.enable()
     this.controls.enableRotate = false;
+    // Normalize the camera up to the world default (see alignToPlane): with the
+    // camera exactly above the target, lookAt() still yields the "-Z up on
+    // screen" plan orientation via its degenerate branch.
+    this.cam.up.set(0, 1, 0);
     // Fit to the model when one exists (prevents far-plane culling on large models)
     if (!this.getModelBox().isEmpty()) {
       this.fitModelToView();
@@ -286,6 +299,34 @@ export class Camera {
     this.controls.target.set(0, 0, 0);
     this.controls.update();
     this.applyNavTool(this.model.navTool)
+  }
+
+  /**
+   * Look straight at a working plane: positions the camera along the plane's
+   * normal (plan-like view of that plane) and orbits around a point ON that
+   * plane. No model-fit is performed so an existing zoom/frustum is preserved.
+   *
+   * IMPORTANT — camera.up is ALWAYS kept at the world default (0,1,0). The nav
+   * cube (three-viewport-gizmo) computes every face-click orientation and its
+   * cube-drag in the world Y-up convention, while OrbitControls re-derives the
+   * orientation from `camera.up` on every update(). Mutating `up` (e.g. to
+   * (0,0,-1) for a horizontal plan) makes the two conventions fight each frame:
+   * the view rolls/spins after every cube click and Home cannot win the race.
+   * For a horizontal plan the camera sits exactly along +Y above the target, so
+   * lookAt() takes three.js' degenerate branch which still yields the wanted
+   * "-Z up on screen" plan orientation deterministically.
+   */
+  alignToPlane(normal: THREE.Vector3, origin: THREE.Vector3) {
+    this.viewMode = '2d'
+    this.controls.enableRotate = false
+    this.model.snapper.enable()
+    const n = normal.clone().normalize()
+    this.cam.up.set(0, 1, 0)
+    const dist = Math.max(30, this.frustumSize * 2)
+    this.cam.position.copy(origin).addScaledVector(n, dist)
+    this.cam.lookAt(origin)
+    this.controls.target.copy(origin)
+    this.controls.update()
   }
 }
 

@@ -8,6 +8,10 @@ import {
   ViewInAr as SectionsIcon,
   Lock as BoundaryConditionsIcon,
   TrendingDown as LoadsIcon,
+  GridOn as GridIcon,
+  Visibility as VisibleIcon,
+  VisibilityOff as HiddenIcon,
+  Straighten as LevelsIcon,
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
@@ -18,13 +22,15 @@ import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
 import AddOrEditNode from '../Model/Nodes/AddOrEdit';
 import AddOrEditSection from '../Model/Sections/AddOrEdit'
-import AddOrEditLoad from '../Model/Loads'
 import AddOrEditMember from '../Model/Members/AddOrEdit';
-import AddOrEditBoundaryCondition from '../Model/BoundaryConditions';
 import Node from '../../model/Elements/Node/Node';
 import { Load } from '../../model';
 import { ElasticIsotropicMaterial, Section as SectionType } from '../../types';
 import AddOrEditMaterial from '../Model/Materials/AddOrEdit';
+import AddOrEditGrid from '../Model/Grids/AddOrEdit';
+import GridSystem from '../../model/Grid/GridSystem';
+import AddOrEditLevel from '../Model/Levels/AddOrEdit';
+import { Level } from '../../types';
 import ElasticBeamColumn from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
 interface LeftBarProps {
@@ -150,14 +156,14 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
   const [addOrEditMaterial, setAddOrEditMaterial] = useState(false);
   const [selectedMaterial, setSelectedMaterial] = useState<ElasticIsotropicMaterial | null>(null);
 
-  const [addOrEditLoad, setAddOrEditLoad] = useState(false);
-  const [selectedLoad, setSelectedLoad] = useState<Load | null>(null);
-
   const [addOrEditMember, setAddOrEditMember] = useState(false);
   const [selectedMember, setSelectedMember] = useState<ElasticBeamColumn | null>(null);
 
-  const [addOrEditBoundaryCondition, setAddOrEditBoundaryCondition] = useState(false);
-  const [selectedBoundaryCondition, setSelectedBoundaryCondition] = useState<BoundaryCondition | null>(null);
+  const [addOrEditGrid, setAddOrEditGrid] = useState(false);
+  const [selectedGrid, setSelectedGrid] = useState<GridSystem | null>(null);
+
+  const [addOrEditLevel, setAddOrEditLevel] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState<Level | null>(null);
 
   
 
@@ -264,7 +270,12 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           label="Sections"
           icon={<SectionsIcon sx={{ fontSize: 20 }} />}
           disabled={isLocked}
-          onAdd={() => setAddOrEditSection(true)}
+          onAdd={() => {
+            // "+" must create a NEW section — never re-edit the one left over
+            // from a previous tree edit.
+            setSelectedSection(null);
+            setAddOrEditSection(true);
+          }}
         >
           {model?.sections?.map((section: SectionType) => (
             <Box
@@ -314,6 +325,162 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           ))}
         </TreeItem>
 
+        {/* Grid systems (SAP2000/ETABS-style axis grids) */}
+        <TreeItem
+          id="grids"
+          label="Grid"
+          icon={<GridIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
+          onAdd={() => {
+            setSelectedGrid(null);
+            setAddOrEditGrid(true);
+          }}
+        >
+          {(model?.grids?.length || 0) > 0 ? (
+            model.grids.map((grid) => (
+              <Box
+                key={grid.id}
+                sx={{
+                  px: 2,
+                  pl: 6,
+                  py: 0.8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  '&:hover': {
+                    backgroundColor: colors.hover,
+                  },
+                }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                  <Typography sx={{
+                    fontSize: '0.75rem',
+                    color: grid.visible ? colors.textDim : colors.textFaint,
+                    textDecoration: grid.visible ? 'none' : 'line-through',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {grid.name}
+                  </Typography>
+                  <Typography sx={{ fontSize: '0.65rem', color: colors.textFaint, flexShrink: 0 }}>
+                    {grid.xLines.length}×{grid.yLines.length}
+                  </Typography>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      grid.toggleVisible();
+                    }}
+                    title={grid.visible ? 'Hide grid' : 'Show grid'}
+                    sx={{ padding: '2px', color: grid.visible ? colors.accentSoft : colors.textFaint, '&:hover': { color: colors.text } }}
+                  >
+                    {grid.visible ? <VisibleIcon sx={{ fontSize: 14 }} /> : <HiddenIcon sx={{ fontSize: 14 }} />}
+                  </IconButton>
+                  <IconButton
+                    size="small"
+                    disabled={isLocked}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedGrid(grid);
+                      setAddOrEditGrid(true);
+                    }}
+                    sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
+                  >
+                    <EditIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                  <IconButton
+                    size="small"
+                    disabled={isLocked}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      grid.delete();
+                    }}
+                    sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
+                  >
+                    <DeleteIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                </Box>
+              </Box>
+            ))
+          ) : (
+            <Box sx={{ px: 2, pl: 6, py: 0.8 }}>
+              <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint, fontStyle: 'italic' }}>
+                No grid defined yet
+              </Typography>
+            </Box>
+          )}
+        </TreeItem>
+
+        {/* Levels (Revit-style horizontal datums) */}
+        <TreeItem
+          id="levels"
+          label="Levels"
+          icon={<LevelsIcon sx={{ fontSize: 20 }} />}
+          disabled={isLocked}
+          onAdd={() => {
+            setSelectedLevel(null);
+            setAddOrEditLevel(true);
+          }}
+        >
+          {model?.levels?.map((level: Level) => (
+            <Box
+              key={level.value}
+              onClick={() => model.handleLevelChange(level)}
+              sx={{
+                px: 2,
+                pl: 6,
+                py: 0.8,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                '&:hover': {
+                  backgroundColor: colors.hover,
+                },
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
+                  {level.label || `Level ${level.value}`}
+                </Typography>
+                <Typography sx={{ fontSize: '0.65rem', color: colors.textFaint, fontFamily: '"Consolas", "Roboto Mono", ui-monospace, monospace' }}>
+                  {level.value.toFixed(3)} m
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                <IconButton
+                  size="small"
+                  disabled={isLocked}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedLevel(level);
+                    setAddOrEditLevel(true);
+                  }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
+                >
+                  <EditIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  disabled={isLocked || (model?.levels?.length ?? 0) <= 1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(`Delete level ${level.label}?`)) {
+                      model.deleteLevel(level.value);
+                    }
+                  }}
+                  sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
+                >
+                  <DeleteIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+              </Box>
+            </Box>
+          ))}
+        </TreeItem>
+
         {/* Nodes */}
         <TreeItem
           id="nodes"
@@ -321,8 +488,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           icon={<NodesIcon sx={{ fontSize: 20 }} />}
           disabled={isLocked}
           onAdd={() => {
-            setSelectedNode(null);
-            setAddOrEditNode(true);
+            model.addNewNode();
           }}
         >
           {model?.nodes?.slice(0, 50).map((node: Node) => (
@@ -454,13 +620,13 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           icon={<BoundaryConditionsIcon sx={{ fontSize: 20 }} />}
           disabled={isLocked}
           onAdd={() => {
-            setSelectedBoundaryCondition(null);
-            setAddOrEditBoundaryCondition(true);
+            model.addNewSupport();
           }}
         >
           {model?.boundaryConditions?.map((bc: BoundaryCondition) => (
             <Box
               key={bc.id}
+              onClick={() => model.focusBoundaryCondition(bc.id)}
               sx={{
                 px: 2,
                 pl: 6,
@@ -483,8 +649,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setSelectedBoundaryCondition(bc);
-                    setAddOrEditBoundaryCondition(true);
+                    model.focusBoundaryCondition(bc.id);
                   }}
                   sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -517,13 +682,13 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           icon={<LoadsIcon sx={{ fontSize: 20 }} />}
           disabled={isLocked}
           onAdd={() => {
-            setSelectedLoad(null);
-            setAddOrEditLoad(true);
+            model.addNewLoad();
           }}
         >
           {model?.loads?.map((load: Load) => (
             <Box
               key={load.id}
+              onClick={() => model.focusLoad(load.id)}
               sx={{
                 px: 2,
                 pl: 6,
@@ -545,10 +710,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                   size="small"
                     disabled={isLocked}
                   onClick={(e) => {
-                    console.log('load to edit', load)
                     e.stopPropagation();
-                    setSelectedLoad(load)
-                    setAddOrEditLoad(true)
+                    model.focusLoad(load.id)
                   }}
                   sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -583,23 +746,35 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
 
       <AddOrEditSection
         open={addOrEditSection}
-        onClose={() => setAddOrEditSection(false)}
+        onClose={() => {
+          setAddOrEditSection(false);
+          setSelectedSection(null);
+        }}
         section={selectedSection}
+      />
+
+      <AddOrEditGrid
+        open={addOrEditGrid}
+        onClose={() => {
+          setAddOrEditGrid(false);
+          setSelectedGrid(null);
+        }}
+        grid={selectedGrid}
+      />
+
+      <AddOrEditLevel
+        open={addOrEditLevel}
+        onClose={() => {
+          setAddOrEditLevel(false);
+          setSelectedLevel(null);
+        }}
+        level={selectedLevel}
       />
 
       <AddOrEditMaterial
         open={addOrEditMaterial}
         onClose={() => {setAddOrEditMaterial(false)}}
         selectedMaterial={selectedMaterial}
-      />
-
-      <AddOrEditLoad
-        open={addOrEditLoad}
-        onClose={() => {
-          setAddOrEditLoad(false);
-          setSelectedLoad(null);
-        }}
-        selectedLoad={selectedLoad}
       />
 
       <AddOrEditMember
@@ -609,15 +784,6 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           setSelectedMember(null);
         }}
         selectedMember={selectedMember}
-      />
-
-      <AddOrEditBoundaryCondition
-        open={addOrEditBoundaryCondition}
-        onClose={() => {
-          setAddOrEditBoundaryCondition(false);
-          setSelectedBoundaryCondition(null);
-        }}
-        selectedBoundaryCondition={selectedBoundaryCondition}
       />
     </Box>
   );

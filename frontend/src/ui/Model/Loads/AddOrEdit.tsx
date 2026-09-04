@@ -234,9 +234,6 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
       onClose={handleCancel}
       maxWidth="xs"
       fullWidth={false}
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
       draggable
       title={selectedLoad ? 'Edit Load' : 'New Load'}
       actions={actions}

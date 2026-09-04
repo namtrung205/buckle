@@ -14,7 +14,11 @@ import {
   Console,
   Visibility,
   WebSocketHandler,
-  Shell
+  Shell,
+  GridSystem,
+  WorkingPlane,
+  WorkPlaneReferenceVisual,
+  LevelVisual,
 } from "./index";
 import ReactionViz from "./PostProcessing/ReactionViz";
 import { makeAutoObservable } from "mobx";
@@ -69,6 +73,14 @@ export class Model {
   output : any
   sections : Section[] = mockSections
   materials : Material[] = mockMaterials
+  // SAP2000/ETABS style structural axis grids
+  grids : GridSystem[] = []
+  // Active drawing surface — re-orients picking, the square grid and the camera
+  workingPlane : WorkingPlane
+  // Revit-style level datums rendered in the scene
+  levelVisual : LevelVisual
+  // Revit-style reference overlay on a vertical grid-axis working plane
+  workPlaneReferenceVisual : WorkPlaneReferenceVisual
   gui : GUI | null = null
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
@@ -86,6 +98,8 @@ export class Model {
   rightPanelOpen = true;
   selectedMemberId: number | null = null;
   selectedNodeId: number | null = null;
+  selectedBoundaryConditionId: number | null = null;
+  selectedLoadId: number | null = null;
   selectedMemberDialogs = {
     section: false,
     material: false,
@@ -108,33 +122,70 @@ export class Model {
   /** Reposition the ViewCube so it is never hidden behind the right dock. */
   private updateGizmoOffset = () => {
     if (!this.gizmo) return;
-    const dockOpen = this.rightPanelOpen && (this.selectedMemberId != null || this.selectedNodeId != null);
+    const dockOpen = this.rightPanelOpen && (this.hasFocus() || this.activeDialog === 'results' || this.activeDialog === 'reactions' || this.activeDialog === 'draw');
     const right = Model.GIZMO_RIGHT_BASE + (dockOpen ? Model.RIGHT_PANEL_WIDTH : 0);
     if (right !== this.gizmoOptions.offset.right) {
       this.gizmoOptions.offset.right = right;
+      // `ViewportGizmo.set()` regenerates the whole widget and — because its
+      // internal `dispose()` detaches controls and clears the internal
+      // `_controls` ref — the `this._controls && this.attachControls(...)` inside
+      // `set()` is a no-op. The widget is therefore left without its OrbitControls
+      // binding (its `target` goes stale and face-click camera animation breaks).
+      // Re-attach controls right after every rebuild to keep the cube functional.
       this.gizmo.set({ ...this.gizmoOptions, offset: { ...this.gizmoOptions.offset } });
+      this.gizmo.attachControls(this.camera.controls);
     }
   };
 
   /** Focus an entity in the right dock (member or node, by id). */
   focusMember = (id: number | null) => {
     this.selectedMemberId = id;
-    if (id != null) this.selectedNodeId = null;
+    if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
 
   focusNode = (id: number | null) => {
     this.selectedNodeId = id;
-    if (id != null) this.selectedMemberId = null;
+    if (id != null) { this.selectedMemberId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
+
+  /** Focus a support / boundary condition in the right dock, by id. */
+  focusBoundaryCondition = (id: number | null) => {
+    this.selectedBoundaryConditionId = id;
+    if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedLoadId = null; this.exitResults(); }
+    this.rightPanelOpen = true;
+    this.updateGizmoOffset();
+  };
+
+  /** Focus a load in the right dock, by id. */
+  focusLoad = (id: number | null) => {
+    this.selectedLoadId = id;
+    if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.exitResults(); }
+    this.rightPanelOpen = true;
+    this.updateGizmoOffset();
+  };
+
+  /** Leave the results dock mode when an entity takes focus (returns to Properties). */
+  private exitResults = () => {
+    if (this.activeDialog === 'results' || this.activeDialog === 'reactions') this.activeDialog = null;
+  };
+
+  /** True when any entity is focused for right-dock editing. */
+  hasFocus = () =>
+    this.selectedMemberId != null ||
+    this.selectedNodeId != null ||
+    this.selectedBoundaryConditionId != null ||
+    this.selectedLoadId != null;
 
   /** Clear the focused entity (closes the right dock). */
   clearFocus = () => {
     this.selectedMemberId = null;
     this.selectedNodeId = null;
+    this.selectedBoundaryConditionId = null;
+    this.selectedLoadId = null;
     this.updateGizmoOffset();
   };
 
@@ -149,13 +200,62 @@ export class Model {
     }
     const ud = (obj.userData || {}) as any;
     if (ud.type === 'node' && ud.id != null) this.focusNode(ud.id);
-    else if (ud.id != null) this.focusMember(ud.id);
+    else if (ud.type === 'load' && typeof ud.id === 'string') {
+      // Load meshes carry a compound id: `load-<loadId>-<targetId>`.
+      const parts = String(ud.id).split('-');
+      const numeric = parts.map((p: string) => Number(p)).find((n: number) => !Number.isNaN(n));
+      if (parts[0] === 'load' && parts[1] != null && !Number.isNaN(Number(parts[1]))) {
+        this.focusLoad(Number(parts[1]));
+      } else if (numeric != null) {
+        this.focusLoad(numeric);
+      }
+    } else if (ud.id != null) this.focusMember(ud.id);
+  };
+
+  /**
+   * Create a default entity and focus it in the right dock for inline editing.
+   * These replace the old floating "New X" dialogs: the entity is instantiated
+   * with sensible defaults and the dock takes over for the remaining inputs.
+   */
+
+  /** Create a blank nodal load (no targets, zero magnitude) and focus it. */
+  addNewLoad = () => {
+    const load = new Load(this, {
+      id: Math.floor(Math.random() * 0x7fffffff),
+      name: `Load ${this.loads.length + 1}`,
+      type: 'nodal',
+      targets: [],
+      value: new THREE.Vector3(0, 0, 0),
+    } as any);
+    load.createOrUpdate();
+    this.focusLoad(load.id);
+  };
+
+  /** Create a fixed support with no targets yet, then focus it. */
+  addNewSupport = () => {
+    const bc = new BoundaryCondition(this, {
+      id: Math.floor(Math.random() * 0x7fffffff),
+      name: `Support ${this.boundaryConditions.length + 1}`,
+      type: 'fixed',
+      targets: [],
+    } as any);
+    bc.createOrUpdate();
+    this.focusBoundaryCondition(bc.id);
+  };
+
+  /** Create a node at the origin and focus it. */
+  addNewNode = () => {
+    const node = new Node(new THREE.Vector3(0, 0, 0), undefined);
+    node.model = this;
+    node.create();
+    this.nodes.push(node);
+    this.focusNode(node.id);
   };
   // Active bottom-bar navigation tool (select / zoom / pan / orbit)
   navTool: NavTool = 'select';
   // Zoom navigation tool handling fit / window / drag modes
   zoomTool: ZoomTool;
-  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard'];
+  private editingDialogs = ['move', 'draw', 'sections', 'loads', 'supports', 'materials', 'copy', 'warehouseWizard', 'grids', 'workplane', 'levels'];
   ws : WebSocketHandler = new WebSocketHandler((import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/^http/, 'ws') + '/ws/1', this)
 
   closeContextMenu = () => {
@@ -172,6 +272,7 @@ export class Model {
       return false;
     }
     this.activeDialog = dialog;
+    this.updateGizmoOffset();
     return true;
   }
 
@@ -193,6 +294,7 @@ export class Model {
     const currentTool = this.toolsController.getCurrentTool();
     currentTool?.stop();
     this.activeDialog = null;
+    this.updateGizmoOffset();
   }
 
   /**
@@ -298,6 +400,7 @@ export class Model {
     this.worldPlane =  new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     
     this.snapper = new Snapper(this)
+    this.workingPlane = new WorkingPlane(this)
  
     this.update()
     this.init()
@@ -312,6 +415,11 @@ export class Model {
     this.levels = mockLevels
     this.postProcessing = new PostProcessing(this)
     this.labeler = new Labeler(this)
+    // Visibility must exist before the datum visuals: GridSystem and LevelVisual
+    // read the startup show/hide defaults from it (grids & levels start hidden).
+    this.visibility = new Visibility(this)
+    this.levelVisual = new LevelVisual(this)
+    this.workPlaneReferenceVisual = new WorkPlaneReferenceVisual(this)
     this.reactionViz = new ReactionViz(this)
     // this.sections = new Sections(this)
     this.gizmo = new ViewportGizmo(
@@ -324,7 +432,6 @@ export class Model {
     this.members = []
     this.shells = []
     this.layer = 0
-    this.visibility = new Visibility(this)
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
     makeAutoObservable(this)
@@ -379,8 +486,12 @@ export class Model {
     this.camera.cam.updateProjectionMatrix();
     this.reactionViz?.onFrame();
     this.nodes?.forEach((node: any) => node.updateScreenScale?.());
+    // Grid end bubbles keep a constant on-screen size, just like the nodes.
+    this.grids?.forEach((grid) => grid.updateScreenScale());
     this.renderer.render(this.scene, this.camera.cam);
-    this.camera.controls.update()
+    // While the nav cube animates a face-click it owns the camera pose; a
+    // concurrent OrbitControls update() would re-roll the orientation mid-flight.
+    if (!this.gizmo?.animating) this.camera.controls.update()
     this.camera.directionalLight.target.position.copy(this.camera.controls.target)
     this.camera.directionalLight.target.updateMatrixWorld()
     requestAnimationFrame(this.update);
@@ -415,6 +526,8 @@ export class Model {
     this.container.removeChild(this.renderer.domElement)
     this.selector.dispose()
     this.labeler.dispose()
+    this.levelVisual?.dispose()
+    this.workPlaneReferenceVisual?.dispose()
     this.gizmo.dispose()
     this.removeListeners()
     this.zoomTool.stop()
@@ -455,6 +568,11 @@ export class Model {
     const shells = [...this.shells]
     shells.forEach(shell => shell.remove())
     this.shells = []
+    
+    // Dispose of grid systems
+    const grids = [...this.grids]
+    grids.forEach(grid => grid.delete())
+    this.grids = []
     
     // Dispose of all nodes
     // Create a copy of the array to avoid issues when dispose() modifies the original array
@@ -505,15 +623,42 @@ export class Model {
       this.gridHelper.show()
     }
     const elevation = level.value
-    this.worldPlane.constant = -elevation
-    this.gridHelper.grid.position.y = elevation -0.005
+    // Level = horizontal working plane at that elevation (aligns grid + picking).
+    // alignCamera:false keeps the camera fit/handle2dView behaviour unchanged.
+    this.workingPlane.setLevel(elevation, level.label, { alignCamera: false })
     this.layer = this.levels.findIndex(l => l.value === level.value)
+    // Revit-style: the structural axis grid follows the active level, so it is
+    // shown "through" at every storey plan (and its vertical rise hints span
+    // all levels whenever a grid activates a 3D reference).
+    this.grids.forEach((grid) => grid.setElevation(elevation))
     this.snapper.snap?.layers.set(this.layer)
     this.gridHelper.grid.layers.set(this.layer)
     // this.axes.setLayer(this.layer)
     this.camera.cam.layers.set(this.layer)
     // this.light.directionalLight.layers.set(this.layer)
 
+  }
+
+  /** Add a level (Revit-style datum) and switch to its plan view. */
+  addLevel(level: Level) {
+    this.levels.push(level)
+    this.handleLevelChange(level)
+  }
+
+  /** Update a level's name / elevation in place. */
+  updateLevel(oldValue: number, patch: Partial<Level>) {
+    const lv = this.levels.find((l) => l.value === oldValue)
+    if (lv) Object.assign(lv, patch)
+  }
+
+  /** Remove a level datum. Returns false if it is the last remaining level. */
+  deleteLevel(value: number): boolean {
+    if (this.levels.length <= 1) return false
+    this.levels = this.levels.filter((l) => l.value !== value)
+    // If the active layer pointed at the deleted level, fall back to the first.
+    const active = this.levels[0]
+    this.handleLevelChange(active)
+    return true
   }
 }
 

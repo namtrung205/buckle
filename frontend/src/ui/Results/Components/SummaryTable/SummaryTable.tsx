@@ -1,10 +1,11 @@
 import { Box, Table, TableBody, TableCell, TableContainer, TableHead, TableRow } from '@mui/material';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../../model/Context';
-import { DIAGRAM_TYPES } from '../../../../model/PostProcessing/PostProcessing';
+import { DIAGRAM_TYPES, STRESS_TYPES } from '../../../../model/PostProcessing/PostProcessing';
 import { UI, fmtValue, SecTitle } from '../ui';
 
-// Quantities are unit-less here — the unit reference lives in the status bar
+// Quantities are unit-less here — the unit reference lives in the status bar.
+// Stress rows are labelled σ in MPa (derived by the backend).
 const TYPE_TITLES: Record<string, string> = {
   N: 'N',
   Vy: 'Vy',
@@ -12,6 +13,9 @@ const TYPE_TITLES: Record<string, string> = {
   T: 'T',
   My: 'My',
   Mz: 'Mz',
+  Smax: 'σ max (signed)',
+  Sabs: '|σ| max',
+  SvonM: 'σ VM',
 };
 
 /** Summary of max/min internal forces and peak deflection across the analysed members. */
@@ -24,6 +28,29 @@ const SummaryTable = observer(() => {
   const rows: { label: string; max: string; min: string }[] = [];
 
   for (const type of DIAGRAM_TYPES) {
+    let max = -Infinity;
+    let min = Infinity;
+    let found = false;
+    for (const member of members) {
+      const values: number[] = [];
+      if (member.stations?.length) {
+        for (const s of member.stations) if (s.values?.[type] !== undefined) values.push(s.values[type]);
+      } else {
+        for (const node of member.node_efforts ?? []) {
+          const effort = node.efforts?.[type];
+          if (effort) values.push(effort.value);
+        }
+      }
+      for (const v of values) {
+        found = true;
+        if (v > max) max = v;
+        if (v < min) min = v;
+      }
+    }
+    if (found) rows.push({ label: TYPE_TITLES[type], max: fmtValue(max), min: fmtValue(min) });
+  }
+
+  for (const type of STRESS_TYPES) {
     let max = -Infinity;
     let min = Infinity;
     let found = false;

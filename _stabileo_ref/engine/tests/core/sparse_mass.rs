@@ -1,0 +1,681 @@
+//! Parity tests: sparse mass matrix (CSC) vs dense mass matrix on the
+//! eigen/dynamic paths. The sparse paths (modal 3D, buckling 2D/3D, harmonic
+//! 3D) now assemble M directly as CSC and use `CscMatrix::sym_mat_vec` for
+//! M·x inside the shift-invert Lanczos operator. These tests pin:
+//!   1. Sparse mass assembly == dense mass assembly (free block).
+//!   2. Eigenvalues/load factors from the new sparse-mass Lanczos == the
+//!      pre-refactor dense-mass sparse-Lanczos (golden values captured from
+//!      the same models on origin/main). The K factorization is identical on
+//!      both sides — only the M·x representation changed — so agreement is
+//!      expected to ~1e-12 and gated at 1e-10.
+//!   3. Cross-method sanity: sparse-mass Lanczos vs fully-dense generalized
+//!      Lanczos on a well-conditioned frame model (1e-8).
+
+use std::collections::HashMap;
+use dedaliano_engine::types::*;
+use dedaliano_engine::linalg::{
+    lanczos_generalized_eigen, lanczos_generalized_eigen_sparse,
+    extract_submatrix, CscMatrix,
+};
+use dedaliano_engine::solver::assembly::assemble_sparse_3d;
+use dedaliano_engine::solver::dof::DofNumbering;
+use dedaliano_engine::solver::mass_matrix::{
+    assemble_mass_matrix_2d, assemble_mass_matrix_2d_sparse,
+    assemble_mass_matrix_3d, assemble_mass_matrix_3d_sparse,
+};
+use dedaliano_engine::solver::{buckling, modal};
+use crate::common::*;
+
+const E: f64 = 200_000.0;
+const A: f64 = 0.01;
+const IY: f64 = 1e-4;
+const IZ: f64 = 1e-4;
+const J: f64 = 1.5e-4;
+const DENSITY: f64 = 7_850.0;
+
+fn make_densities() -> HashMap<String, f64> {
+    let mut d = HashMap::new();
+    d.insert("1".to_string(), DENSITY);
+    d
+}
+
+// ─── Helpers ────────────────────────────────────────────────
+
+/// Assert CSC (lower triangle) matches a dense row-major matrix entrywise.
+/// Values come from identical element routines; only summation order differs.
+fn assert_csc_matches_dense(csc: &CscMatrix, dense: &[f64], n: usize, label: &str) {
+    assert_eq!(csc.n, n, "{}: dimension mismatch", label);
+    let max_abs = dense.iter().fold(0.0f64, |a, &v| a.max(v.abs()));
+    assert!(max_abs > 0.0, "{}: dense matrix is all zeros", label);
+    let tol = max_abs * 1e-12;
+    let csc_dense = csc.to_dense_symmetric();
+    let mut max_diff = 0.0f64;
+    for i in 0..n * n {
+        max_diff = max_diff.max((csc_dense[i] - dense[i]).abs());
+    }
+    assert!(
+        max_diff <= tol,
+        "{}: max entry diff {:.3e} exceeds tol {:.3e} (matrix scale {:.3e})",
+        label, max_diff, tol, max_abs
+    );
+}
+
+/// Compare actual values against golden reference values (same length after
+/// filtering values ≤ `min_val` as near-zero noise modes), relative tolerance.
+fn assert_matches_golden(actual: &[f64], golden: &[f64], min_val: f64, rel_tol: f64, label: &str) {
+    let a: Vec<f64> = actual.iter().copied().filter(|&v| v > min_val).collect();
+    assert_eq!(
+        a.len(), golden.len(),
+        "{}: expected {} modes above {}, got {}",
+        label, golden.len(), min_val, a.len()
+    );
+    let mut worst = 0.0f64;
+    for i in 0..golden.len() {
+        let rel = (a[i] - golden[i]).abs() / golden[i].abs().max(1e-30);
+        worst = worst.max(rel);
+        assert!(
+            rel < rel_tol,
+            "{}: mode {} mismatch: new={:.12e}, golden={:.12e}, rel={:.2e}",
+            label, i, a[i], golden[i], rel
+        );
+    }
+    println!("{}: {} modes match golden, worst rel err = {:.2e}", label, golden.len(), worst);
+}
+
+/// 8×8 simply-supported MITC4 plate (same builder as sparse_shell_gates).
+fn make_ss_plate(nx: usize, ny: usize) -> SolverInput3D {
+    let lx = 10.0;
+    let ly = 10.0;
+    let t = 0.1;
+
+    let mut nodes = HashMap::new();
+    let mut grid = vec![vec![0usize; ny + 1]; nx + 1];
+    let mut nid = 1;
+    for i in 0..=nx {
+        for j in 0..=ny {
+            let x = (i as f64 / nx as f64) * lx;
+            let y = (j as f64 / ny as f64) * ly;
+            nodes.insert(nid.to_string(), SolverNode3D { id: nid, x, y, z: 0.0 });
+            grid[i][j] = nid;
+            nid += 1;
+        }
+    }
+
+    let mut quads = HashMap::new();
+    let mut qid = 1;
+    for i in 0..nx {
+        for j in 0..ny {
+            quads.insert(
+                qid.to_string(),
+                SolverQuadElement {
+                    id: qid,
+                    nodes: [grid[i][j], grid[i + 1][j], grid[i + 1][j + 1], grid[i][j + 1]],
+                    material_id: 1,
+                    thickness: t,
+                },
+            );
+            qid += 1;
+        }
+    }
+
+    let mut mats = HashMap::new();
+    mats.insert("1".to_string(), SolverMaterial { id: 1, e: E, nu: 0.3 });
+
+    let mut supports = HashMap::new();
+    let mut sid = 1;
+    let mut boundary = Vec::new();
+    for j in 0..=ny {
+        boundary.push(grid[0][j]);
+        boundary.push(grid[nx][j]);
+    }
+    for i in 0..=nx {
+        boundary.push(grid[i][0]);
+        boundary.push(grid[i][ny]);
+    }
+    boundary.sort();
+    boundary.dedup();
+    for &n in &boundary {
+        supports.insert(
+            sid.to_string(),
+            SolverSupport3D {
+                node_id: n,
+                rx: false, ry: false, rz: true,
+                rrx: false, rry: false, rrz: false,
+                kx: None, ky: None, kz: None,
+                krx: None, kry: None, krz: None,
+                dx: None, dy: None, dz: None,
+                drx: None, dry: None, drz: None,
+                normal_x: None, normal_y: None, normal_z: None,
+                is_inclined: None, rw: None, kw: None,
+            },
+        );
+        sid += 1;
+    }
+    supports.insert(
+        sid.to_string(),
+        SolverSupport3D {
+            node_id: grid[0][0],
+            rx: true, ry: true, rz: true,
+            rrx: false, rry: false, rrz: false,
+            kx: None, ky: None, kz: None,
+            krx: None, kry: None, krz: None,
+            dx: None, dy: None, dz: None,
+            drx: None, dry: None, drz: None,
+            normal_x: None, normal_y: None, normal_z: None,
+            is_inclined: None, rw: None, kw: None,
+        },
+    );
+
+    SolverInput3D {
+        nodes,
+        materials: mats,
+        sections: HashMap::new(),
+        elements: HashMap::new(),
+        supports,
+        loads: vec![],
+        constraints: vec![],
+        left_hand: None,
+        plates: HashMap::new(),
+        quads,
+        quad9s: HashMap::new(),
+        solid_shells: HashMap::new(),
+        curved_shells: HashMap::new(),
+        curved_beams: vec![],
+        connectors: HashMap::new(),
+    }
+}
+
+/// Braced 3D plane frame (columns along Z, beams along X) with the first
+/// beam's in-plane moment ends released — that element gets lumped
+/// (diagonal) mass while all others keep consistent mass.
+fn make_frame_with_released_beam(n_stories: usize, n_bays: usize) -> SolverInput3D {
+    let h = 3.0;
+    let w = 6.0;
+
+    let mut nodes = HashMap::new();
+    let mut node_id = 1;
+    for level in 0..=n_stories {
+        for col in 0..=n_bays {
+            nodes.insert(
+                node_id.to_string(),
+                SolverNode3D { id: node_id, x: col as f64 * w, y: 0.0, z: level as f64 * h },
+            );
+            node_id += 1;
+        }
+    }
+    let cols = n_bays + 1;
+
+    let mut elems = HashMap::new();
+    let mut eid = 1;
+    for level in 0..n_stories {
+        for col in 0..=n_bays {
+            let ni = level * cols + col + 1;
+            let nj = (level + 1) * cols + col + 1;
+            elems.insert(eid.to_string(), SolverElement3D {
+                id: eid, elem_type: "frame".to_string(), node_i: ni, node_j: nj,
+                material_id: 1, section_id: 1,
+                release_my_start: false, release_my_end: false,
+                release_mz_start: false, release_mz_end: false,
+                release_t_start: false, release_t_end: false,
+                local_yx: None, local_yy: None, local_yz: None, roll_angle: None,
+            });
+            eid += 1;
+        }
+    }
+    for level in 1..=n_stories {
+        for bay in 0..n_bays {
+            let ni = level * cols + bay + 1;
+            let nj = level * cols + bay + 2;
+            // First beam (level 1, bay 0): release mz at both ends → lumped mass.
+            let released = level == 1 && bay == 0;
+            elems.insert(eid.to_string(), SolverElement3D {
+                id: eid, elem_type: "frame".to_string(), node_i: ni, node_j: nj,
+                material_id: 1, section_id: 1,
+                release_my_start: false, release_my_end: false,
+                release_mz_start: released, release_mz_end: released,
+                release_t_start: false, release_t_end: false,
+                local_yx: None, local_yy: None, local_yz: None, roll_angle: None,
+            });
+            eid += 1;
+        }
+    }
+
+    let mut mats = HashMap::new();
+    mats.insert("1".to_string(), SolverMaterial { id: 1, e: E, nu: 0.3 });
+    let mut secs = HashMap::new();
+    secs.insert("1".to_string(), SolverSection3D {
+        id: 1, name: None, a: A, iy: IY, iz: IZ, j: J, cw: None, as_y: None, as_z: None,
+    });
+
+    let mut sups = HashMap::new();
+    for col in 0..=n_bays {
+        let nid = col + 1;
+        sups.insert(nid.to_string(), SolverSupport3D {
+            node_id: nid,
+            rx: true, ry: true, rz: true, rrx: true, rry: true, rrz: true,
+            kx: None, ky: None, kz: None, krx: None, kry: None, krz: None,
+            dx: None, dy: None, dz: None, drx: None, dry: None, drz: None,
+            normal_x: None, normal_y: None, normal_z: None,
+            is_inclined: None, rw: None, kw: None,
+        });
+    }
+
+    SolverInput3D {
+        nodes, materials: mats, sections: secs, elements: elems,
+        supports: sups, loads: vec![], constraints: vec![], left_hand: None,
+        plates: HashMap::new(), quads: HashMap::new(), quad9s: HashMap::new(),
+        solid_shells: HashMap::new(), curved_shells: HashMap::new(),
+        curved_beams: vec![], connectors: HashMap::new(),
+    }
+}
+
+// ─── 1. Mass assembly parity ────────────────────────────────
+
+#[test]
+fn mass_assembly_2d_sparse_matches_dense() {
+    // Frame element with a hinge (lumped mass) + truss element.
+    let nodes = vec![(1, 0.0, 0.0), (2, 5.0, 0.0), (3, 10.0, 0.0)];
+    let elems = vec![
+        (1, "frame", 1, 2, 1, 1, true, false),
+        (2, "truss", 2, 3, 1, 1, false, false),
+    ];
+    let sups = vec![(1, 1, "fixed")];
+    let input = make_input(nodes, vec![(1, E, 0.3)], vec![(1, A, IZ)], elems, sups, vec![]);
+    let densities = make_densities();
+
+    let dof_num = DofNumbering::build_2d(&input);
+    let nf = dof_num.n_free;
+    let n = dof_num.n_total;
+
+    let m_dense_full = assemble_mass_matrix_2d(&input, &dof_num, &densities);
+    let free_idx: Vec<usize> = (0..nf).collect();
+    let m_dense_ff = extract_submatrix(&m_dense_full, n, &free_idx, &free_idx);
+
+    let m_sparse_ff = assemble_mass_matrix_2d_sparse(&input, &dof_num, &densities);
+    assert_csc_matches_dense(&m_sparse_ff, &m_dense_ff, nf, "2D mass assembly");
+}
+
+#[test]
+fn mass_assembly_3d_sparse_matches_dense_frame() {
+    // Braced frame with a moment-released beam (consistent + lumped mass).
+    let input = make_frame_with_released_beam(3, 2);
+    let densities = make_densities();
+
+    let dof_num = DofNumbering::build_3d(&input);
+    let nf = dof_num.n_free;
+    let n = dof_num.n_total;
+
+    let m_dense_full = assemble_mass_matrix_3d(&input, &dof_num, &densities);
+    let free_idx: Vec<usize> = (0..nf).collect();
+    let m_dense_ff = extract_submatrix(&m_dense_full, n, &free_idx, &free_idx);
+
+    let m_sparse_ff = assemble_mass_matrix_3d_sparse(&input, &dof_num, &densities);
+    assert_csc_matches_dense(&m_sparse_ff, &m_dense_ff, nf, "3D frame mass assembly");
+}
+
+#[test]
+fn mass_assembly_3d_sparse_matches_dense_shell() {
+    let input = make_ss_plate(4, 4);
+    let densities = make_densities();
+
+    let dof_num = DofNumbering::build_3d(&input);
+    let nf = dof_num.n_free;
+    let n = dof_num.n_total;
+
+    let m_dense_full = assemble_mass_matrix_3d(&input, &dof_num, &densities);
+    let free_idx: Vec<usize> = (0..nf).collect();
+    let m_dense_ff = extract_submatrix(&m_dense_full, n, &free_idx, &free_idx);
+
+    let m_sparse_ff = assemble_mass_matrix_3d_sparse(&input, &dof_num, &densities);
+    assert_csc_matches_dense(&m_sparse_ff, &m_dense_ff, nf, "3D shell mass assembly");
+}
+
+// ─── 2. Modal eigenvalue parity (golden: pre-refactor sparse Lanczos) ───
+
+/// ω² eigenvalues from the pre-refactor (dense-mass) sparse Lanczos on the
+/// 10×4 frame with one released beam (nf=300, k=6).
+/// NOT captured from this code. Every figure was cross-checked against
+/// `solve_generalized_eigen` — the dense Jacobi path, a different algorithm — and
+/// agrees to between 1e-11 and 1e-14 relative. The previous values came from the
+/// Lanczos path itself, which is how they survived that path running the wrong
+/// recurrence: the golden and the code under test were the same witness.
+const GOLDEN_MODAL_FRAME_LAMBDA: [f64; 6] = [
+    1.323697967944161e0,
+    1.121015225667410e1,
+    5.155242169670144e1,
+    1.029308659072602e2,
+    1.413554081559152e2,
+    2.221326609874946e2,
+];
+
+/// ω values from pre-refactor `solve_modal_3d` on the same model.
+const GOLDEN_MODAL_FRAME_OMEGA: [f64; 6] = [
+    1.150520737728860e0,
+    3.348156546022617e0,
+    7.180001510912198e0,
+    1.014548500108596e1,
+    1.188929805143749e1,
+    1.490411557213291e1,
+];
+
+/// ω² eigenvalues from the pre-refactor sparse Lanczos on the 8×8 plate
+/// (first near-zero noise mode excluded by the λ > 1 filter).
+/// Recaptured after the quotient-graph AMD rewrite (`perf/amd-quotient-graph`):
+/// the new elimination order changes floating-point rounding in the K
+/// factorization, shifting modes by ~1e-9..1e-8 relative. The recaptured
+/// values are as close or closer to the fully-dense generalized Lanczos path
+/// (cross-checked at capture time, worst rel diff 5.2e-8 on the degenerate
+/// plate modes, ≤ 3e-9 on the rest) than the previous goldens were.
+/// Recaptured again after the supernodal numeric factorization: the panel
+/// factorization changes summation order vs the simplicial code (~1e-9..1e-8
+/// relative on λ). Cross-checked against the dense path at capture time
+/// (worst rel diff 1.1e-8; the dense cross-check below pins this at 1e-6).
+const GOLDEN_MODAL_SHELL_LAMBDA: [f64; 5] = [
+    9.395776201211125e2,
+    6.439919269545047e3,
+    6.439919377132709e3,
+    1.666449276704999e4,
+    3.138785841334025e4,
+];
+
+#[test]
+fn modal_3d_sparse_mass_parity_frame() {
+    // nf = 300 > 80 → exercises the sparse Lanczos path.
+    let input = make_frame_with_released_beam(10, 4);
+    let densities = make_densities();
+    let dof_num = DofNumbering::build_3d(&input);
+    let nf = dof_num.n_free;
+    let n = dof_num.n_total;
+
+    let sasm = assemble_sparse_3d(&input, &dof_num, false);
+    let m_csc = assemble_mass_matrix_3d_sparse(&input, &dof_num, &densities);
+    let sparse_eigen = lanczos_generalized_eigen_sparse(&sasm.k_ff, &m_csc, 6, 0.0)
+        .expect("sparse-mass Lanczos failed");
+
+    // Golden parity vs pre-refactor dense-mass sparse Lanczos (1e-10).
+    assert_matches_golden(&sparse_eigen.values, &GOLDEN_MODAL_FRAME_LAMBDA, 1e-10, 1e-10,
+        "modal frame golden");
+
+    // Cross-method sanity vs fully-dense generalized Lanczos (1e-8).
+    let k_dense = sasm.k_ff.to_dense_symmetric();
+    let m_full = assemble_mass_matrix_3d(&input, &dof_num, &densities);
+    let free_idx: Vec<usize> = (0..nf).collect();
+    let m_dense = extract_submatrix(&m_full, n, &free_idx, &free_idx);
+    let dense_eigen = lanczos_generalized_eigen(&k_dense, &m_dense, nf, 6, 0.0)
+        .expect("dense generalized Lanczos failed");
+    for i in 0..6 {
+        let rel = (sparse_eigen.values[i] - dense_eigen.values[i]).abs()
+            / dense_eigen.values[i].abs().max(1e-30);
+        assert!(
+            rel < 1e-8,
+            "modal frame cross-method mode {}: sparse={:.12e}, dense={:.12e}, rel={:.2e}",
+            i, sparse_eigen.values[i], dense_eigen.values[i], rel
+        );
+    }
+}
+
+#[test]
+fn modal_3d_sparse_mass_parity_shell() {
+    // nf ≈ 450 → sparse Lanczos path. The plate has near-zero noise modes
+    // (drilling DOFs) — filtered by λ > 1.
+    let input = make_ss_plate(8, 8);
+    let densities = make_densities();
+    let dof_num = DofNumbering::build_3d(&input);
+
+    let sasm = assemble_sparse_3d(&input, &dof_num, false);
+    let m_csc = assemble_mass_matrix_3d_sparse(&input, &dof_num, &densities);
+    let sparse_eigen = lanczos_generalized_eigen_sparse(&sasm.k_ff, &m_csc, 6, 0.0)
+        .expect("sparse-mass Lanczos failed");
+
+    assert_matches_golden(&sparse_eigen.values, &GOLDEN_MODAL_SHELL_LAMBDA, 1.0, 1e-10,
+        "modal shell golden");
+
+    // Cross-method sanity vs fully-dense generalized Lanczos (same check as
+    // the frame parity test above). Tolerance is looser than the frame case:
+    // the plate has degenerate modes whose λ splits at the 1e-8 level under
+    // FP reassociation, so 1e-6 is the meaningful cross-method bound here.
+    let k_dense = sasm.k_ff.to_dense_symmetric();
+    let m_full = assemble_mass_matrix_3d(&input, &dof_num, &densities);
+    let nf = dof_num.n_free;
+    let free_idx: Vec<usize> = (0..nf).collect();
+    let m_dense = extract_submatrix(&m_full, dof_num.n_total, &free_idx, &free_idx);
+    let dense_eigen = lanczos_generalized_eigen(&k_dense, &m_dense, nf, 6, 0.0)
+        .expect("dense generalized Lanczos failed");
+    let sp: Vec<f64> = sparse_eigen.values.iter().copied().filter(|&v| v > 1.0).collect();
+    let dn: Vec<f64> = dense_eigen.values.iter().copied().filter(|&v| v > 1.0).collect();
+    assert_eq!(sp.len(), dn.len(), "sparse and dense mode counts differ");
+    for i in 0..sp.len() {
+        let rel = (sp[i] - dn[i]).abs() / dn[i].abs().max(1e-30);
+        assert!(
+            rel < 1e-6,
+            "modal shell cross-method mode {}: sparse={:.12e}, dense={:.12e}, rel={:.2e}",
+            i, sp[i], dn[i], rel
+        );
+    }
+}
+
+/// End-to-end: solve_modal_3d (sparse-mass path) frequencies vs golden
+/// pre-refactor output, plus participation-factor sanity.
+#[test]
+fn modal_3d_solve_frequencies_parity() {
+    let input = make_frame_with_released_beam(10, 4);
+    let densities = make_densities();
+
+    let result = modal::solve_modal_3d(&input, &densities, 6).unwrap();
+    let omegas: Vec<f64> = result.modes.iter().map(|m| m.omega).collect();
+    assert_matches_golden(&omegas, &GOLDEN_MODAL_FRAME_OMEGA, 0.0, 1e-10,
+        "solve_modal_3d golden");
+
+    // Participation/effective masses still computed (finite, non-trivial).
+    assert!(result.total_mass > 0.0);
+    for m in &result.modes {
+        assert!(m.effective_mass_x.is_finite() && m.effective_mass_z.is_finite());
+        assert!(m.participation_x.is_finite() && m.participation_z.is_finite());
+    }
+}
+
+// ─── 3. Buckling load-factor parity (golden: pre-refactor) ──
+
+/// Load factors from pre-refactor `solve_buckling_2d` on the pinned–rollerX
+/// column (n_elem=80 → nf=240 > 200 → sparse op path).
+const GOLDEN_BUCKLING_2D: [f64; 4] = [
+    7.895683546204496e1,
+    3.158273575195962e2,
+    7.106117068590928e2,
+    1.263310430171691e3,
+];
+
+/// Load factors from pre-refactor `solve_buckling_3d` on the 3D cantilever
+/// column with Iy=2e-4, Iz=1e-4 (n_elem=60 → nf=354 → sparse op path).
+const GOLDEN_BUCKLING_3D: [f64; 4] = [
+    // π²/2, π², 9π²/2, 9π² — the analytical Euler cantilever, in the 2:1 ratio
+    // the two bending axes require and the 1:9 ratio the first two modes of each
+    // axis require. The pre-refactor values were not a clean multiple of
+    // anything, which is what a wrong recurrence looks like from the outside.
+    //
+    // Recaptured twice since. First after the quotient-graph AMD rewrite, whose
+    // new elimination order moved them ~1e-10. Then after the Lanczos recurrence
+    // moved its inner product from -Kg to K: the basis is different, so the
+    // floating-point path is different, and mode 0 moved 2.4e-10.
+    //
+    // That second recapture cost a little accuracy rather than gaining it —
+    // modes 0 and 1 sit 1.98e-10 and 3.46e-10 from the closed form, against
+    // 4.2e-11 and 3.4e-11 before. Worth stating plainly: the K inner product is
+    // not here to sharpen these four numbers, it is here to keep the iteration
+    // on the sparse path (see `buckling_lanczos_stays_sparse_when_kg_is_indefinite`),
+    // and a shift ten orders below any engineering tolerance is what it costs.
+    //
+    // Modes 2 and 3 sit 5.3e-8 from the closed form. That is discretization —
+    // 60 elements resolving the second buckling mode — not the solver, and it
+    // was equally present in the previous golden.
+    //
+    // The 1e-10 gate is a change-detector on an iterative eigensolver, not an
+    // accuracy claim. It fires on any reordering of floating-point work, which
+    // is precisely its job; when it fires, check against the closed form above
+    // before recapturing.
+    4.934802201521506e0,
+    9.869604397670097e0,
+    4.441322215148967e1,
+    8.882644430636768e1,
+];
+
+#[test]
+fn buckling_2d_sparse_op_parity() {
+    let n_elem = 80;
+    let p = 100.0;
+    let input = make_column(n_elem, 5.0, E, A, IZ, "pinned", "rollerX", -p);
+
+    let result = buckling::solve_buckling_2d(&input, 4).unwrap();
+    let actual: Vec<f64> = result.modes.iter().map(|m| m.load_factor).collect();
+    assert_matches_golden(&actual, &GOLDEN_BUCKLING_2D, 0.0, 1e-10, "buckling 2D golden");
+}
+
+#[test]
+fn buckling_3d_sparse_op_parity() {
+    // Non-degenerate section (Iy != Iz) so the first modes are separated.
+    let n_elem = 60;
+    let p = 100.0;
+    let loads = vec![SolverLoad3D::Nodal(SolverNodalLoad3D {
+        node_id: n_elem + 1,
+        fx: -p, fy: 0.0, fz: 0.0,
+        mx: 0.0, my: 0.0, mz: 0.0, bw: None,
+    })];
+    let input = make_3d_beam(n_elem, 10.0, E, 0.3, A, 2e-4, IZ, J, vec![true; 6], None, loads);
+
+    let result = buckling::solve_buckling_3d(&input, 4).unwrap();
+    let actual: Vec<f64> = result.modes.iter().map(|m| m.load_factor).collect();
+    assert_matches_golden(&actual, &GOLDEN_BUCKLING_3D, 0.0, 1e-10, "buckling 3D golden");
+
+    // The golden pins the exact floating-point path; the closed form pins the
+    // answer. Keep both: when a recurrence or ordering change trips the golden,
+    // this is what says whether the new numbers are still right.
+    let pi2 = std::f64::consts::PI * std::f64::consts::PI;
+    for (i, &exact) in [pi2 / 2.0, pi2, 9.0 * pi2 / 2.0, 9.0 * pi2].iter().enumerate() {
+        let rel = (actual[i] - exact).abs() / exact;
+        // 1e-6 covers the 5.3e-8 discretization error on modes 2 and 3 with room
+        // to spare, and is still ~4 orders tighter than any wrong recurrence.
+        assert!(
+            rel < 1e-6,
+            "buckling 3D mode {i} = {:.12e} is {:.2e} from the analytical Euler \
+             cantilever {:.12e}: the eigenvalues are no longer physical",
+            actual[i], rel, exact,
+        );
+    }
+}
+
+/// 3D buckling must survive a section that declares warping constants.
+///
+/// `DofNumbering::build_3d` numbers SEVEN DOFs per node as soon as any section
+/// sets `cw`, so `element_dofs` returns 14 entries instead of 12.
+/// `build_kg_from_forces_3d` builds a 12x12 `kg_global` and used that 14 as its
+/// stride: `kg_global[10 * 14 + 4]` is 144, one past the end of a 144-element
+/// array. `add_geometric_stiffness_3d`, in the same file, remaps through
+/// `DOF_MAP_12_TO_14` for exactly this reason; the buckling path did not.
+///
+/// Natively that is a clean index panic. In the shipped wasm32 build it is an
+/// abort that crosses the FFI boundary — the module traps and the caller gets
+/// no solver error to report, just a dead engine.
+///
+/// No test in the suite combined a warping section with 3D buckling, which is
+/// why it shipped. This is that test: it is a crash gate, so it asserts the
+/// call returns at all, plus enough physics to catch a silently wrong remap.
+#[test]
+fn buckling_3d_survives_warping_dofs() {
+    let n_elem = 20;
+    let p = 100.0;
+    let loads = vec![SolverLoad3D::Nodal(SolverNodalLoad3D {
+        node_id: n_elem + 1,
+        fx: -p, fy: 0.0, fz: 0.0,
+        mx: 0.0, my: 0.0, mz: 0.0, bw: None,
+    })];
+    let mut input = make_3d_beam(
+        n_elem, 10.0, E, 0.3, A, 2e-4, IZ, J, vec![true; 6], None, loads,
+    );
+
+    // The trigger: one section with `cw` set widens every node to 7 DOFs.
+    for s in input.sections.values_mut() {
+        s.cw = Some(2.03e-6);
+    }
+    assert_eq!(
+        DofNumbering::build_3d(&input).dofs_per_node, 7,
+        "fixture must produce 7 DOFs per node, or it does not exercise the remap \
+         and this test proves nothing",
+    );
+
+    let result = buckling::solve_buckling_3d(&input, 2)
+        .expect("3D buckling on a warping section must not fail");
+
+    // The warping DOF is uncoupled from flexural buckling in this cantilever, so
+    // the governing mode is still the Euler value the same beam gives without
+    // `cw`. A remap that lands Kg entries on the wrong DOFs would still return
+    // *something*; this is what says the entries went where they belong.
+    let pi2 = std::f64::consts::PI * std::f64::consts::PI;
+    let rel = (result.modes[0].load_factor - pi2 / 2.0).abs() / (pi2 / 2.0);
+    assert!(
+        rel < 1e-4,
+        "governing load factor {:.9e} is {:.2e} from the analytical π²/2 = {:.9e}: \
+         the warping remap put Kg entries on the wrong DOFs",
+        result.modes[0].load_factor, rel, pi2 / 2.0,
+    );
+}
+
+/// The generalized eigenpath must return actual EIGENVECTORS.
+///
+/// Every other gate on this path compares one Lanczos implementation against
+/// another, or against golden values captured from the same code, so all of them
+/// agree on a wrong answer. This one is reference-free: for a true eigenpair,
+/// `‖Kφ − λMφ‖ / ‖Kφ‖` is zero to round-off, and no second solver is needed to
+/// say so. The dense path is checked alongside as the control — if the sparse
+/// number is bad and the dense one is not, the measurement is not the suspect.
+#[test]
+fn generalized_eigenpairs_satisfy_their_own_equation() {
+    use dedaliano_engine::linalg::solve_generalized_eigen;
+
+    let input = make_frame_with_released_beam(10, 4);   // nf = 300 > 80 → sparse Lanczos
+    let densities = make_densities();
+    let dof_num = DofNumbering::build_3d(&input);
+    let nf = dof_num.n_free;
+    let n = dof_num.n_total;
+    let sasm = assemble_sparse_3d(&input, &dof_num, false);
+    let m_csc = assemble_mass_matrix_3d_sparse(&input, &dof_num, &densities);
+
+    /// ‖Kφ − λMφ‖ / ‖Kφ‖ for one pair.
+    let residual = |lam: f64, phi: &[f64]| -> f64 {
+        let kp = sasm.k_ff.sym_mat_vec(phi);
+        let mp = m_csc.sym_mat_vec(phi);
+        let mut num = 0.0f64;
+        let mut den = 0.0f64;
+        for r in 0..nf {
+            let d = kp[r] - lam * mp[r];
+            num += d * d;
+            den += kp[r] * kp[r];
+        }
+        num.sqrt() / den.sqrt().max(1e-300)
+    };
+
+    let sparse = lanczos_generalized_eigen_sparse(&sasm.k_ff, &m_csc, 6, 0.0)
+        .expect("sparse generalized Lanczos");
+    let nk = sparse.values.len();
+    for i in 0..6 {
+        let phi: Vec<f64> = (0..nf).map(|r| sparse.vectors[r * nk + i]).collect();
+        let res = residual(sparse.values[i], &phi);
+        assert!(
+            res < 1e-6,
+            "sparse mode {i}: lambda={:.10e} has residual {res:.3e} — not an eigenvector",
+            sparse.values[i]
+        );
+    }
+
+    // Control: the same formula on the dense solver, which must pass comfortably.
+    let k_dense = sasm.k_ff.to_dense_symmetric();
+    let m_full = assemble_mass_matrix_3d(&input, &dof_num, &densities);
+    let free_idx: Vec<usize> = (0..nf).collect();
+    let m_dense = extract_submatrix(&m_full, n, &free_idx, &free_idx);
+    let dense = solve_generalized_eigen(&k_dense, &m_dense, nf, 200).expect("dense generalized");
+    let dk = dense.values.len();
+    for i in 0..6 {
+        let phi: Vec<f64> = (0..nf).map(|r| dense.vectors[r * dk + i]).collect();
+        let res = residual(dense.values[i], &phi);
+        assert!(res < 1e-6, "dense control mode {i}: residual {res:.3e}");
+    }
+}

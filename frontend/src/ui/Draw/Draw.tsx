@@ -1,368 +1,135 @@
-import React, { useState, useEffect, ChangeEvent } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  IconButton,
-  FormControlLabel,
-  Checkbox,
-  Switch,
   Button,
-  Grid
 } from '@mui/material';
-
-import {
-  Delete,
-  Save,
-} from '@mui/icons-material';
 
 import { useModel } from '../../model/Context';
 import { colors, fontFamily } from '../../theme';
-import Dialog from '../../components/Dialog/Dialog';
 import Select from '../../components/Select';
-import ElasticBeamColumnMember from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn'
 import { observer } from 'mobx-react-lite';
-import * as THREE from 'three'
-import Node from '../../model/Elements/Node/Node';
 import { Line } from '../../model';
-import TextField from '../../components/TextField';
-interface ElasticBeamColumnProps {
-  open: boolean;
-  onClose: () => void;
-  selectedElasticBeamColumn?: any;
-  freeMode?: boolean;
-}
+import PropertyRow from '../Model/PropertyRow';
 
-const CreateMember = ({ open, onClose, selectedElasticBeamColumn, freeMode }: ElasticBeamColumnProps) => {
+/**
+ * Member drawing tool, docked into the right panel (replaces the old floating
+ * dialog). While this panel is mounted the user is in "draw mode": they pick a
+ * section and press Start, then click on the viewport to chain members. Pressing
+ * the panel's close button (handled by RightPanel) or Escape stops the Line tool.
+ */
+const DrawPanel = observer(() => {
   const model = useModel();
-  const [sections, setSections] = useState(model?.sections)
-  const [orthoMode, setOrthoMode] = useState(false)
+  const [sections, setSections] = useState(model?.sections);
   const [selectedSection, setSelectedSection] = useState<number>(0);
-  const [nodes, setNodes] = useState<Node[]>([])
-  const [nodei, setNodei] = useState<number | null>(null)
-  const [nodej, setNodej] = useState<number | null>(null)
-  const [gamma, setGamma] = useState<number>(0)
 
-  const [name, setName] = useState<string>('')
+  const lineTool = Line.getInstance();
 
-  useEffect( () => {
-    if(!model) return 
-
-    const modelSections = model.sections
-    const modelNodes = model.nodes
-    const lineTool = Line.getInstance()
-    setSections(modelSections)
-    setNodes(modelNodes)
-    setOrthoMode(lineTool.onOrthoMode)
-
-    if(modelSections.length > 0 ) setSelectedSection(modelSections[0].id)
-
-    // Don't auto-start, user will click "Start" button
-    // if(freeMode) startFreeMode()
-
-  }, [open])
-
+  // Stop the line tool when the draw panel is closed/unmounted, so a dangling
+  // preview stroke is never left on the viewport.
   useEffect(() => {
-    if(!selectedElasticBeamColumn) return 
+    return () => {
+      lineTool.stop();
+      lineTool.delete();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    const sectionId = selectedElasticBeamColumn.section.id
-    const section = model.sections.find((sec: any) => sec.id === sectionId)
-    const nodes = selectedElasticBeamColumn.nodes
-    const iNode = nodes[0]
-    const jNode = nodes[1]
-    const label = selectedElasticBeamColumn.label
-    const gamma = selectedElasticBeamColumn.gamma
-    if(section) setSelectedSection(section.id)
-    setNodei(iNode.id)
-    setNodej(jNode.id)
-    setName(label)
-    setGamma(gamma)
-
-  },[selectedElasticBeamColumn])
-
-  // useEffect(() => {
-  //   if(model?.lineTool.state === 0) onClose()
-  // },[model?.lineTool.state])
-
-  const handleChangeName = (e: ChangeEvent<HTMLInputElement>) => {
-    setName(e.target.value)
-  }
+  // Re-sync section list + default selection whenever the panel stays mounted
+  // across section edits.
+  useEffect(() => {
+    if (!model) return;
+    setSections(model.sections);
+    if (model.sections.length > 0) {
+      const current = model.sections.some((s) => s.id === selectedSection) ? selectedSection : model.sections[0].id;
+      setSelectedSection(current);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model?.sections]);
 
   const startFreeMode = () => {
-    if (!model || !open) return;
-
-    const lineTool = Line.getInstance()
+    if (!model) return;
     lineTool.start();
-    lineTool.setType('elasticBeamColumn')
-    const section = model.sections.find((sec: any) => sec.id === selectedSection)
-    if(!section) return
-
-    lineTool.section = section
-    setOrthoMode(lineTool.onOrthoMode)
-
+    lineTool.setType('elasticBeamColumn');
+    const section = model.sections.find((sec: any) => sec.id === selectedSection);
+    if (!section) return;
+    lineTool.section = section;
   };
 
-  const disableFreeMode = () => {
-    const lineTool = Line.getInstance()
-    lineTool.stop()
-    lineTool.delete()
-  }
+  const stopFreeMode = () => {
+    lineTool.stop();
+    lineTool.delete();
+  };
 
-  const handleDelete = () => {
-  }
+  const handleSection = (value: number) => {
+    setSelectedSection(value);
+    lineTool.setSection(value);
+  };
 
-  const createOrUpdate = () => {
-    const iNode = model.nodes.find((node: any) => node.id === nodei )
-    const jNode = model.nodes.find((node: any) => node.id === nodej )
-    const section = model.sections.find((sec: any) => sec.id === selectedSection)
+  const drawing = lineTool.state !== 0;
 
-    if(!iNode || !jNode || !section) return 
-    const nodes = [iNode, jNode]
-    if(selectedElasticBeamColumn){
-      const memberId = selectedElasticBeamColumn.id
-      const member = model.members.find((elt: any) => elt.id === memberId)
-
-      if(!member) return
-
-      const {release} = member
-      member.update(nodes, section, gamma, name, release)
-    }else{
-      const newMember = new ElasticBeamColumnMember(model, name ,  nodes, section)
-      newMember.create()
-    }
-  }
-
-  const handleChangeSnap = (e: ChangeEvent<HTMLInputElement>) => {
-    const {name} = e.target
-
-    switch (name) {
-      case 'onNode':
-        model.snapper.toggleOnNode()
-        break;
-      case 'onGrid':
-        model.snapper.toggleOnGrid()
-        break;
-      default:
-        break;
-    }
-  }
-
-  const handleChangeOrthoMode = (e: ChangeEvent<HTMLInputElement>) => {
-    const lineTool = Line.getInstance()
-    setOrthoMode(e.target.checked)
-    lineTool.toogleOrthomode()
-  }
-
-  const handleSection = (e: ChangeEvent<HTMLInputElement>) => {
-    const lineTool = Line.getInstance()
-    const sectionId = Number(e.target.value)
-    setSelectedSection(sectionId)
-    lineTool.setSection(sectionId)
-  }
-
-  const getToolState = () => {
-    if(!model) return
-
-    const line = Line.getInstance()
-    return line.state
-  }
-
-  // Section options
-  const sectionOptions = sections?.map((sec: any) => ({
+  const sectionOptions = (sections || []).map((sec: any) => ({
     id: sec.id,
-    name: sec.name || `Section ${sec.id}`
-  })) || [];
-
-  // Node options
-  const nodeOptions = nodes?.map((node: any) => ({
-    id: node.id,
-    name: node.name || `Node ${node.id}`
-  })) || [];
+    name: sec.name || `Section ${sec.id}`,
+  }));
 
   return (
-    <Dialog
-      open={open}
-      onClose={() => {
-        disableFreeMode()
-        onClose()
-        setName('')
-      }}
-      maxWidth="sm"
-      fullWidth={false}
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
-      draggable
-      title={'New member'}
-    >
-        <Grid container spacing={2} alignItems="center" justifyContent="space-between" sx={{ mt: 1 }}>
-          <Grid item xs={4} md={4}>
-            <Typography
-              variant="body2"
-              sx={{
-                fontWeight: 500,
-                color: colors.textDim,
-                fontSize: '0.8rem',
-                fontFamily
-              }}
-            >
-              Section
-            </Typography>
-          </Grid>
-          <Grid item xs={8} md={8}>
-            <Select
-              label={''}
-              list={sectionOptions}
-              value={selectedSection}
-              onChange={(e:any) => handleSection(e as any)}
-              size="small"
-            />
-          </Grid>
-        </Grid>
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.6, borderRadius: '4px', border: `1px solid ${colors.border}`, backgroundColor: 'rgba(0,0,0,0.12)' }}>
+        <Typography sx={{ fontSize: '0.68rem', color: colors.textFaint, flexShrink: 0 }}>Plane:</Typography>
+        <Typography sx={{ fontSize: '0.72rem', color: colors.accentSoft, fontWeight: 600, fontFamily: '"Consolas", "Roboto Mono", ui-monospace, monospace' }}>
+          {model?.workingPlane?.label ?? '—'}
+        </Typography>
+      </Box>
 
-        {freeMode && (
-          <>
-            <Grid container spacing={2} alignItems="center" justifyContent="space-between">
+      <PropertyRow label="Section">
+        <Select
+          label={''}
+          list={sectionOptions}
+          value={selectedSection}
+          onChange={(e: any) => handleSection(Number(e.target.value))}
+          size="small"
+        />
+      </PropertyRow>
 
-            </Grid>
+      <Typography
+        variant="body2"
+        sx={{
+          fontWeight: 400,
+          color: colors.textDim,
+          fontSize: '0.72rem',
+          fontFamily,
+          lineHeight: 1.5,
+          mt: 0.25,
+        }}
+      >
+        {drawing
+          ? 'Click the viewport to place members. Right-click or Esc to stop the current stroke.'
+          : 'Pick a section and press Start, then click in the viewport to draw members.'}
+      </Typography>
 
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 3 }}>
-              <Button
-                onClick={startFreeMode}
-                variant="outlined"
-                size="small"
-                sx={{
-                  backgroundColor: getToolState() !== 0 ? colors.success : colors.hover,
-                  color: 'white',
-                  borderColor: getToolState() !== 0 ? colors.success : colors.border,
-                  minWidth: '60px',
-                  height: '28px',
-                  fontSize: '0.75rem',
-                  padding: '4px 12px',
-                  '&:hover': {
-                    backgroundColor: getToolState() !== 0 ? colors.success : colors.hover,
-                    borderColor: getToolState() !== 0 ? colors.success : colors.borderDark,
-                    color: colors.text,
-                  },
-                }}
-              >
-                Start
-              </Button>
-            </Box>
-          </>
-        )}
-        { !freeMode && (
-          <>
-            <Grid container spacing={2} alignItems="center" justifyContent="space-between" sx={{ mt: 1 }}>
-              <Grid item xs={6} md={6}>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    fontWeight: 500,
-                    color: colors.textDim,
-                    fontSize: '0.8rem',
-                    fontFamily
-                  }}
-                >
-                  Node i
-                </Typography>
-              </Grid>
-              <Grid item xs={6} md={6}>
-                <Select
-                  label={''}
-                  list={nodeOptions}
-                  value={nodei || ''}
-                  onChange={(e:any) => setNodei(Number(e.target.value))}
-                  size="small"
-                />
-              </Grid>
-            </Grid>
-
-            <Grid container spacing={2} alignItems="center" justifyContent="space-between" sx={{ mt: 1 }}>
-              <Grid item xs={6} md={6}>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    fontWeight: 500,
-                    color: colors.textDim,
-                    fontSize: '0.8rem',
-                    fontFamily
-                  }}
-                >
-                  Node j
-                </Typography>
-              </Grid>
-              <Grid item xs={6} md={6}>
-                <Select
-                  label={''}
-                  list={nodeOptions}
-                  value={nodej || ''}
-                  onChange={(e:any) => setNodej(Number(e.target.value))}
-                  size="small"
-                />
-              </Grid>
-            </Grid>
-
-            <Grid container spacing={2} alignItems="center" justifyContent="space-between" sx={{ mt: 1 }}>
-              <Grid item xs={6} md={6}>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    fontWeight: 500,
-                    color: colors.textDim,
-                    fontSize: '0.8rem',
-                    fontFamily
-                  }}
-                >
-                  Gamma (°)
-                </Typography>
-              </Grid>
-              <Grid item xs={6} md={6}>
-                <TextField
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setGamma(Number(e.target.value))}
-                  value={gamma}
-                  name="gamma"
-                  placeholder=""
-                  type="number"
-                  size="small"
-                  fullWidth
-                />
-              </Grid>
-            </Grid>
-
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2 }}>
-              <IconButton
-                onClick={handleDelete}
-                size="small"
-                sx={{
-                  color: colors.textDim,
-                  '&:hover': {
-                    color: colors.danger,
-                    backgroundColor: colors.hover
-                  }
-                }}
-              >
-                <Delete fontSize="small" />
-              </IconButton>
-
-              <IconButton
-                onClick={createOrUpdate}
-                size="small"
-                sx={{
-                  color: colors.textDim,
-                  '&:hover': {
-                    color: colors.text,
-                    backgroundColor: colors.hover
-                  }
-                }}
-              >
-                <Save fontSize="small" />
-              </IconButton>
-            </Box>
-          </>
-        )}
-
-    </Dialog>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1.5 }}>
+        <Button
+          onClick={drawing ? stopFreeMode : startFreeMode}
+          variant="contained"
+          size="small"
+          disableElevation
+          sx={{
+            minWidth: '64px',
+            height: '28px',
+            fontSize: '0.75rem',
+            px: 1.5,
+            backgroundColor: drawing ? colors.success : colors.accent,
+            '&:hover': {
+              backgroundColor: drawing ? colors.success : colors.accentHover,
+            },
+          }}
+        >
+          {drawing ? 'Stop' : 'Start'}
+        </Button>
+      </Box>
+    </Box>
   );
-};
+});
 
-export default observer(CreateMember);
+export default DrawPanel;

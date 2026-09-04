@@ -1,4 +1,4 @@
-import { ReactNode, useState, useEffect } from 'react';
+import { ReactNode, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { Box } from '@mui/material';
 import { colors } from '../../theme';
@@ -6,8 +6,8 @@ import { useModel } from '../../model/Context';
 import TopBar from './TopBar';
 import LeftBar from './LeftBar';
 import RightPanel from './RightPanel';
-import ResultPanel from '../Results/ResultPanel';
 import BottomBar from '../BottomBar';
+import Legend from '../Results/Components/Legend/Legend';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
 
@@ -59,17 +59,16 @@ const Layout = observer(({ children }: LayoutProps) => {
         >
           {children}
 
-          {/* Results dock panel (Reactions / Forces / Deformation tabs) */}
-          {(model?.activeDialog === 'results' || model?.activeDialog === 'reactions') && (
-            <ResultPanel onClose={() => model.closeDialog()} />
-          )}
-
           {/* Floating centered bottom toolbar (Zoom / Pan / Orbit / Select) */}
           <BottomBar />
+
+          {/* Contour legend floating over the viewer — colour bar + min/max and
+              the members that carry them (display-only, no pointer events) */}
+          <Legend />
         </Box>
 
-        {/* Right dock panel — inline property editing for the focused entity */}
-        {(model?.selectedMemberId != null || model?.selectedNodeId != null) && <RightPanel />}
+        {/* Right dock panel — inline properties for the focused entity, Results, or Draw */}
+        {(model?.hasFocus() || model?.activeDialog === 'results' || model?.activeDialog === 'reactions' || model?.activeDialog === 'draw') && <RightPanel />}
       </Box>
 
       {/* Bottom Status Bar */}

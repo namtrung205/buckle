@@ -160,9 +160,6 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
       onClose={handleCancel}
       maxWidth="xs"
       fullWidth={false}
-      hideBackdrop
-      disableEnforceFocus
-      disableAutoFocus
       draggable
       title={selectedMember ? 'Edit Member' : 'Add Member'}
       actions={actions}

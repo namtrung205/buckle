@@ -1,15 +1,16 @@
 import * as THREE from 'three'
 
 /**
- * Diverging colormap (blue -> light gray -> red) ported from "Sample Visualize result.html".
- * Zero is always centered so positive/negative values map to opposite ends of the scale.
+ * Diverging colormap (deep blue -> green -> deep red) with the green at zero
+ * and NO white in the gradient. Zero-centered: blue = most negative, green = 0,
+ * red = most positive.
  */
 const STOPS: { t: number; color: THREE.Color }[] = [
-  { t: 0.0, color: new THREE.Color(0x2f6fed) },
-  { t: 0.25, color: new THREE.Color(0x7fa7f2) },
-  { t: 0.5, color: new THREE.Color(0xcfd8e3) },
-  { t: 0.75, color: new THREE.Color(0xf0a8a0) },
-  { t: 1.0, color: new THREE.Color(0xe5484d) },
+  { t: 0.0, color: new THREE.Color(0x1e56b4) },
+  { t: 0.25, color: new THREE.Color(0x2f7aa8) },
+  { t: 0.5, color: new THREE.Color(0x2e9e50) },
+  { t: 0.75, color: new THREE.Color(0xd19a2e) },
+  { t: 1.0, color: new THREE.Color(0xc62828) },
 ]
 
 /** Linearly interpolate the colormap at t in [0, 1] (0 = most negative, 0.5 = zero, 1 = most positive). */

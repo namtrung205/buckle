@@ -306,7 +306,7 @@ export type Label = {
   id : string
   position : THREE.Vector3
   text : string
-  type? : 'effort' | 'load' | 'length' | 'angle' | 'arc' | 'gridSnap' | 'endPointSnap' | 'support'
+  type? : 'effort' | 'load' | 'length' | 'angle' | 'arc' | 'gridSnap' | 'endPointSnap' | 'support' | 'level'
   rotation? : number
   fixity? : { x : boolean, y : boolean, z : boolean, mx : boolean, my : boolean, mz : boolean }
 }
