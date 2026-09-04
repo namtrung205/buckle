@@ -72,10 +72,12 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     // Result visualizations are exclusive: applying a stress contour clears the reactions
     model.reactionViz.dispose();
     post.showDiagram(type, selectedMembers);
-    // Stress paints the member solids (full cross-section extrude when enabled)
-    // or the centreline strip - line-only when the solid display is off
-    model.visibility.showOrHideSections(false);
-    model.visibility.showOrHideMembers(post.showStressSolid);
+    // "Hiển thị trên solid (full mặt cắt)": paint the member 3D solid itself,
+    // so the solid sections must be SHOWN exactly when the option is on, and
+    // hidden when the option is off (centreline-only fallback).
+    const showSolid = post.showStressSolid;
+    model.visibility.showOrHideSections(showSolid);
+    model.visibility.showOrHideMembers(!showSolid);
     model.visibility.showOrHideLoads(false);
   };
 
