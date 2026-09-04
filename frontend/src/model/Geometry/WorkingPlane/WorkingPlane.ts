@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { makeAutoObservable } from 'mobx'
 import Model from '../../Model'
+import Line from '../Tools/Line'
 
 /**
  * Working plane — the conceptual "drawing surface" (AutoCAD UCS / Revit
@@ -106,6 +107,23 @@ class WorkingPlane {
     this.setWorld()
     this.model.camera.handle2dView()
     this.model.gridHelper.applyWorkingPlane(this.normal, this.constant)
+    // Home is a "back to the default view" action — it must not leave a draw /
+    // copy tool running. Stop any active tool and return to the select nav mode.
+    this.model.toolsController.deactivate()
+    // The free-draw Line tool runs DIRECTLY from the Draw panel (not through
+    // ToolsController), so deactivate() above never reaches it. Force-stop it
+    // here too, and disable the snapper so its red snap indicator is cleared
+    // (Esc used to be the only way to get rid of it).
+    const lineTool = Line.getInstance()
+    if (lineTool.state !== 0) {
+      lineTool.stop()
+      lineTool.delete()
+    }
+    this.model.snapper.disable()
+    this.model.setNavTool('select')
+    // setNavTool early-returns when the nav tool is already 'select', so make
+    // sure picking is re-armed even if a draw tool had disabled the selector.
+    this.model.selector.enable()
   }
 
   /**
