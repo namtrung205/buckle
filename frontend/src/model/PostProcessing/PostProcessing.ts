@@ -80,6 +80,9 @@ class PostProcessing {
   showRefLine = true
   /** On-canvas contour legend visibility — toggled from the Results tabs. */
   showLegend = true
+  /** Stress: paint the full 3D extruded solid (true cross-section colours)
+   *  instead of the thin centreline strip. Rendered only for stress types. */
+  showStressSolid = true
   /** Members carrying the active diagram's extremes — display-only info shown
    *  by the on-canvas contour legend (which member holds max / min). */
   extremeMax: { label: string; value: number } | null = null
@@ -419,7 +422,13 @@ class PostProcessing {
         this.buildBaseline(data)
         this.buildOutline(data, this.showContour)
       }
-      if (this.showContour) this.colorMemberLine(type, data)
+      if (isStress) {
+        // Full cross-section extrude: paint the member solid mesh itself so the
+        // stress colouring is seen on the real 3D member, or fall back to the
+        // centreline strip for a line-only stress contour.
+        if (this.showStressSolid) this.colorMemberSolids(data)
+        else if (this.showContour) this.colorMemberLine(type, data)
+      } else if (this.showContour) this.colorMemberLine(type, data)
       if (this.showLabels) this.collectExtremes(data, type)
     }
 

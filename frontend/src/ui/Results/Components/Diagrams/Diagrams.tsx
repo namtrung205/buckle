@@ -72,9 +72,10 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     // Result visualizations are exclusive: applying a stress contour clears the reactions
     model.reactionViz.dispose();
     post.showDiagram(type, selectedMembers);
-    // Stress paints the member solids/centreline with the colormap - line-only display
+    // Stress paints the member solids (full cross-section extrude when enabled)
+    // or the centreline strip - line-only when the solid display is off
     model.visibility.showOrHideSections(false);
-    model.visibility.showOrHideMembers(false);
+    model.visibility.showOrHideMembers(post.showStressSolid);
     model.visibility.showOrHideLoads(false);
   };
 
@@ -98,7 +99,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     else if (post.activeType) applyForce(post.activeType);
   };
 
-  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine' | 'showLegend') =>
+  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine' | 'showLegend' | 'showStressSolid') =>
     (event: ChangeEvent<HTMLInputElement>) => {
       post[key] = event.target.checked;
       if (key === 'showLegend') return; // pure on-canvas UI flag — no 3D re-render needed
@@ -201,6 +202,13 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
             <FormControlLabel control={<Switch size="small" checked={post.showRibbon} onChange={handleToggle('showRibbon')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Filled ribbon</Typography>} sx={{ margin: 0 }} />
             <FormControlLabel control={<Switch size="small" checked={post.showHatch} onChange={handleToggle('showHatch')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Hatch lines</Typography>} sx={{ margin: 0 }} />
           </>
+        )}
+        {isStress && (
+          <FormControlLabel
+            control={<Switch size="small" checked={post.showStressSolid} onChange={handleToggle('showStressSolid')} sx={switchSx} />}
+            label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Hiển thị trên solid (full mặt cắt)</Typography>}
+            sx={{ margin: 0 }}
+          />
         )}
         <FormControlLabel control={<Switch size="small" checked={post.showContour} onChange={handleToggle('showContour')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Contour trên thanh</Typography>} sx={{ margin: 0 }} />
         <FormControlLabel control={<Switch size="small" checked={post.showLabels} onChange={handleToggle('showLabels')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Max / Min tags</Typography>} sx={{ margin: 0 }} />
