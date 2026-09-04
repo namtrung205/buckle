@@ -24,6 +24,10 @@ class Snapper {
   snappedNode : Node | undefined
   model : Model  
   threshold : number = 0.1
+  /** Max perpendicular distance (m) a node/point may sit from the active working
+   *  plane to still count as "on the plane" — tighter than the endpoint screen
+   *  threshold so picking never snaps to a node on another level / axis. */
+  planeThreshold : number = 0.5
   set setupEvent(enabled: boolean) {
     if (enabled) {
       this.update()
@@ -45,6 +49,9 @@ class Snapper {
     
     const newCoords = new THREE.Vector3().copy(pointerCoords);
     const screenCoords = new THREE.Vector2(pointerCoords.x, pointerCoords.y)
+    // Always resolve the pointer against the ACTIVE working plane, never a
+    // hard-coded horizontal plane — so drawing on a vertical face (grid axis /
+    // elevation) stays ON that face.
     const worldPosition = this.screenToWorld(screenCoords, this.model.camera.cam)
 
     //declaration of function which calculates new values and returns them
@@ -57,12 +64,31 @@ class Snapper {
       return roundedGridUnits * gridSize;
     };
 
-    
-    newCoords.x = getCoordByOriginAndGridSize(worldPosition.x, gridSize);
-    newCoords.y = getCoordByOriginAndGridSize(worldPosition.y, gridSize)
-    newCoords.z = getCoordByOriginAndGridSize(worldPosition.z, gridSize);
+    // Snap only the two in-plane axes (the two basis axes of the active plane),
+    // then re-project onto the plane so the result can never drift off it
+    // (rounding the normal axis is what used to pull points off vertical faces).
+    const plane = this.model.worldPlane
+    const n = plane.normal
+    const absNx = Math.abs(n.x)
+    const absNy = Math.abs(n.y)
+    const absNz = Math.abs(n.z)
 
-    const distanceToCurrent = pointerCoords.distanceTo(newCoords);
+    if (absNy >= absNx && absNy >= absNz) {
+      // Horizontal plan (normal ≈ Y): snap X and Z, keep Y = plane elevation.
+      newCoords.x = getCoordByOriginAndGridSize(worldPosition.x, gridSize)
+      newCoords.z = getCoordByOriginAndGridSize(worldPosition.z, gridSize)
+    } else if (absNz >= absNx && absNz >= absNy) {
+      // Vertical face Z = const (OXZ): snap X and Y(h) horizontally-vertical.
+      newCoords.x = getCoordByOriginAndGridSize(worldPosition.x, gridSize)
+      newCoords.y = getCoordByOriginAndGridSize(worldPosition.y, gridSize)
+    } else {
+      // Vertical face X = const (OYZ): snap Z and Y.
+      newCoords.y = getCoordByOriginAndGridSize(worldPosition.y, gridSize)
+      newCoords.z = getCoordByOriginAndGridSize(worldPosition.z, gridSize)
+    }
+
+    // Clamp back onto the working plane (removes any accumulated drift).
+    plane.projectPoint(newCoords, newCoords)
 
     return newCoords;
   }
@@ -81,20 +107,29 @@ class Snapper {
     
 
     this.snappedNode = undefined
+    this.snappedCoords = null
+    this.snappedScreenCoords = null
 
     if(this.onNode && snappedEndPoint && elementId){
       const node = this.model?.nodes?.find((node) => node.id === elementId)
       if(node){
-        this.model?.labeler?.batchUpdateOrCreate([{
-          id : 'endPointSnap',
-          position : snappedEndPoint,
-          text : '',
-          type : 'endPointSnap'
-        }])
-        this.snappedCoords = snappedEndPoint
-        this.snappedNode = node
-        const projected = this.snappedCoords.clone().project(this.model.camera.cam)
-        this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
+        // Only snap a node that lies on the active working plane — never let a
+        // draw pick snap to a node sitting on another level / axis.
+        const onPlane = Math.abs(this.model.worldPlane.distanceToPoint(snappedEndPoint)) <= this.planeThreshold
+        if (onPlane) {
+          // Keep the node ON the plane by stripping any normal-axis offset.
+          const p = snappedEndPoint.clone().projectOnPlane(this.model.worldPlane.normal)
+          this.model?.labeler?.batchUpdateOrCreate([{
+            id : 'endPointSnap',
+            position : p,
+            text : '',
+            type : 'endPointSnap'
+          }])
+          this.snappedCoords = p
+          this.snappedNode = node
+          const projected = this.snappedCoords.clone().project(this.model.camera.cam)
+          this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
+        }
       }
     }
     else if(this.onGrid && snappedGrid){
@@ -190,6 +225,9 @@ class Snapper {
     
     for(const vertex of vertices){
       const v = new THREE.Vector3(vertex[0], vertex[1], vertex[2])
+      // Reject vertices off the active working plane so endpoint snaps never
+      // jump to a node on another level / axis.
+      if (Math.abs(this.model.worldPlane.distanceToPoint(v)) > this.planeThreshold) continue
       const vertexProjected = v.clone().project(this.model.camera.cam)
       const vertexOnScreen = new THREE.Vector2(vertexProjected.x, vertexProjected.y)
       const distance = vertexOnScreen.distanceTo(pointer)

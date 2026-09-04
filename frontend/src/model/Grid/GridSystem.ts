@@ -44,10 +44,15 @@ export type GridSystemDef = {
   extension: number
   /** Draw the labelled end bubbles. */
   showBubbles: boolean
+  /** Draw faint vertical rise lines extending each axis through every level. */
+  showRise?: boolean
 }
 
 const GRID_COLOR = 0x64b5f6
 const TEXT_COLOR = 0xdcebff
+// Faded colour for the vertical datum lines that extend each grid axis through
+// every level (Revit-style "grid runs through the building" hint).
+const GRID_RISE_COLOR = 0x33557a
 // Slightly above the ground plane mesh (-0.0015) and the drawing grid (-0.005)
 // so the axis lines never z-fight with them.
 const GRID_ELEVATION = 0.02
@@ -152,6 +157,11 @@ class GridSystem {
   extension: number
   showBubbles: boolean
   visible: boolean = true
+  /** Elevation (three.js Y) at which the PLAN lines are drawn — follows the
+   *  active level so the axis grid shows through at every storey. */
+  elevation: number = 0
+  /** Faint vertical lines extending each axis through all levels (optional). */
+  showRise: boolean = true
   /** Resolved lines, refreshed on every (re)build — read by the model tree. */
   xLines: GridLine[] = []
   yLines: GridLine[] = []
@@ -163,6 +173,7 @@ class GridSystem {
   private lineMaterial: THREE.LineBasicMaterial
   private circleMaterial: THREE.LineBasicMaterial
   private textMaterial: THREE.MeshBasicMaterial
+  private riseMaterial: THREE.LineBasicMaterial
 
   constructor(model: Model, def: GridSystemDef) {
     this.model = model
@@ -172,10 +183,12 @@ class GridSystem {
     this.y = { ...def.y, coords: [...(def.y.coords || [])] }
     this.extension = def.extension
     this.showBubbles = def.showBubbles
+    this.showRise = def.showRise !== false
 
     this.lineMaterial = new THREE.LineBasicMaterial({ color: GRID_COLOR })
     this.circleMaterial = new THREE.LineBasicMaterial({ color: GRID_COLOR })
     this.textMaterial = new THREE.MeshBasicMaterial({ color: TEXT_COLOR, side: THREE.DoubleSide })
+    this.riseMaterial = new THREE.LineBasicMaterial({ color: GRID_RISE_COLOR, transparent: true, opacity: 0.45 })
 
     makeAutoObservable(this)
   }
@@ -199,6 +212,21 @@ class GridSystem {
     this.y = { ...def.y, coords: [...(def.y.coords || [])] }
     this.extension = def.extension
     this.showBubbles = def.showBubbles
+    this.showRise = def.showRise !== false
+    this.rebuild()
+  }
+
+  /** Move the plan grid to a new elevation (active level) and redraw. */
+  setElevation(elevation: number) {
+    if (this.elevation === elevation) return
+    this.elevation = elevation
+    this.rebuild()
+  }
+
+  /** Toggle the faint vertical rise lines that run through every level. */
+  setShowRise(show: boolean) {
+    if (this.showRise === show) return
+    this.showRise = show
     this.rebuild()
   }
 
@@ -218,18 +246,19 @@ class GridSystem {
     const zMin = zCoords.length ? Math.min(...zCoords) : 0
     const zMax = zCoords.length ? Math.max(...zCoords) : 0
     const ext = Math.max(0, this.extension)
+    const y = this.elevation
 
     // "X" lines: at x = coord, running parallel to the Z axis.
     this.xLines.forEach((line) => {
       const zStart = zCoords.length ? zMin - ext : -FALLBACK_EXTENT
       const zEnd = zCoords.length ? zMax + ext : FALLBACK_EXTENT
       const lineObj = this.addLine(
-        new THREE.Vector3(line.coord, GRID_ELEVATION, zStart),
-        new THREE.Vector3(line.coord, GRID_ELEVATION, zEnd),
+        new THREE.Vector3(line.coord, y, zStart),
+        new THREE.Vector3(line.coord, y, zEnd),
       )
       if (this.showBubbles) {
-        const bStart = this.addBubble(new THREE.Vector3(line.coord, GRID_ELEVATION, zStart), line.label)
-        const bEnd = this.addBubble(new THREE.Vector3(line.coord, GRID_ELEVATION, zEnd), line.label)
+        const bStart = this.addBubble(new THREE.Vector3(line.coord, y, zStart), line.label)
+        const bEnd = this.addBubble(new THREE.Vector3(line.coord, y, zEnd), line.label)
         // Interior direction (from each end toward the line body) — +Z / −Z.
         this.tieBubble(lineObj, bStart, new THREE.Vector3(0, 0, 1), true)
         this.tieBubble(lineObj, bEnd, new THREE.Vector3(0, 0, -1), false)
@@ -241,17 +270,32 @@ class GridSystem {
       const xStart = xCoords.length ? xMin - ext : -FALLBACK_EXTENT
       const xEnd = xCoords.length ? xMax + ext : FALLBACK_EXTENT
       const lineObj = this.addLine(
-        new THREE.Vector3(xStart, GRID_ELEVATION, line.coord),
-        new THREE.Vector3(xEnd, GRID_ELEVATION, line.coord),
+        new THREE.Vector3(xStart, y, line.coord),
+        new THREE.Vector3(xEnd, y, line.coord),
       )
       if (this.showBubbles) {
-        const bStart = this.addBubble(new THREE.Vector3(xStart, GRID_ELEVATION, line.coord), line.label)
-        const bEnd = this.addBubble(new THREE.Vector3(xEnd, GRID_ELEVATION, line.coord), line.label)
+        const bStart = this.addBubble(new THREE.Vector3(xStart, y, line.coord), line.label)
+        const bEnd = this.addBubble(new THREE.Vector3(xEnd, y, line.coord), line.label)
         // Interior direction (from each end toward the line body) — +X / −X.
         this.tieBubble(lineObj, bStart, new THREE.Vector3(1, 0, 0), true)
         this.tieBubble(lineObj, bEnd, new THREE.Vector3(-1, 0, 0), false)
       }
     })
+
+    // Vertical "rise" lines: each axis extended through every level so the grid
+    // reads as a continuous 3D datum (Revit-style). Only on the outer ends to
+    // avoid clutter; each axis gets 2 verticals at its span ends.
+    if (this.showRise) {
+      const [yMin, yMax] = this.levelsExtent()
+      const zStart = zCoords.length ? zMin - ext : -FALLBACK_EXTENT
+      const xStart = xCoords.length ? xMin - ext : -FALLBACK_EXTENT
+      this.xLines.forEach((line) => {
+        this.addRise(new THREE.Vector3(line.coord, yMin, zStart), new THREE.Vector3(line.coord, yMax, zStart))
+      })
+      this.yLines.forEach((line) => {
+        this.addRise(new THREE.Vector3(xStart, yMin, line.coord), new THREE.Vector3(xStart, yMax, line.coord))
+      })
+    }
 
     // Grids show on every storey layer (SAP/ETABS draw them on all plans).
     this.group.layers.enableAll()
@@ -259,6 +303,25 @@ class GridSystem {
     this.model.scene.add(this.group)
 
     this.updateScreenScale()
+  }
+
+  /** Vertical span covered by the model levels (fallback to a sane range). */
+  private levelsExtent(): [number, number] {
+    const vals = this.model.levels.map((l) => l.value)
+    if (vals.length) {
+      const min = Math.min(...vals)
+      const max = Math.max(...vals)
+      return [min - 0.5, max + 0.5]
+    }
+    return [-0.5, 10]
+  }
+
+  private addRise(start: THREE.Vector3, end: THREE.Vector3): THREE.Line {
+    const geometry = new THREE.BufferGeometry().setFromPoints([start, end])
+    const line = new THREE.Line(geometry, this.riseMaterial)
+    line.raycast = () => {} // never block member / node picking
+    this.group.add(line)
+    return line
   }
 
   private addLine(start: THREE.Vector3, end: THREE.Vector3): THREE.Line {
@@ -349,6 +412,7 @@ class GridSystem {
     this.lineMaterial.dispose()
     this.circleMaterial.dispose()
     this.textMaterial.dispose()
+    this.riseMaterial.dispose()
     const index = this.model.grids.findIndex((g) => g.id === this.id)
     if (index !== -1) this.model.grids.splice(index, 1)
   }

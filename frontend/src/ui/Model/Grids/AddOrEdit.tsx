@@ -164,6 +164,7 @@ const AddOrEdit = observer(({ open, onClose, grid }: AddOrEditProps) => {
   const [y, setY] = useState<GridDirectionSpec>(defaultSpec('numbers', 5, 3));
   const [extension, setExtension] = useState(3);
   const [showBubbles, setShowBubbles] = useState(true);
+  const [showRise, setShowRise] = useState(true);
 
   // Prefill the form each time the dialog opens (new vs. edit).
   useEffect(() => {
@@ -174,12 +175,14 @@ const AddOrEdit = observer(({ open, onClose, grid }: AddOrEditProps) => {
       setY({ ...grid.y, coords: [...grid.y.coords] });
       setExtension(grid.extension);
       setShowBubbles(grid.showBubbles);
+      setShowRise(grid.showRise);
     } else {
       setName(`Grid ${(model?.grids?.length || 0) + 1}`);
       setX(defaultSpec('letters', 6, 4));
       setY(defaultSpec('numbers', 5, 3));
       setExtension(3);
       setShowBubbles(true);
+      setShowRise(true);
     }
   }, [open, grid, model]);
 
@@ -194,6 +197,7 @@ const AddOrEdit = observer(({ open, onClose, grid }: AddOrEditProps) => {
       y,
       extension: num(extension),
       showBubbles,
+      showRise,
     };
     if (grid) {
       grid.applyDef(def);
@@ -252,6 +256,17 @@ const AddOrEdit = observer(({ open, onClose, grid }: AddOrEditProps) => {
               onChange={(e: { target: { value: string } }) => setShowBubbles(e.target.value === 'show')}
             />
           </Box>
+        </Box>
+
+        <Box>
+          <Typography sx={fieldLabelSx}>Rise through levels</Typography>
+          <Select
+            label=""
+            size="small"
+            list={[{ id: 'show', name: 'Show (extend axes through all levels)' }, { id: 'hide', name: 'Hide (plan only)' }]}
+            value={showRise ? 'show' : 'hide'}
+            onChange={(e: { target: { value: string } }) => setShowRise(e.target.value === 'show')}
+          />
         </Box>
 
         <Button variant="contained" size="small" disabled={!valid} onClick={handleSave}>

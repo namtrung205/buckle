@@ -14,6 +14,7 @@ import Snapper from './Geometry/Helpers/Snapper'
 import Sections from './Section/Section'
 import GridSystem from './Grid/GridSystem'
 import WorkingPlane from './Geometry/WorkingPlane/WorkingPlane'
+import WorkPlaneReferenceVisual from './Geometry/WorkingPlane/WorkPlaneReferenceVisual'
 import LevelVisual from './Level/LevelVisual'
 import Console from './Console/Console'
 // Geometry
@@ -41,6 +42,7 @@ export {
   Sections, 
   GridSystem,
   WorkingPlane,
+  WorkPlaneReferenceVisual,
   Line,
   Console,
   Visibility,

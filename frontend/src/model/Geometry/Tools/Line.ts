@@ -83,12 +83,12 @@ export default class Line implements Tool {
     const nodeId = snappedNode?.id
     if (this.state === 1) {
       if(snappedCoords){
-        this.startPoint = new Node(snappedCoords)
+        this.startPoint = new Node(this.clampToPlane(snappedCoords))
 
         if(snappedNode) this.startPoint.id = snappedNode.id
       }
       else{
-        this.startPoint =  new Node(this.currentPointerCoord)
+        this.startPoint =  new Node(this.clampToPlane(this.currentPointerCoord))
       } 
 
       // Reuse an existing node located at the same coordinates so members stay
@@ -112,10 +112,10 @@ export default class Line implements Tool {
     else if (this.state === 2) {
       
       if(snappedNode){
-        this.endPoint = new Node(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z))
+        this.endPoint = new Node(this.clampToPlane(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)))
         this.endPoint.id = snappedNode.id
       }else{
-        const point = new THREE.Vector3(this.positions[3], this.positions[4], this.positions[5])
+        const point = this.clampToPlane(new THREE.Vector3(this.positions[3], this.positions[4], this.positions[5]))
         this.endPoint = new Node(point)
         // Reuse an existing node at the same coordinates (missed snap) so the
         // new member shares that node instead of a disconnected duplicate
@@ -130,10 +130,10 @@ export default class Line implements Tool {
     {
       this.startPoint = this.endPoint
       if(snappedNode){
-        this.endPoint = new Node(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z))
+        this.endPoint = new Node(this.clampToPlane(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)))
         this.endPoint.id = snappedNode.id
       }else{
-        const point = new THREE.Vector3(this.positions[3], this.positions[4], this.positions[5])
+        const point = this.clampToPlane(new THREE.Vector3(this.positions[3], this.positions[4], this.positions[5]))
         this.endPoint = new Node(point)
         // Reuse an existing node at the same coordinates (missed snap)
         const existingEnd = findNodeAtPosition(this.model.nodes, point)
@@ -358,12 +358,19 @@ export default class Line implements Tool {
     this.mesh = null
   }
 
+  /**
+   * Project a picked point onto the active working plane and return a fresh
+   * vector. Guarantees every member endpoint lies ON the plane, so drawing
+   * never creates a member whose node sits on another level / axis.
+   */
+  clampToPlane = (p: THREE.Vector3): THREE.Vector3 =>
+    p.clone().projectOnPlane(this.model.worldPlane.normal)
+
   getMouseLocation (
     event : MouseEvent,  
     canvas : HTMLCanvasElement, 
     plane: THREE.Plane, 
     camera: THREE.PerspectiveCamera | THREE.OrthographicCamera) {
-      
       const rect = canvas.getBoundingClientRect();
       const _vec2 = new THREE.Vector2();
       const _vec3 = new THREE.Vector3();

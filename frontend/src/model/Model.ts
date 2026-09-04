@@ -17,6 +17,7 @@ import {
   Shell,
   GridSystem,
   WorkingPlane,
+  WorkPlaneReferenceVisual,
   LevelVisual,
 } from "./index";
 import ReactionViz from "./PostProcessing/ReactionViz";
@@ -78,6 +79,8 @@ export class Model {
   workingPlane : WorkingPlane
   // Revit-style level datums rendered in the scene
   levelVisual : LevelVisual
+  // Revit-style reference overlay on a vertical grid-axis working plane
+  workPlaneReferenceVisual : WorkPlaneReferenceVisual
   gui : GUI | null = null
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
@@ -413,6 +416,7 @@ export class Model {
     this.postProcessing = new PostProcessing(this)
     this.labeler = new Labeler(this)
     this.levelVisual = new LevelVisual(this)
+    this.workPlaneReferenceVisual = new WorkPlaneReferenceVisual(this)
     this.reactionViz = new ReactionViz(this)
     // this.sections = new Sections(this)
     this.gizmo = new ViewportGizmo(
@@ -519,6 +523,7 @@ export class Model {
     this.selector.dispose()
     this.labeler.dispose()
     this.levelVisual?.dispose()
+    this.workPlaneReferenceVisual?.dispose()
     this.gizmo.dispose()
     this.removeListeners()
     this.zoomTool.stop()
@@ -618,6 +623,10 @@ export class Model {
     // alignCamera:false keeps the camera fit/handle2dView behaviour unchanged.
     this.workingPlane.setLevel(elevation, level.label, { alignCamera: false })
     this.layer = this.levels.findIndex(l => l.value === level.value)
+    // Revit-style: the structural axis grid follows the active level, so it is
+    // shown "through" at every storey plan (and its vertical rise hints span
+    // all levels whenever a grid activates a 3D reference).
+    this.grids.forEach((grid) => grid.setElevation(elevation))
     this.snapper.snap?.layers.set(this.layer)
     this.gridHelper.grid.layers.set(this.layer)
     // this.axes.setLayer(this.layer)
