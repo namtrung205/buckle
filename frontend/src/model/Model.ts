@@ -243,6 +243,104 @@ export class Model {
     this.focusBoundaryCondition(bc.id);
   };
 
+  /** Collect the node ids currently selected in the viewport. */
+  get selectedNodeIds(): number[] {
+    return this.selector.selected
+      .map((item: any) => {
+        const ud = item.object.userData;
+        if (ud?.type === 'node') return ud.id;
+        if (item.object.parent?.userData?.type === 'node') return item.object.parent.userData.id;
+        return null;
+      })
+      .filter((id: number | null): id is number => id != null);
+  }
+
+  /** Collect the member ids currently selected in the viewport. */
+  get selectedMemberIds(): number[] {
+    return this.selector.selected
+      .map((item: any) => {
+        const ud = item.object.userData;
+        if (ud?.type === 'elasticBeamColumn') return ud.id;
+        if (item.object.parent?.userData?.type === 'elasticBeamColumn') return item.object.parent.userData.id;
+        return null;
+      })
+      .filter((id: number | null): id is number => id != null);
+  }
+
+  /** Delete the nodes currently selected whose own mesh (or parent) carries a node type. */
+  deleteSelectedNodes = () => {
+    const ids = new Set(this.selectedNodeIds);
+    const nodesToDelete = this.nodes.filter((n) => ids.has(n.id));
+    nodesToDelete.forEach((node) => node?.delete());
+    this.selector.clear();
+  };
+
+  /** Delete the members currently selected whose own mesh (or parent) carries a member type. */
+  deleteSelectedMembers = () => {
+    const ids = new Set(this.selectedMemberIds);
+    const membersToDelete = this.members.filter((m) => ids.has(m.id));
+    membersToDelete.forEach((member) => member?.remove());
+    this.selector.clear();
+  };
+
+  /** Add the currently selected nodes to the selection (used by hover quick-actions). */
+  ensureSelected = (nodeIds: number[]) => {
+    if (!nodeIds.length) return;
+    const selected = new Set(this.selectedNodeIds);
+    for (const id of nodeIds) {
+      if (selected.has(id)) continue;
+      const node = this.nodes.find((n) => n.id === id);
+      if (!node) continue;
+      this.selector.selected = [...this.selector.selected, {
+        object: node.mesh,
+        originalColor: ((node.mesh.material as THREE.MeshStandardMaterial)?.color?.getHex?.() ?? 0x0000ff),
+      } as any];
+    }
+  };
+
+  /** Create a fixed support targeting the given node ids and focus it for editing. */
+  addSupportToNodes = (nodeIds: number[]) => {
+    if (!nodeIds.length) return;
+    this.ensureSelected(nodeIds);
+    const bc = new BoundaryCondition(this, {
+      id: Math.floor(Math.random() * 0x7fffffff),
+      name: `Support ${this.boundaryConditions.length + 1}`,
+      type: 'fixed',
+      targets: nodeIds,
+    } as any);
+    bc.createOrUpdate();
+    this.focusBoundaryCondition(bc.id);
+  };
+
+  /** Create a blank nodal load targeting the given node ids and focus it for editing. */
+  addNodalLoadToNodes = (nodeIds: number[]) => {
+    if (!nodeIds.length) return;
+    this.ensureSelected(nodeIds);
+    const load = new Load(this, {
+      id: Math.floor(Math.random() * 0x7fffffff),
+      name: `Load ${this.loads.length + 1}`,
+      type: 'nodal',
+      targets: nodeIds,
+      value: new THREE.Vector3(0, 0, 0),
+    } as any);
+    load.createOrUpdate();
+    this.focusLoad(load.id);
+  };
+
+  /** Create a blank linear (distributed) load on the given member ids and focus it for editing. */
+  addLinearLoadToMembers = (memberIds: number[]) => {
+    if (!memberIds.length) return;
+    const load = new Load(this, {
+      id: Math.floor(Math.random() * 0x7fffffff),
+      name: `Load ${this.loads.length + 1}`,
+      type: 'linear',
+      targets: memberIds,
+      value: new THREE.Vector3(0, 0, 0),
+    } as any);
+    load.createOrUpdate();
+    this.focusLoad(load.id);
+  };
+
   /** Create a node at the origin and focus it. */
   addNewNode = () => {
     const node = new Node(new THREE.Vector3(0, 0, 0), undefined);
