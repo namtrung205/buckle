@@ -39,7 +39,7 @@ class ZoomTool implements Tool {
     if (mode === 'fit') {
       this.removeListeners()
       this.hideBox()
-      this.model.camera.fitModelToView()
+      this.model.camera.fitModelKeepOrientation()
     } else {
       this.hideBox()
       this.bindListeners()
@@ -49,13 +49,13 @@ class ZoomTool implements Tool {
   start() {
     if (this.state === 1) {
       // Already active: re-run fit so clicking the main zoom button re-fits.
-      if (this.mode === 'fit') this.model.camera.fitModelToView();
+      if (this.mode === 'fit') this.model.camera.fitModelKeepOrientation();
       return
     }
     this.state = 1
     if (this.mode === 'fit') {
       // One-shot: fit immediately, no drag handlers needed.
-      this.model.camera.fitModelToView()
+      this.model.camera.fitModelKeepOrientation()
       return
     }
     this.bindListeners()

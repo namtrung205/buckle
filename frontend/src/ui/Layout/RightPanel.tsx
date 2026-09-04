@@ -223,6 +223,21 @@ const RightPanel = observer(() => {
 
   const section: Section | null = member?.section ?? null;
 
+  /* ── batch member editing ───────────────────────────────────────────────
+   * Context menu "Edit element(s)" opens the dock with a batch of members
+   * (model.editingMemberIds). Section / rotation / release changes then apply
+   * to EVERY member in the batch (each keeps its own nodes and label);
+   * label and node re-assignment stay single-member. */
+  const editingCount = model?.editingMemberIds?.length ?? 0;
+  const forEachEditingMember = (fn: (m: ElasticBeamColumn) => void) => {
+    if (!model) return;
+    const ids = editingCount > 0 ? model.editingMemberIds : (member ? [member.id] : []);
+    ids.forEach((id) => {
+      const m = model.members.find((mm) => mm.id === id);
+      if (m) fn(m);
+    });
+  };
+
   // Results mode: the ribbon "Results" / "Reactions" buttons open this same dock.
   const isResults = model?.activeDialog === 'results' || model?.activeDialog === 'reactions';
   // Draw mode: the ribbon "Draw" button opens the member drawing tool here.
@@ -275,6 +290,7 @@ const RightPanel = observer(() => {
   else if (node) { title = 'Node properties'; icon = <NodeIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (support) { title = 'Support properties'; icon = <SupportIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (load) { title = 'Load properties'; icon = <LoadIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
+  const memberBatch = !isResults && !isDraw && member && editingCount > 1;
 
   const closePanel = () => {
     if (isResults || isDraw) model.closeDialog();
@@ -286,7 +302,7 @@ const RightPanel = observer(() => {
     if (!member) return;
     const sec = model.sections.find((s) => s.id === Number(secId));
     if (!sec) return;
-    member.update(member.nodes, sec, member.gamma, member.label, member.release);
+    forEachEditingMember((m) => m.update(m.nodes, sec, m.gamma, m.label, m.release));
   };
 
   const reassignMaterial = (matId: number) => {
@@ -312,12 +328,12 @@ const RightPanel = observer(() => {
 
   const updateMemberGamma = (gamma: number) => {
     if (!member) return;
-    member.update(member.nodes, member.section, gamma, member.label, member.release);
+    forEachEditingMember((m) => m.update(m.nodes, m.section, gamma, m.label, m.release));
   };
 
   const updateMemberRelease = (release: string) => {
     if (!member) return;
-    member.update(member.nodes, member.section, member.gamma, member.label, release);
+    forEachEditingMember((m) => m.update(m.nodes, m.section, m.gamma, m.label, release));
   };
 
   /* ── node helpers ─────────────────────────────────────────────────────── */
@@ -441,6 +457,13 @@ const RightPanel = observer(() => {
           <Typography sx={{ fontSize: '0.82rem', fontWeight: 600, color: colors.text, display: 'flex', alignItems: 'center', gap: 1 }}>
             {icon}
             {title}
+            {memberBatch && (
+              <Chip
+                size="small"
+                label={`${editingCount} members`}
+                sx={{ height: 18, fontSize: '0.65rem', backgroundColor: 'rgba(74, 144, 226, 0.15)', color: colors.accentSoft, fontWeight: 600 }}
+              />
+            )}
           </Typography>
           <IconButton size="small" onClick={closePanel}
             sx={{ color: colors.textDim, '&:hover': { color: colors.text, backgroundColor: colors.hover } }}>
@@ -725,7 +748,9 @@ const RightPanel = observer(() => {
               : isDraw
                 ? 'Start to draw members by clicking in the viewport. Esc or Stop ends the current stroke.'
                 : member
-                  ? '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.'
+                  ? (editingCount > 1
+                    ? `Multi-edit: section, rotation and release changes apply to all ${editingCount} selected members.`
+                    : '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.')
                   : support
                     ? 'Pick target nodes, choose a preset (Fixed/Pinned/Roller) or toggle DOF restraints, then press Apply to commit.'
                     : load
@@ -744,9 +769,11 @@ const RightPanel = observer(() => {
           if (!member) return;
           // Same-id save = section edit: SectionModel.createOrUpdate already
           // re-pointed every linked member and rebuilt its geometry. A brand
-          // new id (the + flow) still has to be assigned to this member here.
-          if (member.section && sec.id === member.section.id) return;
-          member.update(member.nodes, sec, member.gamma, member.label, member.release);
+          // new id (the + flow) still has to be assigned to the edited members.
+          forEachEditingMember((m) => {
+            if (m.section && m.section.id === sec.id) return;
+            m.update(m.nodes, sec, m.gamma, m.label, m.release);
+          });
         }}
       />
       <MaterialPresetSelector

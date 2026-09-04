@@ -127,6 +127,55 @@ export class Camera {
     this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
     this.controls.update();
   }
+
+  /**
+   * Fit the frustum + camera to the model size while KEEPING the current camera
+   * orientation (view direction + roll). Unlike fitModelToView() it never snaps
+   * the camera to a canonical iso / top pose — it only moves the orbit target to
+   * the model centre and pulls the camera along its current view direction until
+   * the model fits. Used by the Zoom → Fit button.
+   */
+  fitModelKeepOrientation() {
+    const box = this.getModelBox();
+    if (box.isEmpty()) return;
+
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z, 1);
+    const radius = maxDim / 2;
+
+    // Depth range scales with the model so nothing is culled by the near/far planes
+    const near = Math.max(0.01, radius / 500);
+    const far = Math.max(2000, radius * 100);
+    this.orthoCam.near = near;
+    this.orthoCam.far = far;
+    this.perspectiveCam.near = near;
+    this.perspectiveCam.far = far;
+
+    // Orthographic frustum covers the whole model with a margin
+    this.frustumSize = maxDim * 1.4;
+    if (this.cam instanceof THREE.OrthographicCamera) this.cam.zoom = 1;
+
+    // Preserve the current view direction (direction from the old orbit target to
+    // the camera). Fall back to a sane iso / top direction when it is degenerate.
+    const viewDir = new THREE.Vector3()
+      .subVectors(this.cam.position, this.controls.target)
+      .normalize();
+    if (viewDir.lengthSq() < 1e-8) {
+      viewDir.set(this.viewMode === '2d' ? 0 : 0.65, 1, this.viewMode === '2d' ? 0 : 0.65).normalize();
+    }
+
+    // Re-target the orbit to the model centre and pull the camera along the
+    // SAME direction to a distance that fits the model — no rotation at all.
+    this.controls.target.copy(center);
+    this.cam.position.copy(center).addScaledVector(viewDir, radius * 3 + 1);
+
+    // Keep the camera up untouched so the roll of the current view is preserved.
+    this.cam.lookAt(center);
+
+    this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
+    this.controls.update();
+  }
   /**
    * Zoom to a single element (double-click in select mode). Keeps the current
    * view direction, recentres the orbit target on the element and resizes the
@@ -157,23 +206,18 @@ export class Camera {
     this.frustumSize = maxDim * 1.4;
     if (this.cam instanceof THREE.OrthographicCamera) this.cam.zoom = 1;
 
-    // Orbit around the element centre, keeping the current view direction
+    // Orbit around the element centre, keeping the current view direction + roll.
     this.controls.target.copy(center);
 
-    if (this.viewMode === '2d') {
-      // Top view: stay straight above the element centre, far enough for the far plane
-      this.cam.position.set(center.x, center.y + Math.max(50, radius * 3), center.z);
-    } else {
-      const dir = this.cam.position.clone().sub(this.controls.target);
-      // Degenerate case (camera exactly on the target): fall back to the iso direction
-      if (dir.lengthSq() < 1e-12) {
-        dir.set(0.65, 1, 0.65);
-      }
-      dir.normalize();
-      this.cam.position.copy(center).addScaledVector(dir, radius * 3 + 1);
+    const dir = this.cam.position.clone().sub(this.controls.target);
+    // Degenerate case (camera exactly on the target): fall back to a sane dir.
+    if (dir.lengthSq() < 1e-12) {
+      dir.set(this.viewMode === '2d' ? 0 : 0.65, 1, this.viewMode === '2d' ? 0 : 0.65);
     }
-    // Normalize the camera up to the world default (same reason as fitModelToView).
-    this.cam.up.set(0, 1, 0);
+    dir.normalize();
+    this.cam.position.copy(center).addScaledVector(dir, radius * 3 + 1);
+
+    // Keep the camera up untouched so double-click zoom never re-rolls the view.
     this.cam.lookAt(center);
 
     this.handleResize(); // recompute frustum bounds + updateProjectionMatrix
@@ -261,9 +305,10 @@ export class Camera {
 
   handle3dView(){
     this.viewMode = '3d'
-    // Fit to the model when one exists (prevents far-plane culling on large models)
+    // Keep the current view pose — enabling orbit must NOT snap the camera to a
+    // canonical iso pose. Fit only (re-target + distance) along the current dir.
     if (!this.getModelBox().isEmpty()) {
-      this.fitModelToView();
+      this.fitModelKeepOrientation()
     } else {
       this.cam.position.set(20, 30, 20);
     }

@@ -249,6 +249,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       model.output = res.data.output;
       model.reactionViz.apply();
       model.lockResults();
+      // Jump straight to the results ribbon now that the model is locked.
+      setActiveTab('result');
       
       model.console.setFinished(true);
       
@@ -462,7 +464,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             <Tab value="model" label="Model" />
             <Tab value="view" label="View" />
             <Tab value="analysis" label="Analysis" />
-            <Tab value="result" label="Result" />
+            <Tab value="result" label="Result" disabled={!(isLocked && hasResults)} />
           </Tabs>
         </Box>
         <RibbonButton
@@ -512,13 +514,13 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
         )}
         {activeTab === 'result' && (
           <RibbonPanel label="Results">
-            <RibbonButton title="View results" label="Results" onClick={() => open('results')} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
+            <RibbonButton title="View results" label="Results" onClick={() => open('results')} disabled={!hasResults || !isLocked} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
             <RibbonButton
               title="View support reactions"
               label="Reactions"
               onClick={() => open('reactions')}
               iconImage={{ src: '/supports.png', alt: 'Reactions', size: 15 }}
-              disabled={!hasResults}
+              disabled={!hasResults || !isLocked}
             />
             <RibbonButton
               title="Download analysis results"
@@ -577,6 +579,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
               onClick={() => {
                 setConfirmUnlock(false);
                 model?.unlockResults();
+                // Results are gone — leave the (now disabled) Result ribbon.
+                setActiveTab((tab) => (tab === 'result' ? 'model' : tab));
                 toast.info('Results cleared — model unlocked', { position: 'bottom-right', autoClose: 3000 });
               }}
               variant="contained"
