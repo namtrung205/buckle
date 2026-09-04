@@ -72,7 +72,7 @@ const ContextMenu = observer(() => {
 
   // Element actions
   const deleteMembers = () => { model.deleteSelectedMembers(); handleClose(); };
-  const editMembers = () => { if (selectedMemberIds[0] != null) model.focusMember(selectedMemberIds[0]); handleClose(); };
+  const editMembers = () => { model.editMembers(selectedMemberIds); handleClose(); };
   const addMemberLoad = () => { model.addLinearLoadToMembers(selectedMemberIds); handleClose(); };
 
   // Position the submenu flush to the right edge of the main menu (flip to the

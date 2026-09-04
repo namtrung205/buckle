@@ -97,6 +97,9 @@ export class Model {
   // dock is open. These are observable so the dock and any trigger stay in sync.
   rightPanelOpen = true;
   selectedMemberId: number | null = null;
+  // Members being batch-edited in the right dock (context menu "Edit element(s)").
+  // Empty = single-edit mode (only the focused member is touched).
+  editingMemberIds: number[] = [];
   selectedNodeId: number | null = null;
   selectedBoundaryConditionId: number | null = null;
   selectedLoadId: number | null = null;
@@ -140,9 +143,19 @@ export class Model {
   /** Focus an entity in the right dock (member or node, by id). */
   focusMember = (id: number | null) => {
     this.selectedMemberId = id;
+    this.editingMemberIds = [];
     if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
+  };
+
+  /** Open the right dock to edit a batch of members at once (context menu
+   *  "Edit element(s)"): shows the first member's properties, and applies
+   *  section / rotation / release changes to every member in the batch. */
+  editMembers = (ids: number[]) => {
+    if (!ids.length) return;
+    this.focusMember(ids[0]);
+    this.editingMemberIds = [...ids];
   };
 
   focusNode = (id: number | null) => {
@@ -183,6 +196,7 @@ export class Model {
   /** Clear the focused entity (closes the right dock). */
   clearFocus = () => {
     this.selectedMemberId = null;
+    this.editingMemberIds = [];
     this.selectedNodeId = null;
     this.selectedBoundaryConditionId = null;
     this.selectedLoadId = null;
