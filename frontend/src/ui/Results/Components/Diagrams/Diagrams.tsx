@@ -15,32 +15,44 @@ import {
 } from '@mui/material';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../../model/Context';
-import { DEFLECTION_TYPE, DIAGRAM_TYPES } from '../../../../model/PostProcessing/PostProcessing';
+import { DEFLECTION_TYPE, DIAGRAM_TYPES, STRESS_TYPES } from '../../../../model/PostProcessing/PostProcessing';
 import SummaryTable from '../SummaryTable/SummaryTable';
 import StationTable from '../StationTable/StationTable';
 import { UI, SecTitle } from '../ui';
 
 interface DiagramsProps {
-  variant: 'forces' | 'deformation';
+  variant: 'forces' | 'deformation' | 'stress';
 }
 
+/** Human labels for the stress quantities (MPa), shown next to each radio. */
+const STRESS_LABELS: Record<string, string> = {
+  Smax: 'σ max (signed)',
+  Sabs: '|σ| max',
+  SvonM: 'σ VM',
+};
+
 /**
- * Forces / Deformation tab of the Results dock panel. Both variants share the
- * member filter, legend and summary tables;the forces variant additionally
- * exposes the N..Mz radios + ribbon/hatch toggles, whilethe deformation variant
+ * Forces / Deformation / Stress tab of the Results dock panel. All variants share
+ * the member filter, legend and summary tables;the forces variant additionally
+ * exposes the N..Mz radios + ribbon/hatch toggles,while the deformation variant
  * exposes the exaggeration slider + reference-line toggle.Apply pushes the current
- * selection to the viewer post-processing.
+ * selection to the viewer post-processing. The stress variant contours the members
+ * with engineering stress (MPa) and offers no diagram offset geometry.
  */
 const Diagrams = observer(({ variant }: DiagramsProps) => {
   const model = useModel();
   const post = model.postProcessing;
   const isDefl = variant === 'deformation';
+  const isStress = variant === 'stress';
   const [selectedMembers, setSelectedMembers] = useState<number[]>([]);
   const [scale, setScale] = useState<number>(1);
   const [deflScale, setDeflScale] = useState<number>(5);
-  const [forceType, setForceType] = useState<string | null>(
-    post.activeType && !isDefl && post.activeType !== DEFLECTION_TYPE ? post.activeType : null,
-  );
+  const [forceType, setForceType] = useState<string | null>(() => {
+    const active = post.activeType;
+    if (!active || active === DEFLECTION_TYPE) return null;
+    if (isStress) return (STRESS_TYPES as readonly string[]).includes(active) ? active : null;
+    return active;
+  });
 
   const applyForce = (type: string | null) => {
     if (!type) return;
@@ -52,6 +64,17 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     // centreline with the colormap (hiding the neutral grey line), otherwise keep it
     model.visibility.showOrHideSections(false);
     model.visibility.showOrHideMembers(!post.showContour);
+    model.visibility.showOrHideLoads(false);
+  };
+
+  const applyStress = (type: string | null) => {
+    if (!type) return;
+    // Result visualizations are exclusive: applying a stress contour clears the reactions
+    model.reactionViz.dispose();
+    post.showDiagram(type, selectedMembers);
+    // Stress paints the member solids/centreline with the colormap - line-only display
+    model.visibility.showOrHideSections(false);
+    model.visibility.showOrHideMembers(false);
     model.visibility.showOrHideLoads(false);
   };
 
@@ -71,6 +94,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
 
   const renderActive = () => {
     if (isDefl) applyDeformation();
+    else if (isStress) applyStress(post.activeType);
     else if (post.activeType) applyForce(post.activeType);
   };
 
@@ -128,12 +152,12 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
             onChange={(e) => setForceType(e.target.value)}
             sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', rowGap: 0.25 }}
           >
-            {DIAGRAM_TYPES.map((type) => (
+            {(isStress ? STRESS_TYPES : DIAGRAM_TYPES).map((type) => (
               <FormControlLabel
                 key={type}
                 value={type}
                 control={<Radio size="small" sx={{ color: UI.dim, '&.Mui-checked': { color: UI.accent } }} />}
-                label={<Typography sx={{ fontSize: '0.78rem', color: UI.text, fontFamily: UI.mono }}>{type}</Typography>}
+                label={<Typography sx={{ fontSize: '0.78rem', color: UI.text, fontFamily: UI.mono }}>{isStress ? STRESS_LABELS[type] : type}</Typography>}
                 sx={{ margin: 0 }}
               />
             ))}
@@ -141,7 +165,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
         </>
       )}
 
-      {!isDefl && (
+      {!isDefl && !isStress && (
         <Box sx={{ mt: 2 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
             <Typography sx={{ fontFamily: UI.mono, fontSize: '11px', color: UI.dim }}>Diagram scale</Typography>
@@ -172,7 +196,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
       )}
 
       <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-        {!isDefl && (
+        {!isDefl && !isStress && (
           <>
             <FormControlLabel control={<Switch size="small" checked={post.showRibbon} onChange={handleToggle('showRibbon')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Filled ribbon</Typography>} sx={{ margin: 0 }} />
             <FormControlLabel control={<Switch size="small" checked={post.showHatch} onChange={handleToggle('showHatch')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Hatch lines</Typography>} sx={{ margin: 0 }} />
@@ -203,7 +227,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
             variant="contained"
             size="small"
             disabled={!forceType}
-            onClick={() => applyForce(forceType)}
+            onClick={() => (isStress ? applyStress(forceType) : applyForce(forceType))}
             sx={{
               fontFamily: UI.mono,
               textTransform: 'none', px: 3,

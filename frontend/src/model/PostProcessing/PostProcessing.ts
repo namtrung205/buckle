@@ -13,6 +13,10 @@ import { jsonArrayToThree, jsonToThree } from '../../utils/axis'
 export const DIAGRAM_TYPES = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz'] as const
 export type DiagramType = (typeof DIAGRAM_TYPES)[number]
 export const DEFLECTION_TYPE = 'defl'
+/** Stress (MPa) quantities derived by the backend from end-efforts + section properties. */
+export const STRESS_TYPES = ['Smax', 'Sabs', 'SvonM'] as const
+export type StressType = (typeof STRESS_TYPES)[number]
+export const STRESS_UNIT = 'MPa'
 
 const SFAC = 1E-5 // displacement scale the backend applies to SI forces: plot_offset = value_SI * SFAC * localAxis
 const FORCE_UNITS: Record<string, string> = { N: 'kN', Vy: 'kN', Vz: 'kN', T: 'kN', My: 'kNm', Mz: 'kNm' }
@@ -355,7 +359,8 @@ class PostProcessing {
     if (!output?.members) return
 
     this.activeType = type
-    this.unit = type === DEFLECTION_TYPE ? 'mm' : (FORCE_UNITS[type] ?? '')
+    const isStress = (STRESS_TYPES as readonly string[]).includes(type)
+    this.unit = type === DEFLECTION_TYPE ? 'mm' : isStress ? STRESS_UNIT : (FORCE_UNITS[type] ?? '')
 
     const selected = output.members.filter(
       (member: any) => selectedMemberIds.length === 0 || selectedMemberIds.includes(member.id)
@@ -401,12 +406,14 @@ class PostProcessing {
 
     for (const data of membersData) {
       for (const station of data.stations) {
-        station.offset.copy(this.stationOffset(type, data, station, scale))
+        // Stress contours colour the member itself — no diagram offset geometry
+        // is produced, so keep the offset pinned to the undeformed axis.
+        station.offset.copy(isStress ? station.base : this.stationOffset(type, data, station, scale))
       }
       if (type === DEFLECTION_TYPE) {
         this.buildOutline(data, this.showContour)
         if (this.showRefLine) this.buildRefLine(data)
-      } else {
+      } else if (!isStress) {
         if (this.showRibbon) this.buildRibbon(data)
         if (this.showHatch) this.buildHatch(data, this.showContour)
         this.buildBaseline(data)

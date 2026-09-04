@@ -136,7 +136,7 @@ def run_analysis(model: dict, log_callback=None):
 
     # Extract results
     t0 = time.time()
-    extract_results(_log)
+    extract_results(_log, build_section_props(sections))
     _log(f"[ANALYSIS] ✓ Results extracted in {time.time()-t0:.3f}s")
     # print('output: ', output)
     
@@ -373,6 +373,8 @@ def create_members(members):
       
     output['members'].append({
         'id': parent_id,
+        'label': member.get('label'),
+        'section': member['section'],
         'mesh': {
           'nodes': new_nodes,
           'members': new_members
@@ -1027,7 +1029,69 @@ def _build_displacement_stations(member, node_disp_map, n_subdiv=2):
     for s in refined
   ]
 
-def extract_results(log_callback=None):
+def build_section_props(sections):
+    """Compute section properties once per section (id -> props dict) for the
+    stress derivation. Invalid sections are skipped with a warning."""
+    props = {}
+    for s in sections:
+        try:
+            props[s['id']] = compute_section_properties(s)
+        except Exception as e:
+            print(f"Warning: Could not compute section properties for section {s.get('id')}: {e}")
+    return props
+
+
+def _station_stresses(values, sp):
+    """Derive engineering stresses (MPa) at a member station from its end efforts.
+
+    ``values`` carries N / My / Mz / T in kN / kNm (the stored diagram quantities),
+    ``sp`` the section properties from :func:`compute_section_properties` (m, m^2, m^3).
+
+    Returns a dict ``{'Smax', 'Sabs', 'SvonM'}`` in MPa or ``None`` when the section
+    is unavailable:
+      - Smax  : signed extreme-fibre stress (largest-magnitude of the four corners)
+      - Sabs  : |sigma_N| + |sigma_My| + |sigma_Mz| (>= 0, magnitude)
+      - SvonM : Von Mises, including torsion estimated via an equivalent solid
+                circle radius (r = sqrt(A/pi)).
+    """
+    if not sp:
+        return None
+    A = float(sp.get('A') or 0.0)
+    sy = min(float(sp.get('Sy') or 0.0), float(sp.get('Sy_bot') or 0.0))
+    sz = min(float(sp.get('Sz') or 0.0), float(sp.get('Sz_left') or 0.0))
+    jxx = float(sp.get('Jxx') or 0.0)
+    try:
+        N = float(values.get('N') or 0.0)
+        My = float(values.get('My') or 0.0)
+        Mz = float(values.get('Mz') or 0.0)
+        T = float(values.get('T') or 0.0)
+    except (TypeError, ValueError):
+        return None
+
+    # kN / m^2 = kPa, /1000 -> MPa
+    s_n = (N / (A * 1000.0)) if A > 1e-12 else 0.0
+    s_my = (My / (sy * 1000.0)) if sy > 1e-12 else 0.0
+    s_mz = (Mz / (sz * 1000.0)) if sz > 1e-12 else 0.0
+
+    pos = s_n + abs(s_my) + abs(s_mz)
+    neg = s_n - abs(s_my) - abs(s_mz)
+    smax = pos if abs(pos) >= abs(neg) else neg
+    sabs = abs(s_n) + abs(s_my) + abs(s_mz)
+
+    tau = 0.0
+    if jxx > 1e-12 and A > 1e-12:
+        r_eq = math.sqrt(A / math.pi)
+        tau = T * r_eq / (jxx * 1000.0)
+    svon = math.sqrt(sabs * sabs + 3.0 * tau * tau)
+
+    return {
+        'Smax': float(round(smax, 3)),
+        'Sabs': float(round(sabs, 3)),
+        'SvonM': float(round(svon, 3)),
+    }
+
+
+def extract_results(log_callback=None, section_props=None):
   """Extracts and processes results from the analysis."""
   def _log(msg: str):
       print(msg, flush=True)
@@ -1179,6 +1243,20 @@ def extract_results(log_callback=None):
     member['node_efforts'] = list(node_efforts_dict.values())
     if stations_dict:
       member['stations'] = list(stations_dict.values())
+
+    # Derive engineering stresses (MPa) at every station from the end efforts
+    # + section properties, and expose them as extra diagram quantities
+    # (Smax / Sabs / SvonM) so the frontend can render a stress contour.
+    sp = section_props.get(member.get('section')) if section_props else None
+    if sp:
+      for station in stations_dict.values():
+        st = _station_stresses(station['values'], sp)
+        if st:
+          station['values'].update(st)
+      for node_effort in node_efforts_dict.values():
+        st = _station_stresses(node_effort['efforts'], sp)
+        if st:
+          node_effort['efforts'].update(st)
     # member['plot_2d'] = plot_2d(member, forces)
 
   

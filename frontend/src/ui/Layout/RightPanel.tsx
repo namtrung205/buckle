@@ -469,11 +469,13 @@ const RightPanel = observer(() => {
                 <Tab label="Reactions" />
                 <Tab label="Forces" />
                 <Tab label="Deformation" />
+                <Tab label="Stress" />
               </Tabs>
               <Box sx={{ flex: 1, overflowY: 'auto' }}>
                 {resultsTab === 0 && <Reactions />}
                 {resultsTab === 1 && <Diagrams variant="forces" />}
                 {resultsTab === 2 && <Diagrams variant="deformation" />}
+                {resultsTab === 3 && <Diagrams variant="stress" />}
               </Box>
             </>
           ) : isDraw ? (

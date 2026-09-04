@@ -13,10 +13,14 @@ const TYPE_TITLES: Record<string, string> = {
   My: 'Bending moment My',
   Mz: 'Bending moment Mz',
   defl: 'Deflection |Δ|',
+  Smax: 'Stress σ (max fibre)',
+  Sabs: 'Stress |σ| (extreme)',
+  SvonM: 'Von Mises σ',
 };
 
 const TYPE_UNITS: Record<string, string> = {
   N: 'kN', Vy: 'kN', Vz: 'kN', T: 'kN', My: 'kNm', Mz: 'kNm', defl: 'mm',
+  Smax: 'MPa', Sabs: 'MPa', SvonM: 'MPa',
 };
 
 /** Vertical colour-bar gradient — the same diverging colormap as the contour:
