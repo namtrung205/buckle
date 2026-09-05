@@ -236,29 +236,6 @@ export class Model {
     return this.workingPlane ? this.workingPlane.source !== 'world' : false;
   }
 
-  /** Resolve a viewport-picked mesh → its owning member/node id and focus it. */
-  focusFromSelection = () => {
-    const sel = this.selector.selected?.[this.selector.selected.length - 1];
-    if (!sel) return;
-    let obj: THREE.Object3D = sel.object;
-    // climb to the typed group carrying the entity id (member group / node mesh)
-    if (obj.parent instanceof THREE.Group && (obj.parent.userData as any)?.id != null) {
-      obj = obj.parent;
-    }
-    const ud = (obj.userData || {}) as any;
-    if (ud.type === 'node' && ud.id != null) this.focusNode(ud.id);
-    else if (ud.type === 'load' && typeof ud.id === 'string') {
-      // Load meshes carry a compound id: `load-<loadId>-<targetId>`.
-      const parts = String(ud.id).split('-');
-      const numeric = parts.map((p: string) => Number(p)).find((n: number) => !Number.isNaN(n));
-      if (parts[0] === 'load' && parts[1] != null && !Number.isNaN(Number(parts[1]))) {
-        this.focusLoad(Number(parts[1]));
-      } else if (numeric != null) {
-        this.focusLoad(numeric);
-      }
-    } else if (ud.id != null) this.focusMember(ud.id);
-  };
-
   /**
    * Create a default entity and focus it in the right dock for inline editing.
    * These replace the old floating "New X" dialogs: the entity is instantiated

@@ -39,7 +39,6 @@ class Selector {
       this.onKeyDown = this.onKeyDown.bind(this);
       this.onKeyUp = this.onKeyUp.bind(this);
       this.onContextMenu = this.onContextMenu.bind(this);
-      this.onDoubleClick = this.onDoubleClick.bind(this);
       window.addEventListener('pointermove', this.onHover);
       window.addEventListener('pointermove', this.onPointerMove);
       window.addEventListener('pointerdown', this.onPointerDown);
@@ -47,7 +46,6 @@ class Selector {
       window.addEventListener('keydown', this.onKeyDown);
       window.addEventListener('keyup', this.onKeyUp);
       window.addEventListener('contextmenu', this.onContextMenu, { passive: false });
-      window.addEventListener('dblclick', this.onDoubleClick);
     } else {
       window.removeEventListener("pointermove", this.onHover);
       window.removeEventListener("pointermove", this.onPointerMove);
@@ -56,7 +54,6 @@ class Selector {
       window.removeEventListener("keydown", this.onKeyDown);
       window.removeEventListener("keyup", this.onKeyUp);
       window.removeEventListener("contextmenu", this.onContextMenu);
-      window.removeEventListener("dblclick", this.onDoubleClick);
     }
   }
   constructor(model: Model) {
@@ -190,44 +187,8 @@ class Selector {
             }
           }
         }
-        // Surface the freshly picked object into the right dock panel.
-        this.model.focusFromSelection();
       }
     }
-
-  /**
-   * Double-click in select mode: zoom the camera to the element under the cursor.
-   * Skipped while a drawing tool is active (double-click belongs to the tool workflow).
-   */
-  onDoubleClick(event: MouseEvent) {
-    if (!this.enableClick) return;
-    if (event.target !== this.model.renderer.domElement) return;
-    if (event.button !== 0) return;
-    if (Line.getInstance().state !== 0) return;
-    event.preventDefault();
-
-    const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
-    this.rayCaster.setFromCamera(pointer, this.model.camera.cam)
-    if (this.model.camera.viewMode == '2d') {
-      this.rayCaster.layers.enable(this.model.layer)
-    }
-    else {
-      this.rayCaster.layers.enableAll()
-    }
-
-    const meshesArray = [] as THREE.Mesh[]
-    this.model.scene.children.forEach(element => this.getMeshes(element, meshesArray))
-    const intersects = this.rayCaster.intersectObjects(meshesArray, false)
-    if (intersects.length === 0) return;
-
-    // Frame the logical element: when the hit mesh lives inside a typed group
-    // (e.g. an ElasticBeamColumn solid/edge mesh), zoom to the whole group.
-    let target: THREE.Object3D = intersects[0].object
-    if (target.parent instanceof THREE.Group && target.parent.userData?.type) {
-      target = target.parent
-    }
-    this.model.camera.fitObjectToView(target)
-  }
 
   onPointerDown(event: PointerEvent) {
     if (!this.enableClick) return;
@@ -381,7 +342,6 @@ class Selector {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('contextmenu', this.onContextMenu);
-    window.removeEventListener('dblclick', this.onDoubleClick);
     if (this.selectionHtmlElement && this.selectionHtmlElement.parentElement) {
       this.selectionHtmlElement.parentElement.removeChild(this.selectionHtmlElement);
     }
