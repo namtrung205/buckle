@@ -103,6 +103,14 @@ export class Model {
   selectedNodeId: number | null = null;
   selectedBoundaryConditionId: number | null = null;
   selectedLoadId: number | null = null;
+  // "New entity" draft mode: the right dock shows a blank load/support form
+  // WITHOUT any entity existing in the model yet. Only Apply (in RightPanel)
+  // validates the draft and creates the entity — until then nothing is added
+  // to model.loads / model.boundaryConditions (the model tree stays clean).
+  newEntityDraft: 'load' | 'support' | null = null;
+  // Bumped every time a new-entity draft opens so the dock re-seeds a blank
+  // draft even when the same ribbon button is pressed twice in a row.
+  newEntityDraftNonce: number = 0;
   selectedMemberDialogs = {
     section: false,
     material: false,
@@ -145,6 +153,7 @@ export class Model {
     this.selectedMemberId = id;
     this.editingMemberIds = [];
     if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
+    this.newEntityDraft = null;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
@@ -161,6 +170,7 @@ export class Model {
   focusNode = (id: number | null) => {
     this.selectedNodeId = id;
     if (id != null) { this.selectedMemberId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
+    this.newEntityDraft = null;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
@@ -169,6 +179,7 @@ export class Model {
   focusBoundaryCondition = (id: number | null) => {
     this.selectedBoundaryConditionId = id;
     if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedLoadId = null; this.exitResults(); }
+    this.newEntityDraft = null;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
@@ -177,29 +188,37 @@ export class Model {
   focusLoad = (id: number | null) => {
     this.selectedLoadId = id;
     if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.exitResults(); }
+    this.newEntityDraft = null;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
 
   /** Leave the results dock mode when an entity takes focus (returns to Properties). */
   private exitResults = () => {
-    if (this.activeDialog === 'results' || this.activeDialog === 'reactions') this.activeDialog = null;
+    if (this.activeDialog === 'results' || this.activeDialog === 'reactions') {
+      this.activeDialog = null;
+      // Back to model editing — restore the member centre lines / sections /
+      // loads that the result view had hidden.
+      this.visibility.restoreModelView();
+    }
   };
 
-  /** True when any entity is focused for right-dock editing. */
+  /** True when any entity is focused for right-dock editing (draft mode included). */
   hasFocus = () =>
     this.selectedMemberId != null ||
     this.selectedNodeId != null ||
     this.selectedBoundaryConditionId != null ||
-    this.selectedLoadId != null;
+    this.selectedLoadId != null ||
+    this.newEntityDraft != null;
 
-  /** Clear the focused entity (closes the right dock). */
+  /** Clear the focused entity (closes the right dock and any new-entity draft). */
   clearFocus = () => {
     this.selectedMemberId = null;
     this.editingMemberIds = [];
     this.selectedNodeId = null;
     this.selectedBoundaryConditionId = null;
     this.selectedLoadId = null;
+    this.newEntityDraft = null;
     this.updateGizmoOffset();
   };
 
@@ -232,29 +251,34 @@ export class Model {
    * with sensible defaults and the dock takes over for the remaining inputs.
    */
 
-  /** Create a blank nodal load (no targets, zero magnitude) and focus it. */
+  /** Open the right dock with a blank NEW-load draft (nothing added to the
+   *  model yet — the load only enters model.loads when the user presses Apply
+   *  and its targets validate). */
   addNewLoad = () => {
-    const load = new Load(this, {
-      id: Math.floor(Math.random() * 0x7fffffff),
-      name: `Load ${this.loads.length + 1}`,
-      type: 'nodal',
-      targets: [],
-      value: new THREE.Vector3(0, 0, 0),
-    } as any);
-    load.createOrUpdate();
-    this.focusLoad(load.id);
+    this.selectedMemberId = null;
+    this.selectedNodeId = null;
+    this.selectedBoundaryConditionId = null;
+    this.selectedLoadId = null;
+    this.exitResults();
+    this.newEntityDraft = 'load';
+    this.newEntityDraftNonce++;
+    this.rightPanelOpen = true;
+    this.updateGizmoOffset();
   };
 
-  /** Create a fixed support with no targets yet, then focus it. */
+  /** Open the right dock with a blank NEW-support draft (nothing added to the
+   *  model yet — the support only enters model.boundaryConditions when the user
+   *  presses Apply and its targets validate). */
   addNewSupport = () => {
-    const bc = new BoundaryCondition(this, {
-      id: Math.floor(Math.random() * 0x7fffffff),
-      name: `Support ${this.boundaryConditions.length + 1}`,
-      type: 'fixed',
-      targets: [],
-    } as any);
-    bc.createOrUpdate();
-    this.focusBoundaryCondition(bc.id);
+    this.selectedMemberId = null;
+    this.selectedNodeId = null;
+    this.selectedBoundaryConditionId = null;
+    this.selectedLoadId = null;
+    this.exitResults();
+    this.newEntityDraft = 'support';
+    this.newEntityDraftNonce++;
+    this.rightPanelOpen = true;
+    this.updateGizmoOffset();
   };
 
   /** Collect the node ids currently selected in the viewport. */
@@ -391,6 +415,9 @@ export class Model {
   /** Lock the model after a successful analysis: results become active, editing is disabled. */
   lockResults = () => {
     this.isLocked = true;
+    // Remember the model-mode visibility BEFORE any result view hides the
+    // member centre lines / solid sections / loads, so unlock can restore it.
+    this.visibility.snapshotModelView();
   }
 
   /** Unlock: wipe all computed results and return to model editing mode. */
@@ -400,12 +427,19 @@ export class Model {
     this.selector.clear();
     this.toolsController.deactivate();
     if (this.activeDialog === 'results') this.closeDialog();
+    // Bring the model view back: member centre lines (and sections/loads per
+    // the pre-results visibility) are restored even if the last result view
+    // had hidden them. Idempotent — safe after closeDialog already restored.
+    this.visibility.restoreModelView();
   }
 
   closeDialog = () => {
     const currentTool = this.toolsController.getCurrentTool();
     currentTool?.stop();
+    const wasResults = this.activeDialog === 'results' || this.activeDialog === 'reactions';
     this.activeDialog = null;
+    // Leaving the results dock returns the model view (member centre lines... )
+    if (wasResults) this.visibility.restoreModelView();
     this.updateGizmoOffset();
   }
 

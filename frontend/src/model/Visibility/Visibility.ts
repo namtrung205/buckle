@@ -129,6 +129,36 @@ class Visibility {
     this.model.levelVisual?.setVisible(visible)
   }
 
+  /* ── model-mode snapshot / restore ──────────────────────────────────────
+   * The Results tabs (force/stress/deformation diagrams, reactions) hide the
+   * member centre lines, solid sections and loads on the THREE objects AND
+   * clobber these flags while a result is displayed. Unlocking / leaving the
+   * results dock must bring the model view back — this snapshot remembers the
+   * model-mode visibility that existed before any result hid things. */
+  private modelViewSnapshot: { members: boolean; sections: boolean; loads: boolean } | null = null;
+
+  /** Remember the current model-mode visibility (call once when results mode
+   *  begins; the first snapshot wins so a re-run keeps the original view). */
+  snapshotModelView(){
+    if (this.modelViewSnapshot) return
+    this.modelViewSnapshot = {
+      members: this.members,
+      sections: this.sections,
+      loads: this.loads,
+    }
+  }
+
+  /** Re-apply the saved model-mode visibility (member centre lines, solid
+   *  sections, loads) and drop the snapshot. Idempotent: without a snapshot it
+   *  simply re-applies the current flags, so repeated calls are safe. */
+  restoreModelView(){
+    const snap = this.modelViewSnapshot
+    this.modelViewSnapshot = null
+    this.showOrHideMembers(snap ? snap.members : this.members)
+    this.showOrHideSections(snap ? snap.sections : this.sections)
+    this.showOrHideLoads(snap ? snap.loads : this.loads)
+  }
+
 }
 
 export default Visibility

@@ -8,7 +8,8 @@ import {
   Stack,
   Typography,
   FormControl,
-  Chip
+  Chip,
+  FormHelperText
 } from '@mui/material';
 import { Delete as DeleteIcon, Save as SaveIcon } from '@mui/icons-material';
 import { observer } from 'mobx-react-lite';
@@ -54,6 +55,8 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
     targets: [],
   });
 
+  const [targetsError, setTargetsError] = useState(false);
+
   const reset = () => {
     setLoad({
       id: null,
@@ -63,6 +66,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
       value: '0',
       targets: [],
     });
+    setTargetsError(false);
   };
 
   useEffect(() => {
@@ -105,7 +109,12 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
       );
       return;
     }
-    else   reset();
+    else {
+      reset();
+      // Pre-assign the load to the nodes currently selected in the viewport
+      const selectedNodeIds = model?.selectedNodeIds ?? [];
+      setLoad((prev) => ({ ...prev, targets: Array.from(new Set(selectedNodeIds)) }));
+    }
   }, [open, selectedLoad]);
 
 
@@ -116,7 +125,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
   const handleLoadTypeChange = (event: SelectChangeEvent<LoadType>) => {
     const type = event.target.value as LoadType;
     setLoad((prev) => ({...prev, type, targets: [],}));
-
+    setTargetsError(false);
   };
 
   const handleDirectionChange = (event: SelectChangeEvent<string>) => {
@@ -134,6 +143,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
 
   const handleTargetsChange = (event: SelectChangeEvent<typeof load.targets>) => {
     const { value } = event.target;
+    setTargetsError(false);
     setLoad((prev) => ({ ...prev, targets: value as number[] }));
 
   };
@@ -152,6 +162,16 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
 
   const handleSave = () => {
     if (!model) return;
+
+    // A load must reference at least one target that actually exists in the
+    // model (nodes for nodal loads, members for linear loads). Stale ids are
+    // dropped; with no valid target left the save is blocked.
+    const targetPool: any[] = load.type === 'nodal' ? model.nodes : (model.members ?? []);
+    const validTargets = load.targets.filter((id) => targetPool.some((e: any) => e.id === id));
+    if (!validTargets.length) {
+      setTargetsError(true);
+      return;
+    }
 
     const id = selectedLoad?.id || Math.floor(Math.random() * Number.MAX_SAFE_INTEGER) % 0x7fffffff;
     const dir_name = load.direction
@@ -175,7 +195,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
       id : id,
       name: load.name || `Load ${model.loads.length + 1}`,
       type: load.type,
-      targets: load.targets,
+      targets: validTargets,
       value : vec_dir.clone().multiplyScalar(magnitude)
     };
 
@@ -295,7 +315,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
             <Typography sx={fieldLabelSx}>
               Elements
             </Typography>
-            <FormControl fullWidth size="small">
+            <FormControl fullWidth size="small" error={targetsError}>
               <MUISelect
                 multiple
                 value={load.targets}
@@ -352,6 +372,11 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
                   ))
                 }
               </MUISelect>
+              {targetsError && (
+                <FormHelperText>
+                  {load.type === 'nodal' ? 'Select at least one node' : 'Select at least one member'}
+                </FormHelperText>
+              )}
             </FormControl>
           </Box>
 

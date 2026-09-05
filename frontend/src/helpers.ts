@@ -216,8 +216,11 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
   // 5. Create boundary conditions — DOF flags keep their semantic meaning and
   // are passed through unchanged (no Y<->Z swap; only spatial vectors such as
   // node coordinates / vecxz / load values are converted to the three.js frame).
+  // Supports without targets are invalid and never enter the model.
   if (jsonData.boundary_conditions) {
-    jsonData.boundary_conditions.forEach((bcData: any) => {
+    jsonData.boundary_conditions
+      .filter((bcData: any) => Array.isArray(bcData.targets) && bcData.targets.length > 0)
+      .forEach((bcData: any) => {
       const boundaryCondition = new BoundaryCondition(model, {
         id: bcData.id,
         type: bcData.type,
@@ -231,13 +234,16 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
         rz: bcData.rz
       } as any)
       boundaryCondition.createOrUpdate()
-    })
+      })
     console.log(`Created ${jsonData.boundary_conditions.length} boundary conditions`)
   }
 
   // 6. Create loads — convert value from Z-up to three.js (Y-up)
+  // Loads without targets are invalid and never enter the model.
   if (jsonData.loads) {
-    jsonData.loads.forEach((loadData: any) => {
+    jsonData.loads
+      .filter((loadData: any) => Array.isArray(loadData.targets) && loadData.targets.length > 0)
+      .forEach((loadData: any) => {
       const load = new Load(model, {
         id: loadData.id,
         type: loadData.type,
@@ -247,7 +253,7 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
         magnitude: loadData.magnitude,
       } as any)
       load.createOrUpdate()
-    })
+      })
     console.log(`Created ${jsonData.loads.length} loads`)
   }
 

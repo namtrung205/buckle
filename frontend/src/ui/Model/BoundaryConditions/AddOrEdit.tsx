@@ -214,8 +214,11 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
   const handleSave = () => {
     if (!model) return;
 
-    // A support must reference at least one node
-    if (!bc.targets.length) {
+    // A support must reference at least one node that actually exists in the
+    // model — stale ids (e.g. deleted nodes) are dropped rather than saved,
+    // and with no valid target left the save is blocked.
+    const validTargets = bc.targets.filter((id) => model.nodes.some((n) => n.id === id));
+    if (!validTargets.length) {
       setTargetsError(true);
       return;
     }
@@ -227,7 +230,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
       id,
       name: bc.name || `Support ${model.boundaryConditions.length + 1}`,
       type: bc.type,
-      targets: bc.targets,
+      targets: validTargets,
       rotation,
     };
 
@@ -447,7 +450,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
                     ))}
                   </MUISelect>
                   {targetsError && (
-                    <FormHelperText>Select at least one node</FormHelperText>
+                    <FormHelperText>Select at least one node that exists in the model</FormHelperText>
                   )}
                 </FormControl>
               </Box>
