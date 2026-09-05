@@ -25,6 +25,7 @@ const defaults = {
   baseWidth: '10',
   topWidth: '2',
   panelCount: '6',
+  straightPanels: '2',
   taper: 'linear',
   armCount: '3',
   armLength: '5',
@@ -159,6 +160,7 @@ const TowerGeneratorDialog = observer(({ open, onClose }: TowerGeneratorProps) =
         baseWidth: Number(p.baseWidth) || 0,
         topWidth: Number(p.topWidth) || 0,
         panelCount: Math.max(1, Number(p.panelCount) || 1),
+        straightPanels: Math.max(0, Number(p.straightPanels) || 0),
         taper: p.taper,
         armCount: Number(p.armCount) || 0,
         armLength: Number(p.armLength) || 0,
@@ -177,6 +179,7 @@ const TowerGeneratorDialog = observer(({ open, onClose }: TowerGeneratorProps) =
     const baseWidth = num('baseWidth');
     const topWidth = num('topWidth');
     const panelCount = num('panelCount');
+    const straightPanels = Math.max(0, Math.round(num('straightPanels')));
     const armCount = num('armCount');
     const armLength = num('armLength');
 
@@ -185,6 +188,7 @@ const TowerGeneratorDialog = observer(({ open, onClose }: TowerGeneratorProps) =
     if (!(baseWidth > 0)) return toast.error('Base width must be > 0 m');
     if (!(topWidth > 0 && topWidth < baseWidth)) return toast.error('Top width must be > 0 and smaller than base width');
     if (!(panelCount >= 1)) return toast.error('Panels must be >= 1');
+    if (!(straightPanels >= 0 && straightPanels < panelCount)) return toast.error('Straight head panels must be 0..panelCount-1');
     if (!(armCount >= 0 && armCount <= 3)) return toast.error('Arms per side must be 0..3');
     if (!(armLength > 0)) return toast.error('Arm length must be > 0 m');
     if (!p.legSectionId) return toast.error('Choose a section for the main (leg) members');
@@ -198,6 +202,7 @@ const TowerGeneratorDialog = observer(({ open, onClose }: TowerGeneratorProps) =
         baseWidth,
         topWidth,
         panelCount,
+        straightPanels,
         taper: p.taper,
         armCount,
         armLength,
@@ -258,6 +263,10 @@ const TowerGeneratorDialog = observer(({ open, onClose }: TowerGeneratorProps) =
             <Grid item xs={6}>
               <Typography sx={fieldLabelSx}>Panels (storeys)</Typography>
               <TextField value={p.panelCount} onChange={set('panelCount')} name="panelCount" placeholder="" size="small" fullWidth />
+            </Grid>
+            <Grid item xs={6}>
+              <Typography sx={fieldLabelSx}>Straight head panels (tầng 2)</Typography>
+              <TextField value={p.straightPanels} onChange={set('straightPanels')} name="straightPanels" placeholder="" size="small" fullWidth />
             </Grid>
             <Grid item xs={6}>
               <Typography sx={fieldLabelSx}>Taper</Typography>
@@ -368,7 +377,7 @@ const TowerGeneratorDialog = observer(({ open, onClose }: TowerGeneratorProps) =
 
           <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint }}>
             Total height: {totalHeight.toFixed(1)} m — body {Number(p.bodyHeight) || 0} m + peak {Number(p.peakHeight) || 0} m.
-            Arms snap to the nearest body belt.
+            Two-part body: {Math.max(0, Number(p.panelCount) || 0) - (Math.max(0, Math.round(Number(p.straightPanels) || 0)))} tapering panels below, {Math.max(0, Math.round(Number(p.straightPanels) || 0))} straight head panels above. Arms attach to the straight head only.
           </Typography>
 
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, pt: 1 }}>

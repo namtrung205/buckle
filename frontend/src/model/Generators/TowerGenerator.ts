@@ -44,6 +44,10 @@ export interface TowerParams {
   topWidth: number;
   /** Number of body panels (storeys). */
   panelCount: number;
+  /** Number of UPPER panels that stay straight (constant width = topWidth).
+   *  Together they form the tower head (tầng 2) where the conductor arms hang;
+   *  the remaining panels below taper from baseWidth to topWidth (frustum). */
+  straightPanels?: number;
   /** How the body narrows: continuous raking legs or stepped per panel. */
   taper: 'linear' | 'step';
   /** Number of arms per side (tai đỡ), 1..3. */
@@ -136,9 +140,25 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
   const bodyHeight = params.bodyHeight;
   const gravity = params.gravity ?? 9.81;
 
+  // Two-part tower (transmission-tower style): the lower `taperPanels` form a
+  // frustum that narrows from baseWidth down to topWidth, the upper
+  // `straightPanels` are a constant-width head that carries the conductor arms.
+  const straightPanels = Math.max(
+    0,
+    Math.min(
+      panels - 1,
+      Math.round(params.straightPanels ?? Math.max(1, Math.floor(panels / 3))),
+    ),
+  );
+  const taperPanels = panels - straightPanels;
+
   // ── Level (belt) layout ─────────────────────────────────────────────────
-  const halfWidthAt = (i: number) =>
-    (params.baseWidth + ((params.topWidth - params.baseWidth) * i) / panels) / 2;
+  const halfWidthAt = (i: number) => {
+    // Width eases from baseWidth toward topWidth across the taper panels; every
+    // panel above the taper stays at topWidth (the straight tower head).
+    const t = taperPanels <= 0 ? 1 : Math.min(Math.max(i, 0), taperPanels) / taperPanels;
+    return (params.baseWidth + (params.topWidth - params.baseWidth) * t) / 2;
+  };
 
   type Level = { y: number; halfW: number };
   let levels: Level[] = [];
@@ -225,14 +245,21 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
     for (let c = 0; c < 4; c++) addMember(top[c], apex, 'peak', legSection);
   }
 
-  // ── Arms (tai đỡ) ───────────────────────────────────────────────────────
+  // ── Arms (tai đỡ) — bolted to the STRAIGHT head (tầng 2) ────────────────
   const armCount = Math.max(0, Math.min(3, Math.round(params.armCount)));
   if (armCount > 0) {
+    // The conductor arms hang from the constant-width head, not the tapering
+    // frustum. When the tower has a straight section (straightPanels > 0) only
+    // belts whose half-width equals topWidth/2 are eligible; otherwise fall
+    // back to any body belt (no straight head configured).
+    const armCandidates = straightPanels > 0
+      ? levels.map((_, i) => i).filter((i) => Math.abs(levels[i].halfW - params.topWidth / 2) < 1e-6)
+      : bodyLevelIdx;
     const armBelts: number[] = [];
     for (let k = 0; k < armCount; k++) {
       const targetY = bodyHeight - k * params.armSpacing;
       let best = -1;
-      for (const bi of bodyLevelIdx) {
+      for (const bi of armCandidates) {
         const lv = levels[bi];
         if (lv.y <= targetY + 1e-6 && (best === -1 || lv.y > levels[best].y)) best = bi;
       }
@@ -243,19 +270,19 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
     for (const bi of armBelts) {
       const lv = levels[bi];
       const belt = belts[bi];
-      const panelH = bodyHeight / panels;
-      const rootDrop = Math.min(1.0, panelH * 0.35);
+      const lowerBelt = bi > 0 ? belts[bi - 1] : null;
       for (const side of [-1, 1] as const) {
-        const faceCorners = side > 0 ? [belt[1], belt[2]] : [belt[3], belt[0]];
-        const xSide = side * lv.halfW;
-        const rootTop = addNode(xSide, lv.y, 0);
-        const rootBot = addNode(xSide, lv.y - rootDrop, 0);
-        const tip = addNode(xSide + side * params.armLength, lv.y - params.armDrop, 0);
-        addMember(rootTop, faceCorners[0], 'arm', braceSection);
-        addMember(rootTop, faceCorners[1], 'arm', braceSection);
-        addMember(rootTop, rootBot, 'arm', braceSection);
-        addMember(rootTop, tip, 'arm', braceSection);
-        addMember(rootBot, tip, 'arm', braceSection);
+        // Anchor the arm directly to the two TOWER corner nodes of this face
+        // (no floating middles), plus a diagonal stay down to the belt below —
+        // the classic delta cross-arm, all nodes tied into the tower body.
+        const [c1, c2] = side > 0 ? [belt[1], belt[2]] : [belt[3], belt[0]];
+        const tip = addNode(side * (lv.halfW + params.armLength), lv.y - params.armDrop, 0);
+        addMember(c1, tip, 'arm', braceSection);
+        addMember(c2, tip, 'arm', braceSection);
+        if (lowerBelt) {
+          const l1 = side > 0 ? lowerBelt[1] : lowerBelt[3];
+          addMember(l1, tip, 'arm', braceSection);
+        }
       }
     }
   }
@@ -263,14 +290,18 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
   // ── Automatic base supports ─────────────────────────────────────────────
   let supportCount = 0;
   if (params.autoSupports && footNodes.length) {
-    const bc = new BoundaryCondition(model, {
-      id: Math.floor(Math.random() * 0x7fffffff),
-      name: 'Tower base',
-      type: params.supportKind === 'fixed' ? 'fixed' : 'pinned',
-      targets: footNodes.map((n) => n.id),
-    } as any);
-    bc.createOrUpdate();
-    supportCount = footNodes.length;
+    // One support PER base node — a single BC covering all four feet only ever
+    // restrains one node during the solve, so split them 1:1.
+    for (const foot of footNodes) {
+      const bc = new BoundaryCondition(model, {
+        id: Math.floor(Math.random() * 0x7fffffff),
+        name: 'Tower base',
+        type: params.supportKind === 'fixed' ? 'fixed' : 'pinned',
+        targets: [foot.id],
+      } as any);
+      bc.createOrUpdate();
+      supportCount++;
+    }
   }
 
   // ── Automatic realistic loads ───────────────────────────────────────────
@@ -385,8 +416,21 @@ export interface ElevationGeometry {
 export function generateTowerElevation(params: TowerParams): ElevationGeometry {
   const panels = Math.max(1, Math.round(params.panelCount));
   const bodyHeight = params.bodyHeight;
-  const halfWidthAt = (i: number) =>
-    (params.baseWidth + ((params.topWidth - params.baseWidth) * i) / panels) / 2;
+  // Mirror the two-part tower of generateTower: lower frustum (tapering from
+  // baseWidth to topWidth) + straight head (constant topWidth) that carries
+  // the conductor arms.
+  const straightPanels = Math.max(
+    0,
+    Math.min(
+      panels - 1,
+      Math.round(params.straightPanels ?? Math.max(1, Math.floor(panels / 3))),
+    ),
+  );
+  const taperPanels = panels - straightPanels;
+  const halfWidthAt = (i: number) => {
+    const t = taperPanels <= 0 ? 1 : Math.min(Math.max(i, 0), taperPanels) / taperPanels;
+    return (params.baseWidth + ((params.topWidth - params.baseWidth) * t)) / 2;
+  };
 
   type Level = { y: number; halfW: number };
   let levels: Level[] = [];
@@ -432,15 +476,18 @@ export function generateTowerElevation(params: TowerParams): ElevationGeometry {
     segments.push({ from: { x: top, y: bodyHeight }, to: apex, kind: 'peak' });
   }
 
-  // Arms
+  // Arms — bolt only to the straight head (tầng 2), mirroring generateTower.
   const armTips: ElevationPoint[] = [];
   const armCount = Math.max(0, Math.min(3, Math.round(params.armCount)));
   if (armCount > 0) {
+    const armCandidates = straightPanels > 0
+      ? levels.map((_, i) => i).filter((i) => Math.abs(levels[i].halfW - params.topWidth / 2) < 1e-6)
+      : bodyLevelIdx;
     const armBelts: number[] = [];
     for (let k = 0; k < armCount; k++) {
       const targetY = bodyHeight - k * params.armSpacing;
       let best = -1;
-      for (const bi of bodyLevelIdx) {
+      for (const bi of armCandidates) {
         const lv = levels[bi];
         if (lv.y <= targetY + 1e-6 && (best === -1 || lv.y > levels[best].y)) best = bi;
       }
@@ -449,10 +496,16 @@ export function generateTowerElevation(params: TowerParams): ElevationGeometry {
     }
     for (const bi of armBelts) {
       const lv = levels[bi];
+      const lowerLv = bi > 0 ? levels[bi - 1] : null;
       for (const side of [-1, 1] as const) {
         const x = side * lv.halfW;
         const tip: ElevationPoint = { x: x + side * params.armLength, y: lv.y - params.armDrop };
+        // Twin corner anchors at the head level + a diagonal stay to the belt
+        // below — shows the delta cross-arm tied into the tower body.
         segments.push({ from: { x, y: lv.y }, to: tip, kind: 'arm' });
+        if (lowerLv) {
+          segments.push({ from: { x: side * lowerLv.halfW, y: lowerLv.y }, to: tip, kind: 'arm' });
+        }
         armTips.push(tip);
       }
     }
