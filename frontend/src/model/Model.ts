@@ -52,6 +52,8 @@ export class Model {
   public container !: HTMLDivElement
   /** Watches #app-container so the canvas re-fits when a side panel opens/closes. */
   private containerResizeObserver: ResizeObserver | null = null
+  /** Render-loop counter for the periodic container-size safety check. */
+  private containerSyncCounter: number = 0
   pointerCoords: THREE.Vector3;
   worldPlane : THREE.Plane;
   snapper : Snapper
@@ -147,7 +149,12 @@ export class Model {
       // `set()` is a no-op. The widget is therefore left without its OrbitControls
       // binding (its `target` goes stale and face-click camera animation breaks).
       // Re-attach controls right after every rebuild to keep the cube functional.
-      this.gizmo.set({ ...this.gizmoOptions, offset: { ...this.gizmoOptions.offset } });
+      this.gizmo.set({
+        ...this.gizmoOptions,
+        // Keep the overlay anchored to the visible canvas cell on rebuilds too.
+        container: this.container,
+        offset: { ...this.gizmoOptions.offset },
+      });
       this.gizmo.attachControls(this.camera.controls);
     }
   };
@@ -562,7 +569,16 @@ export class Model {
     this.gizmo = new ViewportGizmo(
       this.camera.cam, 
       this.renderer, 
-      this.gizmoOptions,
+      {
+        ...this.gizmoOptions,
+        // Critical: point the gizmo's DOM overlay at the VISIBLE canvas cell
+        // (#app-container), NOT document.body. The library appends its overlay
+        // div to this container and positions it relative to it; with the
+        // default body the overlay sat at the window's bottom-right, so when
+        // the right dock opened (canvas shrinks) the gizmo's viewport fell
+        // outside the canvas and the nav cube vanished under/behind the panel.
+        container: this.container,
+      },
     )
     this.gizmo.attachControls(this.camera.controls);
     this.nodes = []
@@ -634,6 +650,19 @@ export class Model {
   }
 
   private update = () => {
+    // Safety-net: keep the canvas matched to the visible viewer cell even if
+    // the ResizeObserver missed a layout change (right dock open/close, left
+    // bar collapse). A stale oversized canvas pushed its bottom-right corner —
+    // the nav cube — outside the clipped container, "hiding" the gizmo.
+    this.containerSyncCounter++;
+    if (this.containerSyncCounter % 20 === 0 && this.container) {
+      const width = this.container.clientWidth;
+      const height = this.container.clientHeight;
+      const size = this.renderer.getSize(SIZE_VECTOR);
+      if (width > 0 && height > 0 && (size.x !== width || size.y !== height)) {
+        this.onResize();
+      }
+    }
     this.camera.updateDepthRange(); // keep near/far in sync with model growth (prevents culling)
     this.camera.updateOrbitTargetMarker(); // orbit pivot bubble follows the target
     this.camera.cam.updateProjectionMatrix();
