@@ -46,6 +46,12 @@ export class Model {
 
   enabled = true
   showVolumes = true
+  /** On-screen FPS readout toggle (Settings → View → Show FPS). */
+  showFps = false
+  /** Last measured frame rate, refreshed ~2×/s from the render loop (0 = not
+   *  measured yet). Kept as a low-frequency observable so the HUD re-render
+   *  cost stays negligible. */
+  fps = 0
   public scene = new THREE.Scene()
   public camera : Camera
   public renderer =  new THREE.WebGLRenderer();
@@ -54,6 +60,13 @@ export class Model {
   private containerResizeObserver: ResizeObserver | null = null
   /** Render-loop counter for the periodic container-size safety check. */
   private containerSyncCounter: number = 0
+  /** FPS meter state — a ~500 ms rolling window, not per-frame writes, so the
+   *  observable `fps` only changes a couple times per second (the HUD is an
+   *  observer; we do not want it to re-render 60×/s). Not `private` so the
+   *  mobx `makeAutoObservable` overrides below can reference them in TS. */
+  fpsFrameCount = 0
+  fpsAccumMs = 0
+  fpsLastFrameTime = 0
   pointerCoords: THREE.Vector3;
   worldPlane : THREE.Plane;
   snapper : Snapper
@@ -640,7 +653,11 @@ export class Model {
     this.layer = 0
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
-    makeAutoObservable(this)
+    makeAutoObservable(this, {
+      fpsFrameCount: false,
+      fpsAccumMs: false,
+      fpsLastFrameTime: false,
+    })
 
     // Rasterise the pan / orbit toolbar icons into custom PNG cursors up front,
     // then re-apply so an already-active tool picks them up as soon as ready.
@@ -703,6 +720,20 @@ export class Model {
   }
 
   private update = () => {
+    // FPS meter (Settings → View → Show FPS): smooth over a ~500 ms window.
+    // The first frame only seeds the baseline so the initial sample is not
+    // polluted by the time spent before the loop started.
+    const now = performance.now()
+    if (this.fpsLastFrameTime) {
+      this.fpsFrameCount++
+      this.fpsAccumMs += now - this.fpsLastFrameTime
+      if (this.fpsAccumMs >= 500) {
+        this.fps = Math.round((this.fpsFrameCount * 1000) / this.fpsAccumMs)
+        this.fpsFrameCount = 0
+        this.fpsAccumMs = 0
+      }
+    }
+    this.fpsLastFrameTime = now
     // Safety-net: keep the canvas matched to the visible viewer cell even if
     // the ResizeObserver missed a layout change (right dock open/close, left
     // bar collapse). A stale oversized canvas pushed its bottom-right corner —
