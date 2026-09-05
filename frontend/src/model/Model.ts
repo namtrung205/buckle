@@ -59,6 +59,12 @@ export class Model {
   snapper : Snapper
   selector : Selector
   gizmo : ViewportGizmo
+  /** Dedicated WebGL renderer for the nav cube. Its canvas is mounted inside the
+   *  gizmo's z:1000 overlay div, so cube pixels live ABOVE the CSS2D label layer
+   *  (#label-container, z:10) and the shared model canvas (z:0). Without this the
+   *  cube was drawn INTO the model canvas via setViewport/setScissor and every
+   *  text value / support hexagon painted over it. See rootGizmoCanvas(). */
+  private gizmoRenderer!: THREE.WebGLRenderer
   canvas : HTMLCanvasElement
   // axes : Axes
   nodes : Node[]
@@ -156,7 +162,45 @@ export class Model {
         offset: { ...this.gizmoOptions.offset },
       });
       this.gizmo.attachControls(this.camera.controls);
+      // `set()` just replaced the overlay div (and any canvas mounted inside it)
+      // — re-mount the dedicated nav-cube canvas into the new overlay.
+      this.rootGizmoCanvas();
     }
+  };
+
+  /**
+   * Mount the nav-cube's dedicated WebGL canvas inside the gizmo's DOM overlay
+   * (the transparent z:1000 hit-area div) and recompute the cube viewport.
+   *
+   * WHY: three-viewport-gizmo normally renders the cube INTO the main model
+   * canvas via setViewport/setScissor (z:0), so CSS2D labels (#label-container,
+   * z:10) always painted OVER the cube-nav. Giving the gizmo its own mini
+   * renderer moves the cube pixels into the overlay div (z:1000) — above every
+   * text value / support hexagon — while pointer hit-testing (face click /
+   * drag / hover) still runs on the overlay div itself (the canvas is
+   * pointer-events:none).
+   *
+   * MUST be re-run after every `gizmo.set()` because the rebuild replaces the
+   * overlay div and detaches the canvas from it.
+   */
+  private rootGizmoCanvas = () => {
+    const overlay = (this.gizmo as unknown as { _domElement?: HTMLDivElement })?._domElement
+    if (!overlay || !this.gizmoRenderer) return
+    const canvas = this.gizmoRenderer.domElement
+    // Fill the overlay exactly — the cube drawing buffer is sized in CSS px
+    // (setSize(size, size, false)) so the two rects match 1:1 and the gizmo's
+    // internal viewport math stays correct on any devicePixelRatio.
+    canvas.style.position = 'absolute'
+    canvas.style.inset = '0'
+    canvas.style.width = '100%'
+    canvas.style.height = '100%'
+    // The overlay div owns every pointer event for the cube.
+    canvas.style.pointerEvents = 'none'
+    if (canvas.parentElement !== overlay) overlay.appendChild(canvas)
+    // domUpdate() inside the last set() ran BEFORE the canvas was rooted here,
+    // so the stored cube viewport rect is stale — recompute it now that the
+    // canvas rect matches the overlay rect.
+    this.gizmo.update()
   };
 
   /** Focus an entity in the right dock (member or node, by id). */
@@ -566,9 +610,17 @@ export class Model {
     this.workPlaneReferenceVisual = new WorkPlaneReferenceVisual(this)
     this.reactionViz = new ReactionViz(this)
     // this.sections = new Sections(this)
+    // Dedicated mini-renderer for the nav cube — its canvas is mounted inside
+    // the gizmo's z:1000 overlay (see rootGizmoCanvas), ABOVE the CSS2D label
+    // layer (z:10) and the shared model canvas (z:0). Keeping the drawing
+    // buffer at CSS-px size (updateStyle:false) makes the gizmo's internal
+    // viewport math match the overlay rect 1:1 on any devicePixelRatio.
+    this.gizmoRenderer = new THREE.WebGLRenderer({ alpha: true, antialias: true })
+    this.gizmoRenderer.setPixelRatio(this.renderer.getPixelRatio())
+    this.gizmoRenderer.setSize(this.gizmoOptions.size, this.gizmoOptions.size, false)
     this.gizmo = new ViewportGizmo(
       this.camera.cam, 
-      this.renderer, 
+      this.gizmoRenderer, 
       {
         ...this.gizmoOptions,
         // Critical: point the gizmo's DOM overlay at the VISIBLE canvas cell
@@ -580,7 +632,8 @@ export class Model {
         container: this.container,
       },
     )
-    this.gizmo.attachControls(this.camera.controls);
+    this.gizmo.attachControls(this.camera.controls)
+    this.rootGizmoCanvas();
     this.nodes = []
     this.members = []
     this.shells = []
@@ -713,6 +766,10 @@ export class Model {
     this.levelVisual?.dispose()
     this.workPlaneReferenceVisual?.dispose()
     this.gizmo.dispose()
+    // Tear down the dedicated nav-cube canvas + its WebGL context. (The canvas
+    // lived inside the gizmo's overlay, which gizmo.dispose() already removed.)
+    this.gizmoRenderer?.domElement.remove()
+    this.gizmoRenderer?.dispose()
     this.removeListeners()
     this.zoomTool.stop()
     this.toolsController.dispose()

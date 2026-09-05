@@ -82,7 +82,10 @@ const Legend = observer(() => {
         {TYPE_UNITS[activeType] ?? ''}
       </Typography>
 
-      {/* Colour bar (blue → red, top → bottom) + the members holding the extremes */}
+      {/* Colour bar (blue → red, top → bottom) + 5 value levels evenly spaced
+          along it: min / 25% / 50% / 75% / max. Values are linearly
+          interpolated through the active diagram's [min, max] range; each label
+          is tinted with the colormap colour at its bar position. */}
       <Box sx={{ display: 'flex', gap: 1 }}>
         <Box
           sx={{
@@ -94,23 +97,44 @@ const Legend = observer(() => {
             flexShrink: 0,
           }}
         />
-        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', py: 0.25 }}>
-          <Box>
+        <Box sx={{ flex: 1, position: 'relative', height: 148 }}>
+          {/* Min — value pinned to the bar top, holder label below */}
+          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0 }}>
             <Typography sx={{ ...rowSx, fontWeight: 700, color: BAR_MIN }}>
-              {display(post.extremeMin?.value)}
+              {display(post.min)}
             </Typography>
-            <Typography sx={{ ...rowSx, color: UI.dim }}>
+            <Typography sx={{ ...rowSx, color: UI.dim, fontSize: '9px' }}>
               {post.extremeMin?.label ?? ''}
             </Typography>
           </Box>
-          <Box>
-            <Typography sx={{ ...rowSx, fontWeight: 700, color: BAR_MAX }}>
-              {display(post.extremeMax?.value)}
-            </Typography>
-            <Typography sx={{ ...rowSx, color: UI.dim }}>
+
+          {/* Max — value pinned to the bar bottom, holder label above */}
+          <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
+            <Typography sx={{ ...rowSx, color: UI.dim, fontSize: '9px' }}>
               {post.extremeMax?.label ?? ''}
             </Typography>
+            <Typography sx={{ ...rowSx, fontWeight: 700, color: BAR_MAX }}>
+              {display(post.max)}
+            </Typography>
           </Box>
+
+          {/* Intermediate levels 25% / 50% / 75% — centred on their tick */}
+          {[0.25, 0.5, 0.75].map((t) => (
+            <Box
+              key={t}
+              sx={{
+                position: 'absolute',
+                top: `${t * 100}%`,
+                left: 0,
+                right: 0,
+                transform: 'translateY(-50%)',
+              }}
+            >
+              <Typography sx={{ ...rowSx, fontWeight: 700, color: colorToCss(lerpStops(t)) }}>
+                {display(post.min + (post.max - post.min) * t)}
+              </Typography>
+            </Box>
+          ))}
         </Box>
       </Box>
     </Box>
