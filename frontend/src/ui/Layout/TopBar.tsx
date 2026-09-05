@@ -12,6 +12,7 @@ import {
   GridOn as GridOnIcon,
   Layers as LayersIcon,
   Height as HeightIcon,
+  CellTower as CellTowerIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
@@ -33,6 +34,7 @@ import AddOrEditGrid from '../Model/Grids/AddOrEdit';
 import AddOrEditWorkPlane from '../Model/WorkPlane/AddOrEdit';
 import AddOrEditLevel from '../Model/Levels/AddOrEdit';
 import WarehouseWizard from '../Model/Generator/WarehouseWizard';
+import TowerGeneratorDialog from '../Model/Tower/TowerGenerator';
 import AnalysisProgress from '../Results/AnalysisProgress';
 import Dialog from '../../components/Dialog/Dialog';
 
@@ -178,6 +180,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     levels: activeDialog === 'levels',
     copy: activeDialog === 'copy',
     warehouseWizard: activeDialog === 'warehouseWizard',
+    tower: activeDialog === 'tower',
     analysisProgress: activeDialog === 'analysisProgress',
   };
   const [tool, setTool] = useState('')
@@ -499,6 +502,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             </RibbonPanel>
             <RibbonPanel label="Generate">
               <RibbonButton title="Warehouse generator" label="Warehouse" onClick={() => open('warehouseWizard')} disabled={isLocked} iconImage={{ src: '/warehouse.png', alt: 'Generator', size: 15 }} />
+              <RibbonButton title="Transmission tower generator (500 kV)" label="Tower" onClick={() => open('tower')} disabled={isLocked} icon={<CellTowerIcon sx={{ fontSize: 15 }} />} />
             </RibbonPanel>
             <RibbonPanel label="System">
               <RibbonButton title="New structural grid" label="Grid" onClick={() => open('grids')} disabled={isLocked} icon={<GridOnIcon sx={{ fontSize: 15 }} />} />
@@ -558,6 +562,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       <AddOrEditLevel open={dialogs.levels} onClose={close} level={null} />
       <Copy open={dialogs.copy} onClose={close} />
       <WarehouseWizard open={dialogs.warehouseWizard} onClose={close} />
+      <TowerGeneratorDialog open={dialogs.tower} onClose={close} />
       <AnalysisProgress 
         open={dialogs.analysisProgress} 
         onClose={close} 
