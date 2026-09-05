@@ -16,8 +16,6 @@ export class Camera {
   /** Small translucent blue sphere marking the orbit pivot; visible while the
    *  Orbit nav tool is active so the rotation centre is never a guess. */
   orbitTargetMarker: THREE.Mesh;
-  /** Raycaster reused by cursor-pivot zoom so a new one isn't allocated per wheel tick. */
-  private pivotRaycaster = new THREE.Raycaster();
   constructor(model: Model) {
     this.model = model
     this.renderer = model.renderer
@@ -72,87 +70,6 @@ export class Camera {
     this.model.scene.add(ambientLight);
     this.model.scene.add(this.cam)
     this.handle3dView()
-
-    // Cursor-pivot zoom: when the user scrolls, raycast from the cursor to the
-    // nearest object and make that hit point the orbit centre BEFORE OrbitControls
-    // applies the dolly. Capture phase runs ahead of OrbitControls' own wheel
-    // listener (registered here in the OrbitControls constructor, i.e. earlier),
-    // so the target is already re-centred when the zoom is applied.
-    this.renderer.domElement.addEventListener('wheel', this.onWheelZoom, {
-      passive: false,
-      capture: true,
-    });
-  }
-
-  /**
-   * Build the list of raycastable model meshes (nodes + member section bodies)
-   * for cursor-pivot zoom. Cached per call so the wheel path stays cheap.
-   */
-  private pickableMeshes(out: THREE.Mesh[]): void {
-    out.length = 0;
-    const nodes = this.model.nodes as unknown as { mesh?: THREE.Mesh }[] | undefined;
-    if (nodes) {
-      for (const node of nodes) {
-        if (node.mesh && (node.mesh as THREE.Mesh).isMesh) out.push(node.mesh);
-      }
-    }
-    const members = this.model.members as unknown as { mesh?: THREE.Mesh }[] | undefined;
-    if (members) {
-      for (const member of members) {
-        if (member.mesh && (member.mesh as THREE.Mesh).isMesh) out.push(member.mesh);
-      }
-    }
-  }
-
-  /** Raycast from a cursor (client px) to the nearest object and return the hit point, or null. */
-  private pickAt(clientX: number, clientY: number): THREE.Vector3 | null {
-    const element = this.renderer.domElement;
-    const rect = element.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    const ndc = new THREE.Vector2(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    this.pivotRaycaster.setFromCamera(ndc, this.cam);
-    if (this.viewMode === '2d') {
-      this.pivotRaycaster.layers.enable(this.model.layer);
-    } else {
-      this.pivotRaycaster.layers.enableAll();
-    }
-    const meshes: THREE.Mesh[] = [];
-    this.pickableMeshes(meshes);
-    if (meshes.length === 0) return null;
-    const hit = this.pivotRaycaster.intersectObjects(meshes, false)[0];
-    return hit ? hit.point : null;
-  }
-
-  /**
-   * Cursor-pivot zoom: re-centre the orbit target on the object under the cursor
-   * so zooming (and subsequent orbiting) happens around a point on the model
-   * instead of a far-away target. Runs on the wheel event in capture phase.
-   */
-  private onWheelZoom = (event: WheelEvent) => {
-    if (event.target !== this.renderer.domElement) return;
-    const point = this.pickAt(event.clientX, event.clientY);
-    if (!point) return; // nothing under cursor → keep OrbitControls' default behaviour
-
-    const controls = this.controls;
-    const cam = this.cam;
-
-    // Keep the view visually identical while moving the orbit target to the hit
-    // point: translate target and camera together along the world delta.
-    const delta = point.clone().sub(controls.target);
-    controls.target.add(delta);
-    cam.position.add(delta);
-    // For orthographic cameras, shifting the target alone does not change the
-    // projection origin, so also slide the camera so the hit point stays put
-    // while OrbitControls' dolly re-scales the frustum around the new target.
-    controls.update();
-  };
-
-  /** Remove the wheel listener added in the constructor. */
-  removeWheelListener() {
-    this.renderer.domElement.removeEventListener('wheel', this.onWheelZoom, true);
   }
 
 
