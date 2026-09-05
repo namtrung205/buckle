@@ -13,6 +13,9 @@ export class Camera {
   perspectiveCam: THREE.PerspectiveCamera;  
   directionalLight : THREE.DirectionalLight;
   model: Model
+  /** Small translucent blue sphere marking the orbit pivot; visible while the
+   *  Orbit nav tool is active so the rotation centre is never a guess. */
+  orbitTargetMarker: THREE.Mesh;
   constructor(model: Model) {
     this.model = model
     this.renderer = model.renderer
@@ -32,6 +35,23 @@ export class Camera {
       MIDDLE: THREE.MOUSE.DOLLY,
       RIGHT: THREE.MOUSE.PAN
     };
+
+    // Orbit pivot marker — small translucent blue sphere at controls.target.
+    // depthTest off + high renderOrder so the pivot is never hidden by members.
+    this.orbitTargetMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 24, 16),
+      new THREE.MeshBasicMaterial({
+        color: 0x2f81f7,
+        transparent: true,
+        opacity: 0.35,
+        depthTest: false,
+        depthWrite: false,
+      })
+    );
+    this.orbitTargetMarker.renderOrder = 999;
+    this.orbitTargetMarker.visible = false;
+    this.orbitTargetMarker.raycast = () => {}; // never block picking
+    this.model.scene.add(this.orbitTargetMarker);
 
     // https://discourse.threejs.org/t/directionallight-parallel-to-the-camera-step-by-step/54225/5
     // const directionalLight = new THREE.DirectionalLight(0xffffff, 1)
@@ -54,7 +74,12 @@ export class Camera {
 
 
   handleResize() {
-    const aspect = window.innerWidth / window.innerHeight;
+    // Match the canvas size — the VISIBLE viewer area (the flex cell between
+    // the left bar and the right dock), not the whole window. A window-based
+    // aspect mis-centred every fitted view whenever a side panel was open.
+    const width = this.model.container?.clientWidth || window.innerWidth;
+    const height = this.model.container?.clientHeight || window.innerHeight;
+    const aspect = width / height;
     
     if(this.cam instanceof THREE.OrthographicCamera) {
       this.cam.left = - this.frustumSize * aspect / 2;
@@ -77,7 +102,18 @@ export class Camera {
     if (nodes && nodes.length > 0) {
       for (const node of nodes) box.expandByPoint(v.set(node.x, node.y, node.z));
     } else {
-      box.setFromObject(this.model.scene);
+      // Fall back to member end points. NEVER fall back to the whole scene:
+      // the 50×50 ground plane and the square drawing grid live in the scene,
+      // so scene-derived boxes blew up to grid size and Zoom-Fit framed the
+      // grid (with the model tiny in the middle) instead of centring on it.
+      const members = this.model.members as unknown as { nodes?: { x: number; y: number; z: number }[] }[] | undefined;
+      if (members) {
+        for (const member of members) {
+          for (const endpoint of member.nodes ?? []) {
+            box.expandByPoint(v.set(endpoint.x, endpoint.y, endpoint.z));
+          }
+        }
+      }
     }
     return box;
   }
@@ -226,6 +262,23 @@ export class Camera {
 
   private lastNodeCount = -1;
   private frameCounter = 0;
+
+  /**
+   * Orbit-pivot indicator: shows the small translucent blue sphere at
+   * controls.target while the Orbit nav tool is active. The sphere's radius
+   * scales with the camera distance so it stays a small constant-size bubble
+   * on screen. Runs from the render loop.
+   */
+  updateOrbitTargetMarker() {
+    const marker = this.orbitTargetMarker;
+    if (!marker) return;
+    const show = this.model.navTool === 'orbit';
+    if (marker.visible !== show) marker.visible = show;
+    if (!show) return;
+    marker.position.copy(this.controls.target);
+    const distance = this.cam.position.distanceTo(this.controls.target);
+    marker.scale.setScalar(Math.max(distance * 0.005, 0.002));
+  }
 
   /**
    * Keep the near/far planes in sync with the model size (no repositioning).

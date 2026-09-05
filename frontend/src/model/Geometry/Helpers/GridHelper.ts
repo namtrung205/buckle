@@ -38,12 +38,21 @@ class GridHelper{
     makeAutoObservable(this)
   }
 
+  setVisible(visible : boolean){
+    this.enabled = visible
+    this.grid.visible = visible
+  }
+
+  toggle(){
+    this.setVisible(!this.enabled)
+  }
+
   hide(){
-    this.grid.visible = false
+    this.setVisible(false)
   }
 
   show(){
-    this.grid.visible = true
+    this.setVisible(true)
   }
 
   /**

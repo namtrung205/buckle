@@ -50,6 +50,8 @@ export class Model {
   public camera : Camera
   public renderer =  new THREE.WebGLRenderer();
   public container !: HTMLDivElement
+  /** Watches #app-container so the canvas re-fits when a side panel opens/closes. */
+  private containerResizeObserver: ResizeObserver | null = null
   pointerCoords: THREE.Vector3;
   worldPlane : THREE.Plane;
   snapper : Snapper
@@ -133,8 +135,10 @@ export class Model {
   /** Reposition the ViewCube so it is never hidden behind the right dock. */
   private updateGizmoOffset = () => {
     if (!this.gizmo) return;
-    const dockOpen = this.rightPanelOpen && (this.hasFocus() || this.activeDialog === 'results' || this.activeDialog === 'reactions' || this.activeDialog === 'draw');
-    const right = Model.GIZMO_RIGHT_BASE + (dockOpen ? Model.RIGHT_PANEL_WIDTH : 0);
+    // The canvas now sizes itself to the visible viewer cell (between the left
+    // bar and the right dock), so side panels never overlap it — the gizmo only
+    // needs its base offset from the canvas' own right edge.
+    const right = Model.GIZMO_RIGHT_BASE;
     if (right !== this.gizmoOptions.offset.right) {
       this.gizmoOptions.offset.right = right;
       // `ViewportGizmo.set()` regenerates the whole widget and — because its
@@ -579,9 +583,22 @@ export class Model {
   {
     try {
       this.container = document.getElementById('app-container') as HTMLDivElement
-      this.renderer.setSize( window.innerWidth, window.innerHeight );
+      // Size the canvas to the VISIBLE viewer area — the flex cell between the
+      // left bar and the right dock. A full-window canvas gets clipped by the
+      // container (overflow: hidden), which shifted the render centre sideways
+      // whenever a side panel was open and made Zoom-Fit look off-centre.
+      const width = this.container?.clientWidth || window.innerWidth
+      const height = this.container?.clientHeight || window.innerHeight
+      this.renderer.setSize( width, height );
       this.container?.appendChild( this.renderer.domElement )
       this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+      this.camera.handleResize();
+      // The visible area also changes WITHOUT a window resize (left bar
+      // collapse, right dock open/close) — watch the container itself.
+      if (typeof ResizeObserver !== 'undefined' && this.container) {
+        this.containerResizeObserver = new ResizeObserver(() => this.onResize());
+        this.containerResizeObserver.observe(this.container);
+      }
       // AutoCAD-style dark blue-black viewport background
       this.scene.background = new THREE.Color('#212830');
       await this.ws.connect();
@@ -608,14 +625,17 @@ export class Model {
   private onResize = () => 
 
   {
+    const width = this.container?.clientWidth || window.innerWidth
+    const height = this.container?.clientHeight || window.innerHeight
     this.camera.handleResize()
-    this.renderer.setSize(window.innerWidth, window.innerHeight)
+    this.renderer.setSize(width, height)
     this.gizmo.update()
-    this.labeler.renderer.setSize(window.innerWidth, window.innerHeight)
+    this.labeler.renderer.setSize(width, height)
   }
 
   private update = () => {
     this.camera.updateDepthRange(); // keep near/far in sync with model growth (prevents culling)
+    this.camera.updateOrbitTargetMarker(); // orbit pivot bubble follows the target
     this.camera.cam.updateProjectionMatrix();
     this.reactionViz?.onFrame();
     this.nodes?.forEach((node: any) => node.updateScreenScale?.());
@@ -657,6 +677,8 @@ export class Model {
       removeObjWithChildren(obj)
     });
     this.container.removeChild(this.renderer.domElement)
+    this.containerResizeObserver?.disconnect()
+    this.containerResizeObserver = null
     this.selector.dispose()
     this.labeler.dispose()
     this.levelVisual?.dispose()
