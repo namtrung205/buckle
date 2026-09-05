@@ -35,6 +35,12 @@ const Settings = ({open, onClose}) => {
     levels: { label: 'Levels', value: 'levels' }
   }
 
+  // Settings → View — viewer HUD/appearance toggles (kept separate from the
+  // model-entity Visibility group above).
+  const viewOptions = {
+    showFps : { label: 'Show FPS', value: 'showFps' },
+  }
+
   const handleChangeSnap = (e) => {
     const {name, checked} = e.target
     switch (name) {
@@ -82,6 +88,18 @@ const Settings = ({open, onClose}) => {
     }
   }
 
+  const handleChangeView = (e) => {
+    const {name, checked} = e.target
+
+    switch (name) {
+      case 'showFps':
+        model.showFps = checked
+        break;
+      default:
+        break;
+    }
+  }
+
   const handleTypeChange = (event) => {
     setSelectedType(event.target.value);
   };
@@ -112,6 +130,7 @@ const Settings = ({open, onClose}) => {
           >
             <MenuItem value="Visibility">Visibility</MenuItem>
             <MenuItem value="Grid">Grid</MenuItem>
+            <MenuItem value="View">View</MenuItem>
           </Select>
         </FormControl>
       </Box>
@@ -154,6 +173,43 @@ const Settings = ({open, onClose}) => {
       )}
 
       {selectedType === 'Grid' && <GridHelper />}
+
+      {selectedType === 'View' && (
+        <Box>
+          {Object.keys(viewOptions).map((key) => {
+            const option = viewOptions[key];
+            return (
+              <Grid container alignItems="center" justifyContent="space-between" key={key}>
+                <Grid item xs={6}>
+                  <Typography sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                    {option.label}
+                  </Typography>
+                </Grid>
+                <Grid item xs={6} sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={model?.[key] || false}
+                        onChange={(e) => handleChangeView(e)}
+                        size="small"
+                        name={option.value}
+                        sx={{
+                          color: colors.textDim,
+                          '&.Mui-checked': {
+                            color: colors.accent,
+                          },
+                        }}
+                      />
+                    }
+                    label=""
+                    sx={{ margin: 0 }}
+                  />
+                </Grid>
+              </Grid>
+            );
+          })}
+        </Box>
+      )}
     </Dialog>
   );
 }

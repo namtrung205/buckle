@@ -8,6 +8,7 @@ import LeftBar from './LeftBar';
 import RightPanel from './RightPanel';
 import BottomBar from '../BottomBar';
 import Legend from '../Results/Components/Legend/Legend';
+import FpsOverlay from './FpsOverlay';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
 
@@ -65,6 +66,9 @@ const Layout = observer(({ children }: LayoutProps) => {
           {/* Contour legend floating over the viewer — colour bar + min/max and
               the members that carry them (display-only, no pointer events) */}
           <Legend />
+
+          {/* FPS readout (Settings → View → Show FPS) */}
+          <FpsOverlay />
         </Box>
 
         {/* Right dock panel — inline properties for the focused entity, Results, or Draw */}
