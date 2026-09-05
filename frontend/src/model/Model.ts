@@ -336,18 +336,14 @@ export class Model {
     }
   };
 
-  /** Create a fixed support targeting the given node ids and focus it for editing. */
+  /** Open the right dock with a NEW-support draft targeting the given node ids.
+   *  Nothing is created until the user presses Apply in the dock, and Apply then
+   *  creates ONE support per node (a multi-node support only supported a single
+   *  node during analysis, so each node becomes its own boundary condition). */
   addSupportToNodes = (nodeIds: number[]) => {
     if (!nodeIds.length) return;
     this.ensureSelected(nodeIds);
-    const bc = new BoundaryCondition(this, {
-      id: Math.floor(Math.random() * 0x7fffffff),
-      name: `Support ${this.boundaryConditions.length + 1}`,
-      type: 'fixed',
-      targets: nodeIds,
-    } as any);
-    bc.createOrUpdate();
-    this.focusBoundaryCondition(bc.id);
+    this.addNewSupport();
   };
 
   /** Create a blank nodal load targeting the given node ids and focus it for editing. */

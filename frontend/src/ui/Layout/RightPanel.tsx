@@ -443,24 +443,30 @@ const RightPanel = observer(() => {
       setSupportDraft(supportDraftOf(support));
     } else {
       // NEW support draft: only now — after validation — is it added to the
-      // model tree (BoundaryCondition.createOrUpdate pushes into
-      // model.boundaryConditions and builds the 3D symbols).
-      const bc = new BoundaryCondition(model, {
-        id: Math.floor(Math.random() * 0x7fffffff),
-        name: supportDraft.name || `Support ${model.boundaryConditions.length + 1}`,
-        type: supportDraft.type,
-        targets: validTargets,
-        rotation: Number(supportDraft.rotation) || 0,
-        dx: supportDraft.dx,
-        dy: supportDraft.dy,
-        dz: supportDraft.dz,
-        rx: supportDraft.rx,
-        ry: supportDraft.ry,
-        rz: supportDraft.rz,
-      } as any);
-      bc.createOrUpdate();
+      // model tree. Each target node becomes its OWN support (one support per
+      // node): a single support with many nodes only really supported one node
+      // during analysis, so we split the draft into one BC per node.
+      const createdIds: number[] = [];
+      for (const target of validTargets) {
+        const bc = new BoundaryCondition(model, {
+          id: Math.floor(Math.random() * 0x7fffffff),
+          name: supportDraft.name || `Support ${model.boundaryConditions.length + 1}`,
+          type: supportDraft.type,
+          targets: [target],
+          rotation: Number(supportDraft.rotation) || 0,
+          dx: supportDraft.dx,
+          dy: supportDraft.dy,
+          dz: supportDraft.dz,
+          rx: supportDraft.rx,
+          ry: supportDraft.ry,
+          rz: supportDraft.rz,
+        } as any);
+        bc.createOrUpdate();
+        createdIds.push(bc.id);
+      }
       model.newEntityDraft = null;
-      model.focusBoundaryCondition(bc.id);
+      // Focus the first created support so the dock shows its properties.
+      if (createdIds.length) model.focusBoundaryCondition(createdIds[0]);
     }
   };
 
@@ -837,8 +843,8 @@ const RightPanel = observer(() => {
                     : '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.')
                   : (support || isNewSupport)
                     ? (isNewSupport
-                      ? 'New support draft — nothing is added to the model until Apply. Pick target nodes, choose a preset or toggle DOF restraints, then press Apply to commit.'
-                      : 'Pick target nodes, choose a preset (Fixed/Pinned/Roller) or toggle DOF restraints, then press Apply to commit.')
+                      ? 'New support draft — nothing is added to the model until Apply. Pick target nodes, choose a preset or toggle DOF restraints, then press Apply to commit. Each selected node becomes its OWN support.'
+                      : 'Pick target nodes, choose a preset (Fixed/Pinned/Roller) or toggle DOF restraints, then press Apply to commit. Each node gets its own support.')
                     : (load || isNewLoad)
                       ? (isNewLoad
                         ? 'New load draft — nothing is added to the model until Apply. Pick target nodes or members, set type, direction and magnitude, then press Apply to commit.'
