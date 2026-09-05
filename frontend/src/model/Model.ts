@@ -227,9 +227,13 @@ export class Model {
    * picked points). The default 'world' OXY plan means NO workplane is active,
    * so drawing runs in true 3D mode: members can only be created by snapping to
    * existing nodes (never by picking free points on the world grid / plane).
+   *
+   * Guarded: `workingPlane` is created AFTER the snapper in the constructor,
+   * and the snapper's first `update()` runs during that window — treat the
+   * uninitialized state as "no workplane" (3D mode).
    */
   get hasActiveWorkPlane(): boolean {
-    return this.workingPlane.source !== 'world';
+    return this.workingPlane ? this.workingPlane.source !== 'world' : false;
   }
 
   /** Resolve a viewport-picked mesh → its owning member/node id and focus it. */
