@@ -32,6 +32,13 @@ class BoundaryCondition {
   }
 
   createOrUpdate(){ 
+    // A support without targets is invalid — it must never enter the model
+    // tree (model.boundaryConditions) nor render support symbols. Bail out
+    // before any mutation (including replaceExistingSupports).
+    if (!this.targets || this.targets.length === 0){
+      console.warn('BoundaryCondition.createOrUpdate: support has no targets — skipped', this)
+      return
+    }
     this.model.invalidateResults()
     this.replaceExistingSupports()
     this.dispose()  

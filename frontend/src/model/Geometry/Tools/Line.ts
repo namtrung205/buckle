@@ -63,6 +63,20 @@ export default class Line implements Tool {
   }
 
   private onMouseMove = (e: MouseEvent) => {
+    // 3D mode (no active workplane): there is no plane to raycast onto — the
+    // pointer position comes from the snapper's node snap instead. Without a
+    // snapped node there is NO valid position, so the preview keeps tracking
+    // the last snapped node instead of jumping to a phantom plane point.
+    if (!this.model.hasActiveWorkPlane) {
+      const snap = this.model.snapper.snappedCoords
+      if (!snap) return
+      this.currentPointerCoord = snap.clone()
+      if (this.state === 2 || this.state === 3) {
+        this.update(this.endPoint, new Node(this.currentPointerCoord))
+      }
+      return
+    }
+
     const mouseLoc = this.getMouseLocation(e,this.model.canvas, this.model.worldPlane, this.model.camera.cam);
     this.currentPointerCoord = mouseLoc;
     if (this.state === 1) {
@@ -79,10 +93,22 @@ export default class Line implements Tool {
     if(this.state === 0) return
     const snappedCoords =  this.model.snapper.snappedCoords
     const snappedNode = this.model.snapper.snappedNode
+    // 3D mode (no active workplane): EVERY member endpoint must be an existing
+    // node — free points on the world grid / plane never create members here.
+    const threeD = !this.model.hasActiveWorkPlane
 
     const nodeId = snappedNode?.id
     if (this.state === 1) {
-      if(snappedCoords){
+      if (threeD) {
+        // 3D mode: the stroke can only start from an existing node, at the
+        // node's true 3D position (no clamping onto any plane).
+        if (!snappedNode) return
+        this.startPoint = new Node(
+          new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)
+        )
+        this.startPoint.id = snappedNode.id
+      }
+      else if(snappedCoords){
         this.startPoint = new Node(this.clampToPlane(snappedCoords))
 
         if(snappedNode) this.startPoint.id = snappedNode.id
@@ -111,7 +137,14 @@ export default class Line implements Tool {
     }
     else if (this.state === 2) {
       
-      if(snappedNode){
+      if (threeD) {
+        // 3D mode: the member's end must snap to an existing node — no
+        // free-point member creation, no plane clamping.
+        if (!snappedNode) return
+        this.endPoint = new Node(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z))
+        this.endPoint.id = snappedNode.id
+      }
+      else if(snappedNode){
         this.endPoint = new Node(this.clampToPlane(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)))
         this.endPoint.id = snappedNode.id
       }else{
@@ -129,7 +162,13 @@ export default class Line implements Tool {
     else if(this.state === 3)
     {
       this.startPoint = this.endPoint
-      if(snappedNode){
+      if (threeD) {
+        // 3D mode: chain the next member only from another existing node.
+        if (!snappedNode) return
+        this.endPoint = new Node(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z))
+        this.endPoint.id = snappedNode.id
+      }
+      else if(snappedNode){
         this.endPoint = new Node(this.clampToPlane(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)))
         this.endPoint.id = snappedNode.id
       }else{

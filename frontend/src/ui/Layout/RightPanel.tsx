@@ -242,6 +242,10 @@ const RightPanel = observer(() => {
   const isResults = model?.activeDialog === 'results' || model?.activeDialog === 'reactions';
   // Draw mode: the ribbon "Draw" button opens the member drawing tool here.
   const isDraw = model?.activeDialog === 'draw';
+  // "New entity" draft mode: the dock stages a blank support/load draft — the
+  // entity only enters the model (model tree) when Apply validates & commits it.
+  const isNewSupport = model?.newEntityDraft === 'support';
+  const isNewLoad = model?.newEntityDraft === 'load';
   // Results tab follows the ribbon button that opened it (Reactions vs Forces).
   const [resultsTab, setResultsTab] = useState<number>(model?.activeDialog === 'reactions' ? 0 : 1);
   // Section dialog context: which section the dock dialog edits. `null` means
@@ -262,15 +266,39 @@ const RightPanel = observer(() => {
   const [targetsError, setTargetsError] = useState(false);
 
   // (Re)seed the drafts whenever the focused entity changes or the dock reopens.
+  // While the dock is in "new entity" draft mode (model.newEntityDraft), a blank
+  // draft is staged instead — nothing exists in the model until Apply commits.
   React.useEffect(() => {
-    setSupportDraft(support ? supportDraftOf(support) : null);
+    if (model?.newEntityDraft === 'support') {
+      setSupportDraft({
+        name: `Support ${model.boundaryConditions.length + 1}`,
+        type: 'fixed',
+        rotation: '0',
+        dx: 1, dy: 1, dz: 1, rx: 1, ry: 1, rz: 1,
+        // Pre-assign the nodes currently selected in the viewport.
+        targets: Array.from(new Set(model.selectedNodeIds)),
+      });
+    } else {
+      setSupportDraft(support ? supportDraftOf(support) : null);
+    }
     setTargetsError(false);
-  }, [support?.id, model?.rightPanelOpen]);
+  }, [support?.id, model?.newEntityDraft, model?.newEntityDraftNonce, model?.rightPanelOpen]);
 
   React.useEffect(() => {
-    setLoadDraft(load ? loadDraftOf(load) : null);
+    if (model?.newEntityDraft === 'load') {
+      setLoadDraft({
+        name: `Load ${model.loads.length + 1}`,
+        type: 'nodal',
+        direction: 'z',
+        value: '0',
+        // Pre-assign the nodes currently selected in the viewport.
+        targets: Array.from(new Set(model.selectedNodeIds)),
+      });
+    } else {
+      setLoadDraft(load ? loadDraftOf(load) : null);
+    }
     setTargetsError(false);
-  }, [load?.id, model?.rightPanelOpen]);
+  }, [load?.id, model?.newEntityDraft, model?.newEntityDraftNonce, model?.rightPanelOpen]);
 
 
   if (!model?.rightPanelOpen) return null;
@@ -288,8 +316,8 @@ const RightPanel = observer(() => {
   else if (isDraw) { title = 'Draw member'; icon = <DrawIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (member) { title = 'Member properties'; icon = <MemberIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   else if (node) { title = 'Node properties'; icon = <NodeIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
-  else if (support) { title = 'Support properties'; icon = <SupportIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
-  else if (load) { title = 'Load properties'; icon = <LoadIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
+  else if (support || isNewSupport) { title = isNewSupport ? 'New support' : 'Support properties'; icon = <SupportIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
+  else if (load || isNewLoad) { title = isNewLoad ? 'New load' : 'Load properties'; icon = <LoadIcon sx={{ fontSize: 16, color: colors.accentSoft }} />; }
   const memberBatch = !isResults && !isDraw && member && editingCount > 1;
 
   const closePanel = () => {
@@ -379,27 +407,67 @@ const RightPanel = observer(() => {
     );
   };
 
+  /** Validate that every target id references an entity that actually exists in
+   *  the model, and that at least one valid target remains. Returns the filtered
+   *  target list (empty = validation failed — the caller must NOT commit). */
+  const validateTargets = (targets: number[], kind: Load['type'] | 'node'): number[] => {
+    const pool: { id: number }[] =
+      kind === 'linear' ? (model.members as any as { id: number }[])
+      : (kind === 'nodal' || kind === 'node') ? (model.nodes as any as { id: number }[])
+      : (model.shells as any as { id: number }[]); // area / pressure loads target shells
+    return (targets ?? []).filter((id) => pool.some((e) => e.id === id));
+  };
+
   const applySupport = () => {
-    if (!support || !supportDraft) return;
-    // A support must reference at least one node (mirrors the support dialog).
-    if (!supportDraft.targets.length) {
+    if (!supportDraft) return;
+    // A support must reference at least one node that exists in the model.
+    const validTargets = validateTargets(supportDraft.targets, 'node');
+    if (!validTargets.length) {
       setTargetsError(true);
       return;
     }
-    support.name = supportDraft.name;
-    support.type = supportDraft.type;
-    support.rotation = Number(supportDraft.rotation) || 0;
-    support.targets = supportDraft.targets;
-    support.dx = supportDraft.dx;
-    support.dy = supportDraft.dy;
-    support.dz = supportDraft.dz;
-    support.rx = supportDraft.rx;
-    support.ry = supportDraft.ry;
-    support.rz = supportDraft.rz;
-    support.createOrUpdate();
-    // Re-seed the draft from the model object — createOrUpdate normalises the
-    // per-DOF flags for the preset types (fixed/pinned/roller).
-    setSupportDraft(supportDraftOf(support));
+    if (support) {
+      support.name = supportDraft.name;
+      support.type = supportDraft.type;
+      support.rotation = Number(supportDraft.rotation) || 0;
+      support.targets = validTargets;
+      support.dx = supportDraft.dx;
+      support.dy = supportDraft.dy;
+      support.dz = supportDraft.dz;
+      support.rx = supportDraft.rx;
+      support.ry = supportDraft.ry;
+      support.rz = supportDraft.rz;
+      support.createOrUpdate();
+      // Re-seed the draft from the model object — createOrUpdate normalises the
+      // per-DOF flags for the preset types (fixed/pinned/roller).
+      setSupportDraft(supportDraftOf(support));
+    } else {
+      // NEW support draft: only now — after validation — is it added to the
+      // model tree. Each target node becomes its OWN support (one support per
+      // node): a single support with many nodes only really supported one node
+      // during analysis, so we split the draft into one BC per node.
+      const createdIds: number[] = [];
+      for (const target of validTargets) {
+        const bc = new BoundaryCondition(model, {
+          id: Math.floor(Math.random() * 0x7fffffff),
+          name: supportDraft.name || `Support ${model.boundaryConditions.length + 1}`,
+          type: supportDraft.type,
+          targets: [target],
+          rotation: Number(supportDraft.rotation) || 0,
+          dx: supportDraft.dx,
+          dy: supportDraft.dy,
+          dz: supportDraft.dz,
+          rx: supportDraft.rx,
+          ry: supportDraft.ry,
+          rz: supportDraft.rz,
+        } as any);
+        bc.createOrUpdate();
+        createdIds.push(bc.id);
+      }
+      model.newEntityDraft = null;
+      // Focus the first created support so the dock shows its properties.
+      if (createdIds.length) model.focusBoundaryCondition(createdIds[0]);
+    }
   };
 
   /* ── load draft handlers (staged — committed by Apply) ────────────────── */
@@ -407,20 +475,38 @@ const RightPanel = observer(() => {
     setLoadDraft((prev) => (prev ? { ...prev, ...patch } : prev));
 
   const applyLoad = () => {
-    if (!load || !loadDraft) return;
-    // A load must reference at least one node/member.
-    if (!loadDraft.targets.length) {
+    if (!loadDraft) return;
+    // A load must reference at least one node/member that exists in the model
+    // (nodes for nodal loads, members for linear loads).
+    const validTargets = validateTargets(loadDraft.targets, loadDraft.type);
+    if (!validTargets.length) {
       setTargetsError(true);
       return;
     }
     const dir = base_vectors[loadDraft.direction as 'x' | 'y' | 'z'] ?? base_vectors.x;
-    load.name = loadDraft.name;
-    load.type = loadDraft.type;
-    load.targets = loadDraft.targets;
-    load.value = dir.clone().multiplyScalar(Number(loadDraft.value) || 0);
-    load.createOrUpdate();
-    // Re-seed the draft from the committed model object.
-    setLoadDraft(loadDraftOf(load));
+    const value = dir.clone().multiplyScalar(Number(loadDraft.value) || 0);
+    if (load) {
+      load.name = loadDraft.name;
+      load.type = loadDraft.type;
+      load.targets = validTargets;
+      load.value = value;
+      load.createOrUpdate();
+      // Re-seed the draft from the committed model object.
+      setLoadDraft(loadDraftOf(load));
+    } else {
+      // NEW load draft: only now — after validation — is it added to the model
+      // tree (Load.createOrUpdate pushes into model.loads and builds arrows).
+      const newLoad = new Load(model, {
+        id: Math.floor(Math.random() * 0x7fffffff),
+        name: loadDraft.name || `Load ${model.loads.length + 1}`,
+        type: loadDraft.type,
+        targets: validTargets,
+        value,
+      } as any);
+      newLoad.createOrUpdate();
+      model.newEntityDraft = null;
+      model.focusLoad(newLoad.id);
+    }
   };
 
   /* ── delete helpers ───────────────────────────────────────────────────── */
@@ -508,13 +594,17 @@ const RightPanel = observer(() => {
             </>
           ) : (
           <>
-          {/* entity label row + delete */}
+          {/* entity label row + delete (nothing to delete while drafting) */}
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
-            <Typography sx={{ fontSize: '0.9rem', fontWeight: 600, color: colors.text }}>{entityLabel}</Typography>
-            <IconButton size="small" onClick={deleteEntity} title="Delete"
-              sx={{ color: colors.danger, '&:hover': { backgroundColor: 'rgba(229,72,77,0.15)' } }}>
-              <DeleteIcon fontSize="small" />
-            </IconButton>
+            <Typography sx={{ fontSize: '0.9rem', fontWeight: 600, color: colors.text }}>
+              {entityLabel || (isNewSupport ? 'New support' : isNewLoad ? 'New load' : '')}
+            </Typography>
+            {!isNewSupport && !isNewLoad && (
+              <IconButton size="small" onClick={deleteEntity} title="Delete"
+                sx={{ color: colors.danger, '&:hover': { backgroundColor: 'rgba(229,72,77,0.15)' } }}>
+                <DeleteIcon fontSize="small" />
+              </IconButton>
+            )}
           </Box>
 
           {/* ── MEMBER ─────────────────────────────────────────────── */}
@@ -585,7 +675,7 @@ const RightPanel = observer(() => {
           )}
 
           {/* ── SUPPORT (boundary condition) ────────────────────────── */}
-          {support && supportDraft && (
+          {(support || isNewSupport) && supportDraft && (
             <>
               <PropertyRow label="Name">
                 <TextField name="name" value={supportDraft.name} onChange={(e: any) => updateSupportDraft({ name: e.target.value })} placeholder="Support name" size="small" />
@@ -675,7 +765,7 @@ const RightPanel = observer(() => {
           )}
 
           {/* ── LOAD ────────────────────────────────────────────────── */}
-          {load && loadDraft && (
+          {(load || isNewLoad) && loadDraft && (
             <>
               <PropertyRow label="Name">
                 <TextField name="name" value={loadDraft.name} onChange={(e: any) => updateLoadDraft({ name: e.target.value })} placeholder="Load name" size="small" />
@@ -751,10 +841,14 @@ const RightPanel = observer(() => {
                   ? (editingCount > 1
                     ? `Multi-edit: section, rotation and release changes apply to all ${editingCount} selected members.`
                     : '⊞ opens the catalogue · ✎ edits · + creates new. Sections carry their own material.')
-                  : support
-                    ? 'Pick target nodes, choose a preset (Fixed/Pinned/Roller) or toggle DOF restraints, then press Apply to commit.'
-                    : load
-                      ? 'Pick target nodes or members, set type, direction and magnitude, then press Apply to commit.'
+                  : (support || isNewSupport)
+                    ? (isNewSupport
+                      ? 'New support draft — nothing is added to the model until Apply. Pick target nodes, choose a preset or toggle DOF restraints, then press Apply to commit. Each selected node becomes its OWN support.'
+                      : 'Pick target nodes, choose a preset (Fixed/Pinned/Roller) or toggle DOF restraints, then press Apply to commit. Each node gets its own support.')
+                    : (load || isNewLoad)
+                      ? (isNewLoad
+                        ? 'New load draft — nothing is added to the model until Apply. Pick target nodes or members, set type, direction and magnitude, then press Apply to commit.'
+                        : 'Pick target nodes or members, set type, direction and magnitude, then press Apply to commit.')
                       : 'Edit the node name and its coordinates.'}
           </Typography>
         </Box>

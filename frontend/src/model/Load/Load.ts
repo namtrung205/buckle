@@ -25,6 +25,12 @@ class Load {
   }
 
   createOrUpdate(){
+    // A load without targets is invalid — it must never enter the model tree
+    // (model.loads) nor render labels/arrows. Bail out before any mutation.
+    if (!this.targets || this.targets.length === 0){
+      console.warn('Load.createOrUpdate: load has no targets — skipped', this)
+      return
+    }
     const index = this.model.loads.findIndex(l => l.id === this.id)
     if(index !== -1){
       console.log('updating load', this)
