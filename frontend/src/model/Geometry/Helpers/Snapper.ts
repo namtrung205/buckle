@@ -4,6 +4,7 @@ import { Node } from '../../../types';
 
 import { Vector3 } from 'three';
 import { ElementType } from '../../../types';
+import { findNodeAtPosition } from './utils';
 import { makeAutoObservable } from "mobx";
 
 type Label = {
@@ -99,20 +100,44 @@ class Snapper {
     this.model.labeler?.deleteOne('endPointSnap')
     // if(this.model?.lineTool?.state === 0) return 
 
+    // 3D drawing mode = no user workplane is active (default 'world' OXY plan):
+    // the draw tool may ONLY snap to existing nodes — never to the grid or to a
+    // free point on the default world plane.
+    const threeD = !this.model.hasActiveWorkPlane
+
     const gridSize = this.model.gridHelper.size
     const gridDivisions = this.model.gridHelper.divisions
     const gridStep = gridSize / gridDivisions
-    const snappedGrid = this.snapToGrid(this.model.pointerCoords, gridStep)
-    const {snappedEndPoint, elementId } = this.getClosestEndPoint() || { snappedEndPoint: null, elementId: null }
+    const snappedGrid = threeD ? null : this.snapToGrid(this.model.pointerCoords, gridStep)
+    const {snappedEndPoint, elementId } = this.getClosestEndPoint(threeD) || { snappedEndPoint: null, elementId: null }
     
 
     this.snappedNode = undefined
     this.snappedCoords = null
     this.snappedScreenCoords = null
 
-    if(this.onNode && snappedEndPoint && elementId){
-      const node = this.model?.nodes?.find((node) => node.id === elementId)
+    if(this.onNode && snappedEndPoint){
+      // The hovered mesh may be a NODE mesh (elementId = node id) or a MEMBER
+      // (elementId = member id, whose two endpoint vertices are the candidates)
+      // — resolve the real node by position so member endpoints are snappable.
+      const node = this.model?.nodes?.find((n) => n.id === elementId)
+        ?? findNodeAtPosition(this.model.nodes, snappedEndPoint)
       if(node){
+        if (threeD) {
+          // 3D mode: any existing node is a valid snap at its TRUE position —
+          // no plane-distance rejection, no projection onto a plane. The member
+          // will connect exactly where the node lives.
+          this.snappedCoords = snappedEndPoint.clone()
+          this.snappedNode = node
+          this.model?.labeler?.batchUpdateOrCreate([{
+            id : 'endPointSnap',
+            position : snappedEndPoint.clone(),
+            text : '',
+            type : 'endPointSnap'
+          }])
+          const projected = this.snappedCoords.clone().project(this.model.camera.cam)
+          this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
+        } else {
         const plane = this.model.worldPlane
         // Only snap a node that lies on the active working plane — never let a
         // draw pick snap to a node sitting on another level / axis.
@@ -138,9 +163,10 @@ class Snapper {
           const projected = this.snappedCoords.clone().project(this.model.camera.cam)
           this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
         }
+        }
       }
     }
-    else if(this.onGrid && snappedGrid){
+    else if(!threeD && this.onGrid && snappedGrid){
       this.model?.labeler?.batchUpdateOrCreate([{
         id : 'gridSnap',
         position : snappedGrid,
@@ -168,7 +194,7 @@ class Snapper {
     return worldPosition
 
   }
-  getClosestEndPoint() {
+  getClosestEndPoint(threeD: boolean = false) {
     if(!this.onNode) return
 
     const mesh = this.model.selector?.hovered 
@@ -236,8 +262,9 @@ class Snapper {
     for(const vertex of vertices){
       const v = new THREE.Vector3(vertex[0], vertex[1], vertex[2])
       // Reject vertices off the active working plane so endpoint snaps never
-      // jump to a node on another level / axis.
-      if (Math.abs(this.model.worldPlane.distanceToPoint(v)) > this.planeThreshold) continue
+      // jump to a node on another level / axis. In 3D mode (no workplane) every
+      // existing node is a valid snap target regardless of its height.
+      if (!threeD && Math.abs(this.model.worldPlane.distanceToPoint(v)) > this.planeThreshold) continue
       const vertexProjected = v.clone().project(this.model.camera.cam)
       const vertexOnScreen = new THREE.Vector2(vertexProjected.x, vertexProjected.y)
       const distance = vertexOnScreen.distanceTo(pointer)

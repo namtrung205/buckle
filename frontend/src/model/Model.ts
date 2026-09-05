@@ -222,6 +222,16 @@ export class Model {
     this.updateGizmoOffset();
   };
 
+  /**
+   * True when the user has set a working plane (axes / level / grid line / 3
+   * picked points). The default 'world' OXY plan means NO workplane is active,
+   * so drawing runs in true 3D mode: members can only be created by snapping to
+   * existing nodes (never by picking free points on the world grid / plane).
+   */
+  get hasActiveWorkPlane(): boolean {
+    return this.workingPlane.source !== 'world';
+  }
+
   /** Resolve a viewport-picked mesh → its owning member/node id and focus it. */
   focusFromSelection = () => {
     const sel = this.selector.selected?.[this.selector.selected.length - 1];

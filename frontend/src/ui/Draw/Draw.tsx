@@ -78,7 +78,9 @@ const DrawPanel = observer(() => {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.6, borderRadius: '4px', border: `1px solid ${colors.border}`, backgroundColor: 'rgba(0,0,0,0.12)' }}>
         <Typography sx={{ fontSize: '0.68rem', color: colors.textFaint, flexShrink: 0 }}>Plane:</Typography>
         <Typography sx={{ fontSize: '0.72rem', color: colors.accentSoft, fontWeight: 600, fontFamily: '"Consolas", "Roboto Mono", ui-monospace, monospace' }}>
-          {model?.workingPlane?.label ?? '—'}
+          {model?.hasActiveWorkPlane
+            ? (model?.workingPlane?.label ?? '—')
+            : '3D (no workplane)'}
         </Typography>
       </Box>
 
@@ -104,8 +106,12 @@ const DrawPanel = observer(() => {
         }}
       >
         {drawing
-          ? 'Click the viewport to place members. Right-click or Esc to stop the current stroke.'
-          : 'Pick a section and press Start, then click in the viewport to draw members.'}
+          ? (model?.hasActiveWorkPlane
+            ? 'Click the viewport to place members. Right-click or Esc to stop the current stroke.'
+            : '3D mode — every endpoint must snap to an EXISTING node (no free points on the grid/plane). Right-click or Esc to stop.')
+          : (model?.hasActiveWorkPlane
+            ? 'Pick a section and press Start, then click in the viewport to draw members.'
+            : 'No workplane active — 3D mode: members can only be drawn between EXISTING nodes. Pick a section and press Start, then click a node to begin.')}
       </Typography>
 
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 1.5 }}>
