@@ -18,18 +18,8 @@ const UNIT_ITEMS: { label: string; unit: string; diagramTypes?: string[] }[] = [
 const StatusBar = () => {
   const model = useModel();
   
-  const selectedMeshes = model?.selector.selected || [];
-  let nodesCount = 0;
-  let membersCount = 0;
-
-  selectedMeshes.forEach(item => {
-    let type = item.object.userData?.type;
-    if (!type && item.object.parent) {
-      type = item.object.parent.userData?.type;
-    }
-    if (type === 'node') nodesCount++;
-    if (type === 'elasticBeamColumn') membersCount++;
-  });
+  const nodesCount = model?.selectedNodeIds.length ?? 0;
+  const membersCount = model?.selectedMemberIds.length ?? 0;
 
   // Highlight the unit matching the active results diagram (if any)
   const activeType: string | null = model?.postProcessing?.activeType ?? null;

@@ -7,7 +7,6 @@ import { Level } from '../../../types';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import Line from '../Tools/Line';
 import { SelectionBox } from 'three/examples/jsm/interactive/SelectionBox.js';
-import { ENTITY_VISIBLE } from '../../Rendering/StructuralSceneDB';
 
 type Mesh = {
   object: THREE.Mesh
@@ -27,6 +26,7 @@ class Selector {
   selected: Mesh[]
   selectedCenterlineIds: number[] = []
   hoveredCenterlineId: number | null = null
+  hoverFrame: number | null = null
   selectionBox: SelectionBox | null = null;
   selectionHtmlElement: HTMLDivElement | null = null;
   pointerDownPoint: THREE.Vector2 = new THREE.Vector2();
@@ -74,26 +74,19 @@ class Selector {
     makeAutoObservable(this)
   }
 
-  private pickCenterline() {
-    const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
-    this.rayCaster.setFromCamera(pointer, this.model.camera.cam)
-    this.rayCaster.params.Line = {
-      threshold: this.model.pixelToWorld(this.model.camera.controls.target, 6),
-    }
-    const intersections = this.rayCaster.intersectObject(this.model.centerlineRenderer.lines, false)
-    for (const intersection of intersections) {
-      if (intersection.index === undefined || intersection.index === null) continue
-      const renderIndex = Math.floor(intersection.index / 2)
-      if (!(this.model.structuralSceneDB.memberFlags[renderIndex] & ENTITY_VISIBLE)) continue
-      const entityId = this.model.centerlineRenderer.entityIdForVertexIndex(intersection.index)
-      if (entityId !== undefined) return entityId
-    }
-    return null
+  private pickStructuralMember() {
+    if (!this.model.visibility?.members) return null
+    if (this.model.renderMode === 'thin-shell' && !this.model.visibility?.sections) return null
+    return this.model.structuralPicker.pick(
+      this.model.pointerCoords.x,
+      this.model.pointerCoords.y,
+      this.model.camera.cam,
+    )
   }
 
   private hoverCenterline() {
     const startedAt = performance.now()
-    const entityId = this.pickCenterline()
+    const entityId = this.pickStructuralMember()?.entityId ?? null
     this.model.performanceBenchmark?.recordRaycast(
       performance.now() - startedAt,
       this.model.structuralSceneDB.memberCount,
@@ -107,7 +100,7 @@ class Selector {
   }
 
   private clickCenterline() {
-    const entityId = this.pickCenterline()
+    const entityId = this.pickStructuralMember()?.entityId ?? null
     if (entityId === null) {
       if (!this.isCtrlPressed) this.clearCenterlineSelection()
       return
@@ -132,6 +125,13 @@ class Selector {
     this.selectedCenterlineIds = []
   }
 
+  replaceStructuralSelection(ids: readonly number[]) {
+    this.clearCenterlineSelection()
+    const unique = [...new Set(ids)].filter(id => this.model.structuralSceneDB.memberIndexById.has(id))
+    this.selectedCenterlineIds = unique
+    for (const id of unique) this.model.setStructuralMemberState(id, { selected: true })
+  }
+
   syncCenterlineSelectionFromLegacy() {
     this.clearCenterlineSelection()
     const ids = new Set<number>()
@@ -147,6 +147,7 @@ class Selector {
   }
 
   syncLegacySelectionFromCenterline() {
+    this.clearLegacySelection()
     for (const id of this.selectedCenterlineIds) {
       const member = this.model.members.find(candidate => candidate.id === id)
       if (!member?.mesh || this.isMeshSelected(member.mesh)) continue
@@ -160,7 +161,13 @@ class Selector {
   onHover() {
     if (this.enableHover) {
       if (this.model.renderMode !== 'solid-extrude') {
-        this.hoverCenterline()
+        if (this.isBoxActive || this.hoverFrame !== null) return
+        this.hoverFrame = requestAnimationFrame(() => {
+          this.hoverFrame = null
+          if (this.enableHover && this.model.renderMode !== 'solid-extrude' && !this.isBoxActive) {
+            this.hoverCenterline()
+          }
+        })
         return
       }
       const raycastStartedAt = performance.now()
@@ -361,7 +368,7 @@ class Selector {
 
     if (distance <= 5) {
       if (event.button === 2) {
-        if (this.selected.length > 0) {
+        if (this.selected.length > 0 || this.selectedCenterlineIds.length > 0) {
           this.model.openContextMenu(event.clientX, event.clientY);
         }
         return;
@@ -387,6 +394,22 @@ class Selector {
           -((event.clientY - rect.top) / rect.height) * 2 + 1,
           0.5
         );
+
+        if (this.model.renderMode !== 'solid-extrude') {
+          const ids = this.model.structuralPicker.windowSelector.select(
+            this.model.camera.cam,
+            this.selectionBox.startPoint,
+            this.selectionBox.endPoint,
+          )
+          if (!this.isCtrlPressed) this.clearCenterlineSelection()
+          const selected = new Set(this.selectedCenterlineIds)
+          for (const id of ids) selected.add(id)
+          this.selectedCenterlineIds = [...selected]
+          for (const id of ids) this.model.setStructuralMemberState(id, { selected: true })
+          this.model.closeContextMenu()
+          this.isDragging = false
+          return
+        }
 
         const allSelected = this.selectionBox.select();
         const meshesArray: THREE.Mesh[] = [];
@@ -431,6 +454,7 @@ class Selector {
     this.isDragging = false;
   }
   dispose() {
+    if (this.hoverFrame !== null) cancelAnimationFrame(this.hoverFrame)
     window.removeEventListener('pointermove', this.onHover);
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerdown', this.onPointerDown);
@@ -527,6 +551,10 @@ class Selector {
       this.model.setStructuralMemberState(this.hoveredCenterlineId, { hovered: false })
       this.hoveredCenterlineId = null
     }
+    this.clearLegacySelection()
+  }
+
+  private clearLegacySelection() {
     this.selected.forEach(m => {
       if (Array.isArray(m.object.material)) {
         const material = m.object.material as THREE.MeshLambertMaterial[]

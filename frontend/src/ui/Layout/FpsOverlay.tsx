@@ -67,7 +67,7 @@ const FpsOverlay = observer(() => {
       <Box>GEO {snapshot.geometries} · TEX {snapshot.textures} · PROGRAM {snapshot.programs}</Box>
       <Box>CPU update {snapshot.cpuUpdateMsAvg} · submit {snapshot.renderSubmitMsAvg} · labels {snapshot.labelRenderMsAvg} ms</Box>
       <Box>RAY P95 {snapshot.raycastMsP95} ms · PICK {snapshot.pickables.toLocaleString()}</Box>
-      <Box>SELECTED {model.selector?.selectedCenterlineIds.length ?? 0}</Box>
+      <Box>SELECTED {model.selectedMemberIds.length}</Box>
       <Box>MODE {model.renderMode} · QUALITY {model.qualityProfile} · WebGL2</Box>
       {benchmark.fixture && (
         <Box>FIXTURE {benchmark.fixture.requestedBeamCount.toLocaleString()} beams · load {benchmark.fixture.loadMs} ms</Box>

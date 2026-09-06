@@ -23,7 +23,7 @@ các goal tuần tự có artifact, performance gate và bước xác minh rõ r
 | 2 | Render Mode setting + data-driven centerline | Completed |
 | 3 | Parametric thin-shell H/I + orientation shader | Completed |
 | 4 | U/L/Box/Pipe/custom thin-shell families | Completed |
-| 5 | GPU ID picking + interaction buffers | Queued |
+| 5 | GPU ID picking + interaction buffers | Completed |
 | 6 | ResultStore + stress/strain shader | Queued |
 | 7 | Procedural N/V/T/M diagrams | Queued |
 | 8 | SDF text + instanced structural symbols | Queued |

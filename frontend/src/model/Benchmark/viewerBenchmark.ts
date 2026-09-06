@@ -120,6 +120,7 @@ export default class ViewerBenchmark {
   lastFrameTimestamp = 0
   lastPublishTimestamp = 0
   pickables = 0
+  private mainRenderStats = { calls: 0, triangles: 0, lines: 0, points: 0 }
 
   constructor(model: Model) {
     this.model = model
@@ -141,6 +142,13 @@ export default class ViewerBenchmark {
   }
 
   recordFrame(timestampMs: number, updateMs: number, renderSubmitMs: number) {
+    const render = this.model.renderer.info.render
+    this.mainRenderStats = {
+      calls: render.calls,
+      triangles: render.triangles,
+      lines: render.lines,
+      points: render.points,
+    }
     const enabled = this.running || this.model.showFps
     if (!enabled) {
       this.lastFrameTimestamp = timestampMs
@@ -227,10 +235,10 @@ export default class ViewerBenchmark {
       labelRenderMsAvg: round(this.average(this.labelSamples)),
       raycastMsLast: round(this.raycastSamples[this.raycastSamples.length - 1] ?? 0),
       raycastMsP95: round(this.percentile(this.raycastSamples, 0.95)),
-      drawCalls: info.render.calls,
-      triangles: info.render.triangles,
-      lines: info.render.lines,
-      points: info.render.points,
+      drawCalls: this.mainRenderStats.calls,
+      triangles: this.mainRenderStats.triangles,
+      lines: this.mainRenderStats.lines,
+      points: this.mainRenderStats.points,
       geometries: info.memory.geometries,
       textures: info.memory.textures,
       programs: info.programs?.length ?? 0,
@@ -323,12 +331,15 @@ export default class ViewerBenchmark {
       controlsEnabled: controls.enabled,
       hoverEnabled: this.model.selector.enableHover,
       pointer: this.model.pointerCoords.clone(),
+      structuralSelection: [...this.model.selector.selectedCenterlineIds],
     }
 
     this.running = true
     this.model.showFps = true
     this.report = ''
     controls.enabled = false
+    this.model.selector.isBoxActive = false
+    this.model.selector.isDragging = false
 
     try {
       this.phase = 'Warmup'
@@ -406,6 +417,9 @@ export default class ViewerBenchmark {
       controls.enabled = original.controlsEnabled
       this.model.selector.enableHover = original.hoverEnabled
       this.model.pointerCoords.copy(original.pointer)
+      if (this.model.renderMode !== 'solid-extrude') {
+        this.model.selector.replaceStructuralSelection(original.structuralSelection)
+      }
       camera.updateMatrixWorld()
       this.setProgress(100)
       this.phase = 'Complete'

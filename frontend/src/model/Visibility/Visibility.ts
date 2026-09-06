@@ -34,7 +34,11 @@ class Visibility {
       // member.mesh.visible = visible
 
       const line = member.line
-      if(line) line.mesh.visible = this.model.renderMode === 'solid-extrude' && visible
+      if(line) {
+        line.mesh.visible = this.model.renderMode === 'solid-extrude'
+          && visible
+          && this.model.isStructuralMemberVisible(member.id)
+      }
 
     })
   }
@@ -102,8 +106,9 @@ class Visibility {
     this.sections = visible
     this.model.thinShellRenderer?.setMembersVisible(visible && this.members)
     this.model.members.forEach((member) => {
-      member.mesh.visible = this.model.renderMode === 'solid-extrude' && visible
-      member.edges.visible = this.model.renderMode === 'solid-extrude' && visible
+      const entityVisible = this.model.isStructuralMemberVisible(member.id)
+      member.mesh.visible = this.model.renderMode === 'solid-extrude' && visible && entityVisible
+      member.edges.visible = this.model.renderMode === 'solid-extrude' && visible && entityVisible
     })
   }
 

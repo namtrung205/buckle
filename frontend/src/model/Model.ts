@@ -34,10 +34,11 @@ import { preloadToolCursors, toolCursor } from "./Utils/CursorIcons";
 import ViewerBenchmark from "./Benchmark/viewerBenchmark";
 import { generateStructuralBenchmarkFixture } from "./Benchmark/structuralFixture";
 import { isQualityProfile, isRenderMode, type QualityProfile, type RenderMode } from "./Rendering/contracts";
-import { StructuralSceneDB } from "./Rendering/StructuralSceneDB";
+import { ENTITY_SELECTED, ENTITY_VISIBLE, StructuralSceneDB } from "./Rendering/StructuralSceneDB";
 import { legacyModelToStructuralSource } from "./Rendering/structuralSceneAdapters";
 import CenterlineRenderer from "./Rendering/CenterlineRenderer";
 import ThinShellRenderer from "./Rendering/ThinShellRenderer";
+import StructuralGpuPicker from "./Rendering/StructuralGpuPicker";
 export type PointerCoords = {
   x: number;
   y: number;
@@ -72,8 +73,10 @@ export class Model {
   /** Goal-1 render database; the legacy Object3D renderer remains authoritative for now. */
   structuralSceneDB = new StructuralSceneDB()
   structuralSceneDBBuildMs = 0
+  structuralSceneSyncScheduled = false
   centerlineRenderer: CenterlineRenderer
   thinShellRenderer: ThinShellRenderer
+  structuralPicker: StructuralGpuPicker
   /** Last measured frame rate, refreshed ~2×/s from the render loop (0 = not
    *  measured yet). Kept as a low-frequency observable so the HUD re-render
    *  cost stays negligible. */
@@ -370,6 +373,7 @@ export class Model {
 
   /** Collect the node ids currently selected in the viewport. */
   get selectedNodeIds(): number[] {
+    if (this.renderMode !== 'solid-extrude') return [];
     return this.selector.selected
       .map((item: any) => {
         const ud = item.object.userData;
@@ -382,7 +386,8 @@ export class Model {
 
   /** Collect the member ids currently selected in the viewport. */
   get selectedMemberIds(): number[] {
-    return this.selector.selected
+    if (this.renderMode !== 'solid-extrude') return [...this.selector.selectedCenterlineIds];
+    const ids = this.selector.selected
       .map((item: any) => {
         const ud = item.object.userData;
         if (ud?.type === 'elasticBeamColumn') return ud.id;
@@ -390,6 +395,7 @@ export class Model {
         return null;
       })
       .filter((id: number | null): id is number => id != null);
+    return [...new Set(ids)];
   }
 
   /** Delete the nodes currently selected whose own mesh (or parent) carries a node type. */
@@ -405,6 +411,20 @@ export class Model {
     const ids = new Set(this.selectedMemberIds);
     const membersToDelete = this.members.filter((m) => ids.has(m.id));
     membersToDelete.forEach((member) => member?.remove());
+    this.selector.clear();
+  };
+
+  /** Hide selected members through the shared render flag as well as retained
+   * legacy resources, so the state is stable across Render Mode switches. */
+  hideSelectedMembers = () => {
+    for (const id of this.selectedMemberIds) {
+      this.setStructuralMemberState(id, { visible: false });
+      const member = this.members.find((candidate) => candidate.id === id);
+      if (member?.group) member.group.visible = false;
+      if (member?.mesh) member.mesh.visible = false;
+      if (member?.edges) member.edges.visible = false;
+      if (member?.line?.mesh) member.line.mesh.visible = false;
+    }
     this.selector.clear();
   };
 
@@ -489,6 +509,9 @@ export class Model {
     // While results are locked, editing dialogs are blocked (view dialogs stay available)
     if (this.isLocked && this.editingDialogs.includes(dialog)) {
       return false;
+    }
+    if (dialog === 'copy' && this.renderMode !== 'solid-extrude') {
+      this.selector.syncLegacySelectionFromCenterline();
     }
     this.activeDialog = dialog;
     this.updateGizmoOffset();
@@ -687,6 +710,7 @@ export class Model {
     this.centerlineRenderer.setQualityProfile(this.qualityProfile)
     this.thinShellRenderer = new ThinShellRenderer(this.scene, this.layer)
     this.thinShellRenderer.setQualityProfile(this.qualityProfile)
+    this.structuralPicker = new StructuralGpuPicker(this.renderer)
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
     makeAutoObservable(this, {
@@ -696,8 +720,10 @@ export class Model {
       performanceBenchmark: false,
       structuralSceneDB: false,
       structuralSceneDBBuildMs: false,
+      structuralSceneSyncScheduled: false,
       centerlineRenderer: false,
       thinShellRenderer: false,
+      structuralPicker: false,
       legacyStructuralRoot: false,
     })
 
@@ -777,11 +803,38 @@ export class Model {
   /** Snapshot the current legacy domain model into render-ready SoA buffers. */
   syncStructuralSceneDB() {
     const startedAt = performance.now()
+    const previousFlags = new Map<number, number>()
+    for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
+      previousFlags.set(this.structuralSceneDB.memberIds[index], this.structuralSceneDB.memberFlags[index])
+    }
     this.structuralSceneDB.replace(legacyModelToStructuralSource(this))
+    this.selector.selectedCenterlineIds = this.selector.selectedCenterlineIds.filter(id =>
+      this.structuralSceneDB.memberIndexById.has(id),
+    )
+    const selectedIds = new Set(this.selector.selectedCenterlineIds)
+    for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
+      const id = this.structuralSceneDB.memberIds[index]
+      const flags = previousFlags.get(id)
+      if (flags !== undefined) this.structuralSceneDB.memberFlags[index] = flags
+      if (selectedIds.has(id)) this.structuralSceneDB.memberFlags[index] |= ENTITY_SELECTED
+    }
     this.structuralSceneDBBuildMs = performance.now() - startedAt
     this.centerlineRenderer.upload(this.structuralSceneDB)
     this.thinShellRenderer.upload(this.structuralSceneDB)
+    this.structuralPicker.upload(this.structuralSceneDB)
+    this.structuralPicker.warmup(this.camera.cam)
     return this.structuralSceneDB
+  }
+
+  /** Coalesce property edits/deletes made in one UI action into one render-DB rebuild. */
+  scheduleStructuralSceneSync() {
+    if (this.structuralSceneSyncScheduled || !this.centerlineRenderer || !this.thinShellRenderer || !this.structuralPicker) return
+    this.structuralSceneSyncScheduled = true
+    queueMicrotask(() => {
+      this.structuralSceneSyncScheduled = false
+      this.syncStructuralSceneDB()
+      this.applyRenderModeVisibility()
+    })
   }
 
   setRenderMode(mode: RenderMode) {
@@ -809,6 +862,12 @@ export class Model {
   setStructuralMemberState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
     this.centerlineRenderer.setMemberState(entityId, state)
     this.thinShellRenderer.syncMemberState(entityId)
+    this.structuralPicker.syncMemberState(entityId)
+  }
+
+  isStructuralMemberVisible(entityId: number) {
+    const index = this.structuralSceneDB.memberIndexById.get(entityId)
+    return index === undefined || Boolean(this.structuralSceneDB.memberFlags[index] & ENTITY_VISIBLE)
   }
 
   /** Keep legacy objects resident so switching mode is immediate and lossless. */
@@ -831,10 +890,11 @@ export class Model {
     }
 
     for (const member of this.members) {
-      if (member.group) member.group.visible = !useDataDriven
-      if (member.mesh) member.mesh.visible = !useDataDriven && (this.visibility?.sections ?? true)
-      if (member.edges) member.edges.visible = !useDataDriven && (this.visibility?.sections ?? true)
-      if (member.line) member.line.mesh.visible = !useDataDriven && (this.visibility?.members ?? true)
+      const entityVisible = this.isStructuralMemberVisible(member.id)
+      if (member.group) member.group.visible = !useDataDriven && entityVisible
+      if (member.mesh) member.mesh.visible = !useDataDriven && entityVisible && (this.visibility?.sections ?? true)
+      if (member.edges) member.edges.visible = !useDataDriven && entityVisible && (this.visibility?.sections ?? true)
+      if (member.line) member.line.mesh.visible = !useDataDriven && entityVisible && (this.visibility?.members ?? true)
     }
     for (const node of this.nodes) node.mesh.visible = !useDataDriven && (this.visibility?.nodes ?? true)
   }
@@ -938,6 +998,7 @@ export class Model {
     this.workPlaneReferenceVisual?.dispose()
     this.centerlineRenderer?.dispose()
     this.thinShellRenderer?.dispose()
+    this.structuralPicker?.dispose()
     this.legacyStructuralRoot.clear()
     this.gizmo.dispose()
     // Tear down the dedicated nav-cube canvas + its WebGL context. (The canvas
@@ -965,6 +1026,7 @@ export class Model {
     this.structuralSceneDB.clear()
     this.centerlineRenderer?.upload(this.structuralSceneDB)
     this.thinShellRenderer?.upload(this.structuralSceneDB)
+    this.structuralPicker?.upload(this.structuralSceneDB)
     
     // Dispose of all loads
     this.loads.forEach(load => load.dispose())

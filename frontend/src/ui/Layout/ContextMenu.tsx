@@ -9,6 +9,8 @@ import {
   ChevronRight as ChevronRightIcon,
   Room as NodeIcon,
   CallSplit as ElementIcon,
+  ContentCopy as CopyIcon,
+  VisibilityOff as HideIcon,
 } from '@mui/icons-material';
 import { useModel } from '../../model/Context';
 import { observer } from 'mobx-react-lite';
@@ -74,6 +76,8 @@ const ContextMenu = observer(() => {
   const deleteMembers = () => { model.deleteSelectedMembers(); handleClose(); };
   const editMembers = () => { model.editMembers(selectedMemberIds); handleClose(); };
   const addMemberLoad = () => { model.addLinearLoadToMembers(selectedMemberIds); handleClose(); };
+  const copyMembers = () => { model.openDialog('copy'); handleClose(); };
+  const hideMembers = () => { model.hideSelectedMembers(); handleClose(); };
 
   // Position the submenu flush to the right edge of the main menu (flip to the
   // left when there is not enough room on screen).
@@ -97,6 +101,26 @@ const ContextMenu = observer(() => {
         sx={menuPaperSx}
       >
         <Box ref={mainMenuRef} sx={{ minWidth: '190px' }} onMouseLeave={closeSubmenuSoon}>
+          {hasMembers && (
+            <>
+              <MenuItem onClick={editMembers} sx={rowSx}>
+                <ListItemIcon sx={{ color: colors.text, minWidth: '32px' }}><EditIcon fontSize="small" /></ListItemIcon>
+                <ListItemText primary="Edit element(s)" primaryTypographyProps={{ fontSize: '0.85rem' }} />
+              </MenuItem>
+              <MenuItem onClick={copyMembers} sx={rowSx}>
+                <ListItemIcon sx={{ color: colors.text, minWidth: '32px' }}><CopyIcon fontSize="small" /></ListItemIcon>
+                <ListItemText primary="Copy element(s)" primaryTypographyProps={{ fontSize: '0.85rem' }} />
+              </MenuItem>
+              <MenuItem onClick={hideMembers} sx={rowSx}>
+                <ListItemIcon sx={{ color: colors.text, minWidth: '32px' }}><HideIcon fontSize="small" /></ListItemIcon>
+                <ListItemText primary="Hide element(s)" primaryTypographyProps={{ fontSize: '0.85rem' }} />
+              </MenuItem>
+              <MenuItem onClick={deleteMembers} sx={{ ...rowSx, '&:hover': { backgroundColor: 'rgba(229, 72, 77, 0.18)' } }}>
+                <ListItemIcon sx={{ color: colors.danger, minWidth: '32px' }}><DeleteIcon fontSize="small" /></ListItemIcon>
+                <ListItemText primary="Delete element(s)" primaryTypographyProps={{ fontSize: '0.85rem', color: colors.danger }} />
+              </MenuItem>
+            </>
+          )}
           <MenuItem
             onMouseEnter={() => openSubmenu('Node')}
             onClick={() => openSubmenu('Node')}
@@ -112,7 +136,7 @@ const ContextMenu = observer(() => {
           </MenuItem>
           <MenuItem
             onMouseEnter={() => openSubmenu('Element')}
-            onClick={() => openSubmenu('Element')}
+            onClick={hasMembers ? editMembers : () => openSubmenu('Element')}
             disabled={!hasMembers}
             sx={{ ...rowSx, ...(openSub === 'Element' ? { backgroundColor: colors.hover } : {}) }}
           >
@@ -173,6 +197,14 @@ const ContextMenu = observer(() => {
                 <MenuItem onClick={addMemberLoad} sx={rowSx}>
                   <ListItemIcon sx={{ color: colors.text, minWidth: '32px' }}><LoadIcon fontSize="small" /></ListItemIcon>
                   <ListItemText primary="Add Load" primaryTypographyProps={{ fontSize: '0.85rem' }} />
+                </MenuItem>
+                <MenuItem onClick={copyMembers} sx={rowSx}>
+                  <ListItemIcon sx={{ color: colors.text, minWidth: '32px' }}><CopyIcon fontSize="small" /></ListItemIcon>
+                  <ListItemText primary="Copy element(s)" primaryTypographyProps={{ fontSize: '0.85rem' }} />
+                </MenuItem>
+                <MenuItem onClick={hideMembers} sx={rowSx}>
+                  <ListItemIcon sx={{ color: colors.text, minWidth: '32px' }}><HideIcon fontSize="small" /></ListItemIcon>
+                  <ListItemText primary="Hide element(s)" primaryTypographyProps={{ fontSize: '0.85rem' }} />
                 </MenuItem>
                 <MenuItem onClick={deleteMembers} sx={{ ...rowSx, '&:hover': { backgroundColor: 'rgba(229, 72, 77, 0.18)' } }}>
                   <ListItemIcon sx={{ color: colors.danger, minWidth: '32px' }}><DeleteIcon fontSize="small" /></ListItemIcon>

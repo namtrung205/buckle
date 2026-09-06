@@ -114,6 +114,7 @@ class Node {
     if(index !== -1 ) this.model.nodes.splice(index, 1)
 
     this.dispose()
+    this.model.scheduleStructuralSceneSync()
   }
 
   dispose(){

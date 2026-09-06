@@ -192,13 +192,14 @@ class ElasticBeamColumn {
     this.nodes = nodes
     this.label = label
     this.section = section
-    this.vecxz = this._vecxz()
     this.gamma = gamma
+    this.vecxz = this._vecxz()
     this.release = release
 
     
     this.dispose()
     this.create()
+    this.model.scheduleStructuralSceneSync()
   }
 
   private dispose() {
@@ -266,6 +267,7 @@ class ElasticBeamColumn {
     if (index !== -1) {
       this.model.members.splice(index, 1)
     }
+    this.model.scheduleStructuralSceneSync()
   }
 
   _vecxz() {

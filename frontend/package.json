@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test:fixture": "node --test --experimental-strip-types src/model/Benchmark/structuralFixture.test.ts src/model/Rendering/StructuralSceneDB.test.ts src/model/Rendering/CenterlineRenderer.test.ts src/model/Rendering/memberFrame.test.ts src/model/Rendering/ThinShellRenderer.test.ts",
+    "test:fixture": "node --test --experimental-strip-types src/model/Benchmark/structuralFixture.test.ts src/model/Rendering/StructuralSceneDB.test.ts src/model/Rendering/CenterlineRenderer.test.ts src/model/Rendering/memberFrame.test.ts src/model/Rendering/ThinShellRenderer.test.ts src/model/Rendering/StructuralGpuPicker.test.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
