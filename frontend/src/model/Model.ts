@@ -33,7 +33,14 @@ import ZoomTool from "./Geometry/Tools/Zoom";
 import { preloadToolCursors, toolCursor } from "./Utils/CursorIcons";
 import ViewerBenchmark from "./Benchmark/viewerBenchmark";
 import { generateStructuralBenchmarkFixture } from "./Benchmark/structuralFixture";
-import { isQualityProfile, isRenderMode, type QualityProfile, type RenderMode } from "./Rendering/contracts";
+import {
+  isQualityProfile,
+  isRenderMode,
+  isSelectionMode,
+  type QualityProfile,
+  type RenderMode,
+  type SelectionMode,
+} from "./Rendering/contracts";
 import { ENTITY_SELECTED, ENTITY_VISIBLE, StructuralSceneDB } from "./Rendering/StructuralSceneDB";
 import { legacyModelToStructuralSource } from "./Rendering/structuralSceneAdapters";
 import CenterlineRenderer from "./Rendering/CenterlineRenderer";
@@ -57,6 +64,11 @@ const storedQualityProfile = (): QualityProfile => {
   return isQualityProfile(value) ? value : 'balanced'
 }
 
+const storedSelectionMode = (): SelectionMode => {
+  const value = typeof localStorage === 'undefined' ? null : localStorage.getItem('buckle.selectionMode')
+  return isSelectionMode(value) ? value : 'element1d'
+}
+
 
 
 export class Model {
@@ -69,6 +81,7 @@ export class Model {
   /** Goal-0 schema only: legacy rendering remains unchanged until Goal 2. */
   renderMode: RenderMode = storedRenderMode()
   qualityProfile: QualityProfile = storedQualityProfile()
+  selectionMode: SelectionMode = storedSelectionMode()
   performanceBenchmark: ViewerBenchmark
   /** Goal-1 render database; the legacy Object3D renderer remains authoritative for now. */
   structuralSceneDB = new StructuralSceneDB()
@@ -373,7 +386,7 @@ export class Model {
 
   /** Collect the node ids currently selected in the viewport. */
   get selectedNodeIds(): number[] {
-    if (this.renderMode !== 'solid-extrude') return [];
+    if (this.renderMode !== 'solid-extrude') return [...this.selector.selectedNodeIds];
     return this.selector.selected
       .map((item: any) => {
         const ud = item.object.userData;
@@ -398,6 +411,13 @@ export class Model {
     return [...new Set(ids)];
   }
 
+  get selectedShellIds(): number[] {
+    const ids = this.selector.selected
+      .map((item: any) => item.object.userData?.type === 'shell' ? item.object.userData.id : null)
+      .filter((id: number | null): id is number => id != null)
+    return [...new Set(ids)]
+  }
+
   /** Delete the nodes currently selected whose own mesh (or parent) carries a node type. */
   deleteSelectedNodes = () => {
     const ids = new Set(this.selectedNodeIds);
@@ -412,6 +432,12 @@ export class Model {
     const membersToDelete = this.members.filter((m) => ids.has(m.id));
     membersToDelete.forEach((member) => member?.remove());
     this.selector.clear();
+  };
+
+  deleteSelectedShells = () => {
+    const ids = new Set(this.selectedShellIds)
+    this.shells.filter(shell => ids.has(shell.id)).forEach(shell => shell.remove())
+    this.selector.clear()
   };
 
   /** Hide selected members through the shared render flag as well as retained
@@ -480,6 +506,20 @@ export class Model {
     } as any);
     load.createOrUpdate();
     this.focusLoad(load.id);
+  };
+
+  addPressureLoadToShells = (shellIds: number[]) => {
+    if (!shellIds.length) return
+    const load = new Load(this, {
+      id: Math.floor(Math.random() * 0x7fffffff),
+      name: `Load ${this.loads.length + 1}`,
+      type: 'pressure',
+      targets: shellIds,
+      value: new THREE.Vector3(0, -1, 0),
+      magnitude: 0,
+    } as any)
+    load.createOrUpdate()
+    this.focusLoad(load.id)
   };
 
   /** Create a node at the origin and focus it. */
@@ -804,6 +844,10 @@ export class Model {
   syncStructuralSceneDB() {
     const startedAt = performance.now()
     const previousFlags = new Map<number, number>()
+    const previousNodeFlags = new Map<number, number>()
+    for (let index = 0; index < this.structuralSceneDB.nodeCount; index++) {
+      previousNodeFlags.set(this.structuralSceneDB.nodeIds[index], this.structuralSceneDB.nodeFlags[index])
+    }
     for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
       previousFlags.set(this.structuralSceneDB.memberIds[index], this.structuralSceneDB.memberFlags[index])
     }
@@ -811,12 +855,22 @@ export class Model {
     this.selector.selectedCenterlineIds = this.selector.selectedCenterlineIds.filter(id =>
       this.structuralSceneDB.memberIndexById.has(id),
     )
+    this.selector.selectedNodeIds = this.selector.selectedNodeIds.filter(id =>
+      this.structuralSceneDB.nodeIndexById.has(id),
+    )
     const selectedIds = new Set(this.selector.selectedCenterlineIds)
     for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
       const id = this.structuralSceneDB.memberIds[index]
       const flags = previousFlags.get(id)
       if (flags !== undefined) this.structuralSceneDB.memberFlags[index] = flags
       if (selectedIds.has(id)) this.structuralSceneDB.memberFlags[index] |= ENTITY_SELECTED
+    }
+    const selectedNodeIds = new Set(this.selector.selectedNodeIds)
+    for (let index = 0; index < this.structuralSceneDB.nodeCount; index++) {
+      const id = this.structuralSceneDB.nodeIds[index]
+      const flags = previousNodeFlags.get(id)
+      if (flags !== undefined) this.structuralSceneDB.nodeFlags[index] = flags
+      if (selectedNodeIds.has(id)) this.structuralSceneDB.nodeFlags[index] |= ENTITY_SELECTED
     }
     this.structuralSceneDBBuildMs = performance.now() - startedAt
     this.centerlineRenderer.upload(this.structuralSceneDB)
@@ -859,10 +913,23 @@ export class Model {
     this.thinShellRenderer.setQualityProfile(profile)
   }
 
+  setSelectionMode(mode: SelectionMode) {
+    if (!isSelectionMode(mode) || mode === this.selectionMode) return
+    this.selector.clear()
+    this.closeContextMenu()
+    this.selectionMode = mode
+    localStorage.setItem('buckle.selectionMode', mode)
+  }
+
   setStructuralMemberState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
     this.centerlineRenderer.setMemberState(entityId, state)
     this.thinShellRenderer.syncMemberState(entityId)
     this.structuralPicker.syncMemberState(entityId)
+  }
+
+  setStructuralNodeState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
+    this.centerlineRenderer.setNodeState(entityId, state)
+    this.structuralPicker.syncNodeState(entityId)
   }
 
   isStructuralMemberVisible(entityId: number) {

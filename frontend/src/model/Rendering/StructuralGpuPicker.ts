@@ -45,6 +45,38 @@ const PICK_FRAGMENT_SHADER = /* glsl */ `
   }
 `
 
+const PICK_NODE_VERTEX_SHADER = /* glsl */ `
+  attribute float instanceRenderIndex;
+  attribute float instanceFlags;
+  uniform float pointSizePx;
+  varying float vRenderIndex;
+  varying float vFlags;
+
+  void main() {
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = pointSizePx;
+    vRenderIndex = instanceRenderIndex;
+    vFlags = instanceFlags;
+  }
+`
+
+const PICK_NODE_FRAGMENT_SHADER = /* glsl */ `
+  precision highp float;
+  varying float vRenderIndex;
+  varying float vFlags;
+  bool hasFlag(float value, float flag) { return mod(floor(value / flag), 2.0) > 0.5; }
+  void main() {
+    if (!hasFlag(vFlags, 1.0)) discard;
+    vec2 centered = gl_PointCoord * 2.0 - 1.0;
+    if (dot(centered, centered) > 1.0) discard;
+    float value = vRenderIndex + 1.0;
+    float r = mod(value, 256.0);
+    float g = mod(floor(value / 256.0), 256.0);
+    float b = mod(floor(value / 65536.0), 256.0);
+    gl_FragColor = vec4(r, g, b, 255.0) / 255.0;
+  }
+`
+
 const QUAD_POSITIONS = new Float32Array([
   0, -1, 0, 1, -1, 0, 1, 1, 0,
   0, -1, 0, 1, 1, 0, 0, 1, 0,
@@ -60,6 +92,9 @@ export type StructuralPickBuffers = {
   ends: Float32Array
   renderIndices: Float32Array
   flags: Float32Array
+  nodePositions: Float32Array
+  nodeRenderIndices: Float32Array
+  nodeFlags: Float32Array
 }
 
 export const buildStructuralPickBuffers = (database: StructuralSceneDB): StructuralPickBuffers => {
@@ -67,13 +102,21 @@ export const buildStructuralPickBuffers = (database: StructuralSceneDB): Structu
   const ends = new Float32Array(database.memberCount * 3)
   const renderIndices = new Float32Array(database.memberCount)
   const flags = new Float32Array(database.memberCount)
+  const nodePositions = new Float32Array(database.nodeCount * 3)
+  const nodeRenderIndices = new Float32Array(database.nodeCount)
+  const nodeFlags = new Float32Array(database.nodeCount)
   for (let index = 0; index < database.memberCount; index++) {
     starts.set(database.memberEndpoints.subarray(index * 6, index * 6 + 3), index * 3)
     ends.set(database.memberEndpoints.subarray(index * 6 + 3, index * 6 + 6), index * 3)
     renderIndices[index] = index
     flags[index] = database.memberFlags[index]
   }
-  return { starts, ends, renderIndices, flags }
+  for (let index = 0; index < database.nodeCount; index++) {
+    nodePositions.set(database.nodePositions.subarray(index * 3, index * 3 + 3), index * 3)
+    nodeRenderIndices[index] = index
+    nodeFlags[index] = database.nodeFlags[index]
+  }
+  return { starts, ends, renderIndices, flags, nodePositions, nodeRenderIndices, nodeFlags }
 }
 
 type SpatialChunk = { first: number; count: number; box: THREE.Box3 }
@@ -125,6 +168,22 @@ export class StructuralWindowSelector {
     }
     return result
   }
+
+  selectNodes(camera: THREE.Camera, start: { x: number; y: number }, end: { x: number; y: number }) {
+    const database = this.database
+    if (!database) return []
+    camera.updateMatrixWorld()
+    const minX = Math.min(start.x, end.x), maxX = Math.max(start.x, end.x)
+    const minY = Math.min(start.y, end.y), maxY = Math.max(start.y, end.y)
+    const result: number[] = []
+    for (let index = 0; index < database.nodeCount; index++) {
+      if (!(database.nodeFlags[index] & ENTITY_VISIBLE)) continue
+      const point = new THREE.Vector3().fromArray(database.nodePositions, index * 3).project(camera)
+      if (point.z < -1 || point.z > 1) continue
+      if (pointInside(point.x, point.y, minX, minY, maxX, maxY)) result.push(database.nodeIds[index])
+    }
+    return result
+  }
 }
 
 const pointInside = (x: number, y: number, minX: number, minY: number, maxX: number, maxY: number) =>
@@ -171,6 +230,8 @@ export default class StructuralGpuPicker {
   readonly geometry = new THREE.InstancedBufferGeometry()
   readonly scene = new THREE.Scene()
   readonly mesh: THREE.Mesh
+  readonly nodeGeometry = new THREE.BufferGeometry()
+  readonly nodePoints: THREE.Points
   readonly windowSelector = new StructuralWindowSelector()
   private readonly target = new THREE.WebGLRenderTarget(1, 1, {
     format: THREE.RGBAFormat,
@@ -183,6 +244,7 @@ export default class StructuralGpuPicker {
   private readonly pixel = new Uint8Array(4)
   private database: StructuralSceneDB | null = null
   private flags = new Float32Array(0)
+  private nodeFlags = new Float32Array(0)
   private signature = ''
   private dirty = true
   private readonly renderer: THREE.WebGLRenderer
@@ -205,19 +267,36 @@ export default class StructuralGpuPicker {
     })
     this.mesh = new THREE.Mesh(this.geometry, material)
     this.mesh.frustumCulled = false
-    this.scene.add(this.mesh)
+    const nodeMaterial = new THREE.ShaderMaterial({
+      vertexShader: PICK_NODE_VERTEX_SHADER,
+      fragmentShader: PICK_NODE_FRAGMENT_SHADER,
+      uniforms: { pointSizePx: { value: 14 } },
+      blending: THREE.NoBlending,
+      depthTest: true,
+      depthWrite: true,
+      toneMapped: false,
+    })
+    this.nodePoints = new THREE.Points(this.nodeGeometry, nodeMaterial)
+    this.nodePoints.frustumCulled = false
+    this.nodePoints.visible = false
+    this.scene.add(this.mesh, this.nodePoints)
   }
 
   upload(database: StructuralSceneDB) {
     this.database = database
     const buffers = buildStructuralPickBuffers(database)
     this.flags = buffers.flags
+    this.nodeFlags = buffers.nodeFlags
     this.geometry.setAttribute('instanceStart', new THREE.InstancedBufferAttribute(buffers.starts, 3))
     this.geometry.setAttribute('instanceEnd', new THREE.InstancedBufferAttribute(buffers.ends, 3))
     this.geometry.setAttribute('instanceRenderIndex', new THREE.InstancedBufferAttribute(buffers.renderIndices, 1))
     this.geometry.setAttribute('instanceFlags', new THREE.InstancedBufferAttribute(buffers.flags, 1))
     delete (this.geometry as THREE.InstancedBufferGeometry & { _maxInstanceCount?: number })._maxInstanceCount
     this.geometry.instanceCount = database.memberCount
+    this.nodeGeometry.setAttribute('position', new THREE.BufferAttribute(buffers.nodePositions, 3))
+    this.nodeGeometry.setAttribute('instanceRenderIndex', new THREE.BufferAttribute(buffers.nodeRenderIndices, 1))
+    this.nodeGeometry.setAttribute('instanceFlags', new THREE.BufferAttribute(buffers.nodeFlags, 1))
+    this.nodeGeometry.setDrawRange(0, database.nodeCount)
     this.windowSelector.upload(database)
     this.invalidate()
   }
@@ -230,20 +309,30 @@ export default class StructuralGpuPicker {
     this.invalidate()
   }
 
+  syncNodeState(entityId: number) {
+    const index = this.database?.nodeIndexById.get(entityId)
+    if (index === undefined || !this.database) return
+    this.nodeFlags[index] = this.database.nodeFlags[index]
+    ;(this.nodeGeometry.getAttribute('instanceFlags') as THREE.BufferAttribute).needsUpdate = true
+    this.invalidate()
+  }
+
   invalidate() { this.dirty = true }
 
   /** Compile and populate the ID target during model loading, avoiding a shader
    * compilation hitch on the user's first hover/click. */
   warmup(camera: THREE.Camera) {
-    this.pick(-1, -1, camera)
+    this.pick(-1, -1, camera, 'member')
+    this.pick(-1, -1, camera, 'node')
   }
 
-  pick(ndcX: number, ndcY: number, camera: THREE.Camera): StructuralPickResult | null {
+  pick(ndcX: number, ndcY: number, camera: THREE.Camera, kind: 'member' | 'node' = 'member'): StructuralPickResult | null {
     const database = this.database
-    if (!database || database.memberCount === 0) return null
+    const count = kind === 'member' ? database?.memberCount ?? 0 : database?.nodeCount ?? 0
+    if (!database || count === 0) return null
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2())
     const width = Math.max(1, Math.floor(size.x)), height = Math.max(1, Math.floor(size.y))
-    const signature = `${width}:${height}:${camera.projectionMatrix.elements.join(',')}:${camera.matrixWorld.elements.join(',')}`
+    const signature = `${kind}:${width}:${height}:${camera.projectionMatrix.elements.join(',')}:${camera.matrixWorld.elements.join(',')}`
     if (this.dirty || signature !== this.signature || this.target.width !== width || this.target.height !== height) {
       this.target.setSize(width, height)
       ;(this.mesh.material as THREE.ShaderMaterial).uniforms.viewportSize.value.set(width, height)
@@ -251,6 +340,8 @@ export default class StructuralGpuPicker {
       const previousClearColor = this.renderer.getClearColor(new THREE.Color()).clone()
       const previousClearAlpha = this.renderer.getClearAlpha()
       this.renderer.setRenderTarget(this.target)
+      this.mesh.visible = kind === 'member'
+      this.nodePoints.visible = kind === 'node'
       this.renderer.setClearColor(0x000000, 0)
       this.renderer.clear(true, true, false)
       this.renderer.render(this.scene, camera)
@@ -263,14 +354,18 @@ export default class StructuralGpuPicker {
     const y = THREE.MathUtils.clamp(Math.floor((ndcY + 1) * 0.5 * height), 0, height - 1)
     this.renderer.readRenderTargetPixels(this.target, x, y, 1, 1, this.pixel)
     const renderIndex = decodeRenderIndex(this.pixel)
-    if (renderIndex === null || renderIndex >= database.memberCount) return null
-    if (!(database.memberFlags[renderIndex] & ENTITY_VISIBLE)) return null
-    return { renderIndex, entityId: database.memberIds[renderIndex] }
+    if (renderIndex === null || renderIndex >= count) return null
+    const flags = kind === 'member' ? database.memberFlags : database.nodeFlags
+    const ids = kind === 'member' ? database.memberIds : database.nodeIds
+    if (!(flags[renderIndex] & ENTITY_VISIBLE)) return null
+    return { renderIndex, entityId: ids[renderIndex] }
   }
 
   dispose() {
     this.geometry.dispose()
+    this.nodeGeometry.dispose()
     ;(this.mesh.material as THREE.Material).dispose()
+    ;(this.nodePoints.material as THREE.Material).dispose()
     this.target.dispose()
   }
 }

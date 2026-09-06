@@ -10,6 +10,12 @@ export type RenderBackend = 'webgl2' | 'webgpu'
 export type EntityId = number
 export type RenderIndex = number
 
+export const SELECTION_MODES = ['node', 'element1d', 'shell2d'] as const
+export type SelectionMode = (typeof SELECTION_MODES)[number]
+
+export const isSelectionMode = (value: unknown): value is SelectionMode =>
+  typeof value === 'string' && (SELECTION_MODES as readonly string[]).includes(value)
+
 export type StructuralFrameState = {
   camera: THREE.Camera
   viewportWidth: number
@@ -56,4 +62,3 @@ export const isRenderMode = (value: unknown): value is RenderMode =>
 
 export const isQualityProfile = (value: unknown): value is QualityProfile =>
   typeof value === 'string' && (QUALITY_PROFILES as readonly string[]).includes(value)
-

@@ -1,4 +1,4 @@
-import { Box, Typography } from '@mui/material';
+import { Box, MenuItem, Select, Typography } from '@mui/material';
 import { useModel } from '../../model/Context';
 import { observer } from 'mobx-react-lite';
 import { colors, fontFamily } from '../../theme';
@@ -20,6 +20,7 @@ const StatusBar = () => {
   
   const nodesCount = model?.selectedNodeIds.length ?? 0;
   const membersCount = model?.selectedMemberIds.length ?? 0;
+  const shellsCount = model?.selectedShellIds.length ?? 0;
 
   // Highlight the unit matching the active results diagram (if any)
   const activeType: string | null = model?.postProcessing?.activeType ?? null;
@@ -27,7 +28,7 @@ const StatusBar = () => {
   return (
     <Box
       sx={{
-        height: '24px',
+        height: '28px',
         backgroundColor: colors.surface,
         borderTop: '1px solid ' + colors.border,
         display: 'flex',
@@ -56,7 +57,7 @@ const StatusBar = () => {
           })}
         </Box>
 
-        {(nodesCount > 0 || membersCount > 0) && (
+        {(nodesCount > 0 || membersCount > 0 || shellsCount > 0) && (
           <>
             <Typography sx={{ fontSize: '0.7rem', color: colors.textDim, fontWeight: 500 }}>
               S E L E C T I O N :
@@ -71,11 +72,39 @@ const StatusBar = () => {
                 {membersCount} Member{membersCount > 1 ? 's' : ''}
               </Typography>
             )}
+            {shellsCount > 0 && (
+              <Typography sx={{ fontSize: '0.7rem', color: colors.secondary, fontWeight: 500, fontFamily }}>
+                {shellsCount} Shell{shellsCount > 1 ? 's' : ''}
+              </Typography>
+            )}
           </>
         )}
       </Box>
 
-      <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center' }}>
+      <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <Typography sx={{ fontSize: '0.7rem', color: colors.textDim, fontWeight: 500 }}>
+          SELECT MODE:
+        </Typography>
+        <Select
+          value={model?.selectionMode ?? 'element1d'}
+          onChange={(event) => model?.setSelectionMode(event.target.value as 'node' | 'element1d' | 'shell2d')}
+          variant="standard"
+          disableUnderline
+          inputProps={{ 'aria-label': 'Select mode' }}
+          sx={{
+            minWidth: 92,
+            height: 22,
+            color: colors.text,
+            fontSize: '0.7rem',
+            fontFamily,
+            '& .MuiSelect-select': { py: 0, pr: '22px !important' },
+            '& .MuiSvgIcon-root': { color: colors.textDim, fontSize: 16 },
+          }}
+        >
+          <MenuItem value="node">Node</MenuItem>
+          <MenuItem value="element1d">Element (1D)</MenuItem>
+          <MenuItem value="shell2d">Shell (2D)</MenuItem>
+        </Select>
         <Typography
           sx={{
             fontSize: '0.7rem',

@@ -194,6 +194,10 @@ export class StructuralSceneDB {
     return index >= 0 && index < this.memberCount ? this.memberIds[index] : undefined
   }
 
+  entityIdForNodeIndex(index: RenderIndex) {
+    return index >= 0 && index < this.nodeCount ? this.nodeIds[index] : undefined
+  }
+
   addNode(node: SceneNodeInput) {
     validateId(node.id, 'Node id')
     if (this.nodeIndexById.has(node.id)) throw new Error(`Duplicate node id ${node.id}`)
@@ -416,6 +420,13 @@ export class StructuralSceneDB {
     const index = this.requireIndex(this.memberIndexById, id, 'member')
     this.memberFlags[index] = enabled ? this.memberFlags[index] | flag : this.memberFlags[index] & ~flag
     this.dirtyMembers = markRange(this.dirtyMembers, index)
+    this.version++
+  }
+
+  setNodeFlag(id: EntityId, flag: number, enabled: boolean) {
+    const index = this.requireIndex(this.nodeIndexById, id, 'node')
+    this.nodeFlags[index] = enabled ? this.nodeFlags[index] | flag : this.nodeFlags[index] & ~flag
+    this.dirtyNodes = markRange(this.dirtyNodes, index)
     this.version++
   }
 
