@@ -65,6 +65,7 @@ class Shell {
     this.mesh.userData.label = this.label;
 
     this.model.scene.add(this.mesh);
+    this.model.shellBatch?.scheduleRebuild();
   };
 
   dispose = () => {
@@ -81,6 +82,7 @@ class Shell {
         this.mesh.parent.remove(this.mesh);
       }
     }
+    this.model.shellBatch?.scheduleRebuild();
   };
 
   remove = () => {

@@ -1,6 +1,16 @@
 import * as THREE from "three";
 import { Model } from "../Model";
 import { Labeler, ElasticBeamColumn } from "../index";
+
+type ArrowInstance = {
+  direction: THREE.Vector3
+  origin: THREE.Vector3
+  length: number
+  color: number
+  headLength: number
+  headWidth: number
+}
+
 class Load {
   model : Model
   targets : number[]
@@ -75,6 +85,61 @@ class Load {
     this.createLabels()
   }
 
+  /**
+   * Render an arbitrary number of arrows using two draw calls per colour
+   * (shaft + cone) instead of one ArrowHelper object tree per arrow.
+   */
+  private createArrowBatches(arrows: ArrowInstance[]) {
+    const byColor = new Map<number, ArrowInstance[]>()
+    for (const arrow of arrows) {
+      const entries = byColor.get(arrow.color) ?? []
+      entries.push(arrow)
+      byColor.set(arrow.color, entries)
+    }
+
+    const yAxis = new THREE.Vector3(0, 1, 0)
+    const quaternion = new THREE.Quaternion()
+    const matrix = new THREE.Matrix4()
+    const position = new THREE.Vector3()
+    const scale = new THREE.Vector3()
+
+    for (const [color, entries] of byColor) {
+      // Unit geometries are transformed per instance. Low radial segment counts
+      // are sufficient for screen-sized load symbols and keep triangle cost low.
+      const shaftGeometry = new THREE.CylinderGeometry(1, 1, 1, 6, 1, false)
+      const coneGeometry = new THREE.ConeGeometry(0.5, 1, 8, 1, false)
+      const shaftMaterial = new THREE.MeshBasicMaterial({ color })
+      const coneMaterial = new THREE.MeshBasicMaterial({ color })
+      const shafts = new THREE.InstancedMesh(shaftGeometry, shaftMaterial, entries.length)
+      const cones = new THREE.InstancedMesh(coneGeometry, coneMaterial, entries.length)
+
+      entries.forEach((entry, index) => {
+        const direction = entry.direction.clone().normalize()
+        const headLength = Math.min(entry.headLength, entry.length * 0.8)
+        const shaftLength = Math.max(entry.length - headLength, 0.001)
+        quaternion.setFromUnitVectors(yAxis, direction)
+
+        position.copy(entry.origin).addScaledVector(direction, shaftLength / 2)
+        scale.set(0.012, shaftLength, 0.012)
+        matrix.compose(position, quaternion, scale)
+        shafts.setMatrixAt(index, matrix)
+
+        position.copy(entry.origin).addScaledVector(direction, entry.length - headLength / 2)
+        scale.set(entry.headWidth, headLength, entry.headWidth)
+        matrix.compose(position, quaternion, scale)
+        cones.setMatrixAt(index, matrix)
+      })
+
+      shafts.instanceMatrix.needsUpdate = true
+      cones.instanceMatrix.needsUpdate = true
+      const userData = { id: `load-${this.id}`, type: 'load', originalColor: color }
+      shafts.userData = userData
+      cones.userData = userData
+      this.model.scene.add(shafts, cones)
+      this.mesh.push(shafts, cones)
+    }
+  }
+
   createLinearLoad() {
     const members = this.model.members
     const nodes = this.model.nodes
@@ -95,6 +160,10 @@ class Load {
       arrowLength = ARROW_LEN_MIN + normalizedLoad * (ARROW_LEN_MAX - ARROW_LEN_MIN)
     }
 
+
+    const arrowInstances: ArrowInstance[] = []
+    const rectangleVertices: number[] = []
+    const rectangleIndices: number[] = []
 
     for(const target of this.targets){
       const element = elements.find(e => e.id == target) as ElasticBeamColumn 
@@ -137,26 +206,17 @@ class Load {
 
       const d_vector = loadDirection.clone().negate().multiplyScalar(arrowLength)
 
-       // Create arrows along the element
+      // Queue arrows for a single instanced batch instead of creating 10
+      // ArrowHelper object trees for every target member.
       for(const node of nodesArray){
-        let arrowOrigin = node.clone().add(d_vector)
-        
-        const hex = 0xFF0000
-        const arrowHelper = new THREE.ArrowHelper(
-          loadDirection,
-          arrowOrigin, 
-          arrowLength, 
-          hex, 
-          0.1, 
-          0.1
-        )
-        arrowHelper.userData = {
-          id: `load-${this.id}-${target}`,
-          type: 'load'
-        }
-        arrowHelper.userData.originalColor = '0xFF0000'
-        this.model.scene.add(arrowHelper)
-        this.mesh.push(arrowHelper)
+        arrowInstances.push({
+          direction: loadDirection,
+          origin: node.clone().add(d_vector),
+          length: arrowLength,
+          color: 0xFF0000,
+          headLength: 0.1,
+          headWidth: 0.1,
+        })
       }
       
 
@@ -170,45 +230,30 @@ class Load {
         iNode.clone().add(d_vector),
       ]
       
-      const rectGeometry = new THREE.BufferGeometry();
-      
-      const vertices = [];
-      const indices = [];
-      
-      for (let i = 0; i < 4; i++) {
-        const point = planeNodes[i];
-        vertices.push(point.x, point.y, point.z);
+      const crossProduct = new THREE.Vector3().crossVectors(elementDirection, loadDirection)
+      if (crossProduct.length() >= 0.001) {
+        const base = rectangleVertices.length / 3
+        for (const point of planeNodes) rectangleVertices.push(point.x, point.y, point.z)
+        rectangleIndices.push(base, base + 1, base + 2, base, base + 2, base + 3)
       }
-      
-      indices.push(0, 1, 2);
-      indices.push(0, 2, 3);
-      
-      rectGeometry.setIndex(indices);
-      rectGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-      
-      rectGeometry.computeVertexNormals();
-      const rectMaterial = new THREE.MeshBasicMaterial({ 
+    }
+
+    this.createArrowBatches(arrowInstances)
+    if (rectangleVertices.length) {
+      const rectGeometry = new THREE.BufferGeometry()
+      rectGeometry.setIndex(rectangleIndices)
+      rectGeometry.setAttribute('position', new THREE.Float32BufferAttribute(rectangleVertices, 3))
+      rectGeometry.computeVertexNormals()
+      const rectMaterial = new THREE.MeshBasicMaterial({
         color: 0xFF0000,
         transparent: true,
         opacity: 0.3,
-        side: THREE.DoubleSide
-      });
-      const rectangle = new THREE.Mesh(rectGeometry, rectMaterial);
-      
-      const crossProduct = new THREE.Vector3().crossVectors(elementDirection, loadDirection)
-      if (crossProduct.length() < 0.001) {
-        rectangle.visible = false 
-      }
-      
-      rectangle.userData = {
-        id: `load-${this.id}-${target}`,
-        type: 'load',
-        originalColor : '0xFF0000'
-      }
-      
+        side: THREE.DoubleSide,
+      })
+      const rectangle = new THREE.Mesh(rectGeometry, rectMaterial)
+      rectangle.userData = { id: `load-${this.id}`, type: 'load', originalColor: 0xFF0000 }
       this.model.scene.add(rectangle)
       this.mesh.push(rectangle)
-      
     }
     const index = this.model.loads.findIndex(l => l.id === this.id)
     if(index === -1){
@@ -219,6 +264,7 @@ class Load {
   createNodalLoad() {
     const arrowLength = 1.0
     const direction = this.value.clone().normalize()
+    const arrowInstances: ArrowInstance[] = []
     for (const target of this.targets) {
       const node = this.model.nodes.find(n => n.id === target)
       if (!node)  continue
@@ -265,21 +311,19 @@ class Load {
             }
           }
           
-          const arrowHelper = new THREE.ArrowHelper(
+          arrowInstances.push({
             direction,
-            arrowOrigin,
-            arrowLength,
-            axis.color,
-            0.15,
-            0.1
-          )
-          
-          this.model.scene.add(arrowHelper)
-          this.mesh.push(arrowHelper)
+            origin: arrowOrigin,
+            length: arrowLength,
+            color: axis.color,
+            headLength: 0.15,
+            headWidth: 0.1,
+          })
           
         }
       }
     }
+    this.createArrowBatches(arrowInstances)
     const index = this.model.loads.findIndex(l => l.id === this.id)
     if(index === -1){
       this.model.loads.push(this)
@@ -292,6 +336,7 @@ class Load {
     const SNOW_COLOR = 0x00bcd4; // Cyan/Aqua
     const DEFAULT_COLOR = 0x03a9f4; // Professional Blue
 
+    const arrowInstances: ArrowInstance[] = []
     for (const targetId of this.targets) {
       const shell = this.model.shells.find(s => s.id === targetId);
       if (!shell || shell.nodes.length < 3) continue;
@@ -329,27 +374,20 @@ class Load {
 
       if (direction.length() < 0.1) continue;
 
-      // 4. Create Arrow
-      // Origin should be slightly offset from surface to avoid Z-fighting
+      // Queue the arrow for an instanced batch. Origin stays slightly offset
+      // from the surface to avoid Z-fighting.
       const origin = center.clone().add(direction.clone().multiplyScalar(-arrowLength));
-      
-      const arrowHelper = new THREE.ArrowHelper(
+      arrowInstances.push({
         direction,
         origin,
-        arrowLength,
+        length: arrowLength,
         color,
-        0.35, // headLength (larger for visibility)
-        0.25  // headWidth (larger for visibility)
-      );
-
-      arrowHelper.userData = {
-        id: `load-${this.id}-${targetId}`,
-        type: 'load'
-      };
-
-      this.model.scene.add(arrowHelper);
-      this.mesh.push(arrowHelper);
+        headLength: 0.35,
+        headWidth: 0.25,
+      })
     }
+
+    this.createArrowBatches(arrowInstances)
 
     const index = this.model.loads.findIndex(l => l.id === this.id);
     if (index === -1) {

@@ -16,11 +16,12 @@ import {
   IPNSection,
   UPNSection,
  } from "../../../types";
-import { Line2 } from "three/examples/jsm/lines/Line2.js";
-import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
-import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Label } from "../../../types";
 class ElasticBeamColumn {
+  private static readonly EDGE_MATERIAL = new THREE.LineBasicMaterial({
+    color: 0x2e3944,
+    linewidth: 1.5,
+  })
   model: Model
   id: number
   index: number
@@ -35,6 +36,7 @@ class ElasticBeamColumn {
   line: Line3D | null = null
   edges : THREE.LineSegments = new THREE.LineSegments()
   release: string = ""
+  layer: number
   constructor(model: Model, label: string, nodes: Node[], section: Section, id?: number) {
     this.model = model
     this.id = id ? id : Math.floor(Math.random() * 0x7FFFFFFF)
@@ -43,6 +45,7 @@ class ElasticBeamColumn {
     this.nodes = nodes
     this.label = label ? label : `Member ${this.index}`
     this.section = section
+    this.layer = this.model.layer
     this.mesh = new THREE.Mesh(new THREE.BoxGeometry(0, 0, 0), new THREE.MeshStandardMaterial({ color: 0x888888 }))
     this.vecxz = this._vecxz()
   }
@@ -119,17 +122,16 @@ class ElasticBeamColumn {
     });
 
     // Dark blue-gray edges: read against both the light member body and the dark background
-    const edgeMaterial = new THREE.LineBasicMaterial({
-      color: 0x2e3944,
-      linewidth: 1.5
-    });
+    const edgeMaterial = ElasticBeamColumn.EDGE_MATERIAL;
 
     this.edges = new THREE.LineSegments(edges, edgeMaterial);
     this.mesh = new THREE.Mesh(geometry, material);
 
     this.group = new THREE.Group();
     this.group.add(this.mesh);
-    this.group.add(this.edges);
+    // Outlines are rendered by Model.memberLineBatch. Keep the local edge
+    // geometry on the member as the batch source, but do not submit one draw
+    // call per member.
 
     this.model.scene.add(this.group);
     const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
@@ -155,22 +157,6 @@ class ElasticBeamColumn {
     const qWorld = new THREE.Quaternion().setFromRotationMatrix(m);
     this.group.quaternion.copy(qWorld);
 
-    const lineGeometry = new LineGeometry();
-    lineGeometry.setPositions(positions);
-    const lineMaterial = new LineMaterial({
-      color: 0xa0a0a0,
-      linewidth: 4,
-      resolution: new THREE.Vector2(window.innerWidth, window.innerHeight)
-    });
-    const lineMesh = new Line2(lineGeometry, lineMaterial); // TODO: fix this
-    this.line = {
-      startPoint: this.nodes[0],
-      endPoint: this.nodes[1],
-      mesh: lineMesh,
-      layer: this.model.layer
-    }
-
-
     this.group.position.copy(midpoint);
     this.group.userData.id = this.id
     this.group.userData.type = this.type
@@ -179,12 +165,9 @@ class ElasticBeamColumn {
     this.mesh.visible = this.model.visibility.sections
     this.group.layers.set(this.model.layer)
 
-    this.model.scene.add(lineMesh);
-    lineMesh.userData.id = this.id
-    lineMesh.userData.type = this.type
-    lineMesh.userData.label = this.label
-    lineMesh.visible = true
-    lineMesh.layers.set(this.model.layer)
+    this.line = null
+    this.model.memberLineBatch?.scheduleRebuild()
+    this.model.memberSolidBatch?.scheduleRebuild()
     this.addLabel()
   }
 
@@ -221,13 +204,14 @@ class ElasticBeamColumn {
           if (child.material) {
             if (Array.isArray(child.material)) {
               child.material.forEach((mat) => mat.dispose())
-            } else {
+            } else if (child.material !== ElasticBeamColumn.EDGE_MATERIAL) {
               child.material.dispose()
             }
           }
         }
       })
     }
+    if (this.edges?.geometry) this.edges.geometry.dispose()
     
     // Also dispose the line if it exists
     if (this.line && this.line.mesh) {
@@ -245,6 +229,8 @@ class ElasticBeamColumn {
         this.line.mesh.parent.remove(this.line.mesh)
       }
     }
+    this.model.memberLineBatch?.scheduleRebuild()
+    this.model.memberSolidBatch?.scheduleRebuild()
   }
 
   remove() {
@@ -330,7 +316,7 @@ class ElasticBeamColumn {
     // with quadraticCurveTo/absarc segments. Omitted here for brevity.
 
     // Extrude along z (Three.js default). We’ll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 1 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
@@ -359,7 +345,7 @@ class ElasticBeamColumn {
     shape.holes.push(holePath);
 
     // Extrude along z (Three.js default). We'll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 1 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
@@ -385,7 +371,7 @@ class ElasticBeamColumn {
     shape.lineTo(-W, -H); // close the shape
 
     // Extrude along z (Three.js default). We'll scale to meters later.
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 1 });
 
     // Put centroid at origin: shift by -L/2 in Z
     geom.translate(0, 0, -L * 1E3 / 2);
@@ -400,7 +386,7 @@ class ElasticBeamColumn {
     const r = section.diameter / 2;
     shape.absarc(0, 0, r, 0, Math.PI * 2, false);
 
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 24 });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 1 });
     geom.translate(0, 0, -L * 1E3 / 2);
     const mmToM = 0.001;
     geom.scale(mmToM, mmToM, mmToM);
@@ -430,7 +416,7 @@ class ElasticBeamColumn {
     hole.lineTo(-wi, -hi);
     shape.holes.push(hole);
 
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 1 });
     geom.translate(0, 0, -L * 1E3 / 2);
     const mmToM = 0.001;
     geom.scale(mmToM, mmToM, mmToM);
@@ -454,7 +440,7 @@ class ElasticBeamColumn {
     shape.lineTo(-W, H);
     shape.lineTo(-W, -H);
 
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 1 });
     geom.translate(0, 0, -L * 1E3 / 2);
     const mmToM = 0.001;
     geom.scale(mmToM, mmToM, mmToM);
@@ -476,7 +462,7 @@ class ElasticBeamColumn {
     shape.lineTo(thickness, -b);
     shape.lineTo(0, -b);
 
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 1 });
     // Recentre so the centroid sits on the member axis (approx at b/3).
     geom.translate(-b / 3, -b / 3, -L * 1E3 / 2);
     const mmToM = 0.001;
@@ -502,7 +488,7 @@ class ElasticBeamColumn {
     shape.lineTo(-W, H / 2 - tf);
     shape.lineTo(-W, H / 2);
 
-    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 16 });
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: L * 1E3, bevelEnabled: false, steps: 1 });
     geom.translate(0, 0, -L * 1E3 / 2);
     const mmToM = 0.001;
     geom.scale(mmToM, mmToM, mmToM);

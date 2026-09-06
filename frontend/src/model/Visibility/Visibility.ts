@@ -28,13 +28,7 @@ class Visibility {
 
   showOrHideMembers(visible : boolean){
     this.members = visible
-    this.model.members.forEach((member) => {
-      // member.mesh.visible = visible
-
-      const line = member.line
-      if(line) line.mesh.visible = visible
-
-    })
+    this.model.memberLineBatch.setCenterlinesVisible(visible)
   }
 
   showOrHideMemberLabels(visible : boolean) {
@@ -68,9 +62,7 @@ class Visibility {
   
   showOrHideNodes(visible : boolean){
     this.nodes = visible
-    this.model.nodes.forEach((node) => {
-      node.mesh.visible = visible
-    })
+    this.model.nodeBatch.setVisible(visible)
   }
 
   showOrHideNodeLabels(visible : boolean) {
@@ -97,10 +89,8 @@ class Visibility {
 
   showOrHideSections(visible : boolean){
     this.sections = visible
-    this.model.members.forEach((member) => {
-      member.mesh.visible = visible
-      member.edges.visible = visible
-    })
+    this.model.memberSolidBatch.setVisible(visible)
+    this.model.memberLineBatch.setEdgesVisible(visible)
   }
 
   showOrHideLoads(visible : boolean){

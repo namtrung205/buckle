@@ -4,6 +4,10 @@ import { Label } from "../../../types"
 
 const NODE_SCREEN_RADIUS_PX = 3
 const _nodePos = new THREE.Vector3()
+// All node markers have the same shape. A low-poly shared sphere is visually
+// indistinguishable at the configured 3 px screen radius, while avoiding one
+// 32x32 geometry (~2k triangles) per node.
+const NODE_MARKER_GEOMETRY = new THREE.SphereGeometry(0.05, 8, 6)
 class Node {
   id: number
   name? : string
@@ -23,7 +27,7 @@ class Node {
   {
     if(!this.model) return
 
-    const geometry = new THREE.SphereGeometry(0.05, 32, 32);
+    const geometry = NODE_MARKER_GEOMETRY;
     const material = new THREE.MeshStandardMaterial({ color: 0x0000ff });
     // const material = new THREE.MeshStandardMaterial({ color: 0x575757 });
     const mesh = new THREE.Mesh(geometry, material);
@@ -36,6 +40,7 @@ class Node {
     this.model.scene.add(mesh);
     this.mesh = mesh;
     this.mesh.userData.baseRadius = (geometry as any).parameters?.radius ?? 0.05;
+    this.model.nodeBatch?.scheduleRebuild()
     
     if(!this.name) this.name = `Node ${this.model.nodes.length + 1 }`
 
@@ -117,7 +122,9 @@ class Node {
   }
 
   dispose(){
-    this.mesh.geometry.dispose()
+    // NODE_MARKER_GEOMETRY is shared by every node for the Model lifetime.
+    // Disposing it here would invalidate all remaining node instances.
+    if (this.mesh.geometry !== NODE_MARKER_GEOMETRY) this.mesh.geometry.dispose()
     const ids = [`node-${this.id}`]
     this.model?.labeler.batchDelete(ids) 
     if(Array.isArray(this.mesh.material)){
@@ -130,6 +137,7 @@ class Node {
     if(this.mesh.parent){
       this.mesh.parent.remove(this.mesh)
     }
+    this.model?.nodeBatch?.scheduleRebuild()
   }
 
   /** Keep the node sphere a constant on-screen size regardless of zoom. */

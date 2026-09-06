@@ -30,12 +30,62 @@ import Load from "./Load/Load";
 import { buildModelOnjson } from "../helpers";
 import ToolsController from "./Geometry/Tools/Controller";
 import ZoomTool from "./Geometry/Tools/Zoom";
+import MemberLineBatch from "./Rendering/MemberLineBatch";
+import MemberSolidBatch from "./Rendering/MemberSolidBatch";
+import ShellBatch from "./Rendering/ShellBatch";
+import NodeBatch from "./Rendering/NodeBatch";
 import { preloadToolCursors, toolCursor } from "./Utils/CursorIcons";
 export type PointerCoords = {
   x: number;
   y: number;
   z: number;
 };
+
+export type ViewerPerformanceSnapshot = {
+  fps: number
+  frameMsAvg: number
+  frameMsP95: number
+  frameMsP99: number
+  raycastMsLast: number
+  raycastMsP95: number
+  drawCalls: number
+  triangles: number
+  geometries: number
+  textures: number
+  sceneObjects: number
+  pickables: number
+  labels: number
+}
+
+export type ViewerBenchmarkPhase = ViewerPerformanceSnapshot & {
+  durationMs: number
+  frameSamples: number
+  raycastSamples: number
+}
+
+export type ViewerBenchmarkReport = {
+  benchmarkVersion: string
+  timestamp: string
+  durationsMs: { warmup: number; idle: number; orbit: number; pointerSweep: number }
+  environment: {
+    userAgent: string
+    logicalProcessors: number | null
+    deviceMemoryGb: number | null
+    viewport: { width: number; height: number; devicePixelRatio: number }
+    gpu: string
+  }
+  model: { nodes: number; members: number; shells: number; loads: number; labels: number }
+  batching: {
+    memberSolids: { batches: number; instances: number; mappedEntities: number; activePickProxies: number }
+    nodes: { batches: number; instances: number; mappedEntities: number; activePickProxies: number }
+    shells: { batches: number; instances: number }
+  }
+  phases: {
+    idle: ViewerBenchmarkPhase
+    orbit: ViewerBenchmarkPhase
+    pointerSweep: ViewerBenchmarkPhase
+  }
+}
 
 const SIZE_VECTOR = new THREE.Vector2()
 
@@ -67,6 +117,32 @@ export class Model {
   fpsFrameCount = 0
   fpsAccumMs = 0
   fpsLastFrameTime = 0
+  /** Rolling telemetry used to establish repeatable large-model baselines. */
+  performanceSnapshot: ViewerPerformanceSnapshot = {
+    fps: 0,
+    frameMsAvg: 0,
+    frameMsP95: 0,
+    frameMsP99: 0,
+    raycastMsLast: 0,
+    raycastMsP95: 0,
+    drawCalls: 0,
+    triangles: 0,
+    geometries: 0,
+    textures: 0,
+    sceneObjects: 0,
+    pickables: 0,
+    labels: 0,
+  }
+  // Public so MobX's annotation map can exclude these hot-path mutable buffers.
+  // They remain an internal implementation detail of the telemetry collector.
+  performanceFrameSamples: number[] = []
+  performanceRaycastSamples: number[] = []
+  performanceLastPublish = 0
+  performancePickables = 0
+  benchmarkRunning = false
+  benchmarkPhase = ''
+  benchmarkProgress = 0
+  benchmarkReport = ''
   pointerCoords: THREE.Vector3;
   worldPlane : THREE.Plane;
   snapper : Snapper
@@ -108,6 +184,10 @@ export class Model {
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
   visibility : Visibility
+  memberLineBatch : MemberLineBatch
+  memberSolidBatch : MemberSolidBatch
+  shellBatch : ShellBatch
+  nodeBatch : NodeBatch
   contextMenu = {
     visible: false,
     x: 0,
@@ -650,6 +730,10 @@ export class Model {
     this.nodes = []
     this.members = []
     this.shells = []
+    this.memberLineBatch = new MemberLineBatch(this)
+    this.memberSolidBatch = new MemberSolidBatch(this)
+    this.shellBatch = new ShellBatch(this)
+    this.nodeBatch = new NodeBatch(this)
     this.layer = 0
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
@@ -657,6 +741,10 @@ export class Model {
       fpsFrameCount: false,
       fpsAccumMs: false,
       fpsLastFrameTime: false,
+      performanceFrameSamples: false,
+      performanceRaycastSamples: false,
+      performanceLastPublish: false,
+      performancePickables: false,
     })
 
     // Rasterise the pan / orbit toolbar icons into custom PNG cursors up front,
@@ -717,6 +805,7 @@ export class Model {
     this.renderer.setSize(width, height)
     this.gizmo.update()
     this.labeler.renderer.setSize(width, height)
+    this.memberLineBatch?.updateResolution()
   }
 
   private update = () => {
@@ -725,8 +814,15 @@ export class Model {
     // polluted by the time spent before the loop started.
     const now = performance.now()
     if (this.fpsLastFrameTime) {
+      const frameMs = now - this.fpsLastFrameTime
       this.fpsFrameCount++
-      this.fpsAccumMs += now - this.fpsLastFrameTime
+      this.fpsAccumMs += frameMs
+      // Keep a bounded ~5 second window at 60 FPS. Sorting only happens when
+      // publishing the HUD, never on every animation frame.
+      if (this.showFps) {
+        this.performanceFrameSamples.push(frameMs)
+        if (this.performanceFrameSamples.length > 300) this.performanceFrameSamples.shift()
+      }
       if (this.fpsAccumMs >= 500) {
         this.fps = Math.round((this.fpsFrameCount * 1000) / this.fpsAccumMs)
         this.fpsFrameCount = 0
@@ -752,9 +848,11 @@ export class Model {
     this.camera.cam.updateProjectionMatrix();
     this.reactionViz?.onFrame();
     this.nodes?.forEach((node: any) => node.updateScreenScale?.());
+    this.nodeBatch?.syncMatrices()
     // Grid end bubbles keep a constant on-screen size, just like the nodes.
     this.grids?.forEach((grid) => grid.updateScreenScale());
     this.renderer.render(this.scene, this.camera.cam);
+    this.publishPerformanceSnapshot(now)
     // While the nav cube animates a face-click it owns the camera pose; a
     // concurrent OrbitControls update() would re-roll the orientation mid-flight.
     if (!this.gizmo?.animating) this.camera.controls.update()
@@ -763,6 +861,247 @@ export class Model {
     requestAnimationFrame(this.update);
     this.gizmo?.render()
     this.labeler?.renderer.render(this.scene, this.camera.cam)
+  }
+
+  /** Record picking cost without making pointer-move state observable. */
+  recordRaycastPerformance(durationMs: number, pickables: number) {
+    if (!this.showFps) return
+    this.performancePickables = pickables
+    this.performanceRaycastSamples.push(durationMs)
+    if (this.performanceRaycastSamples.length > 120) this.performanceRaycastSamples.shift()
+  }
+
+  private percentile(samples: number[], percentile: number): number {
+    if (!samples.length) return 0
+    const sorted = [...samples].sort((a, b) => a - b)
+    const index = Math.min(sorted.length - 1, Math.ceil(percentile * sorted.length) - 1)
+    return sorted[Math.max(0, index)]
+  }
+
+  /** Publish at 2 Hz so the diagnostics UI itself has negligible overhead. */
+  private publishPerformanceSnapshot(now: number) {
+    if (!this.showFps) {
+      // Avoid scene traversal, sorting and allocations when diagnostics are off.
+      this.performanceFrameSamples.length = 0
+      this.performanceRaycastSamples.length = 0
+      return
+    }
+    if (now - this.performanceLastPublish < 500) return
+    this.performanceLastPublish = now
+
+    let sceneObjects = 0
+    this.scene.traverse(() => { sceneObjects++ })
+    const frames = this.performanceFrameSamples
+    const avg = frames.length ? frames.reduce((sum, value) => sum + value, 0) / frames.length : 0
+    const raycasts = this.performanceRaycastSamples
+    const info = this.renderer.info
+
+    this.performanceSnapshot = {
+      fps: this.fps,
+      frameMsAvg: Number(avg.toFixed(2)),
+      frameMsP95: Number(this.percentile(frames, 0.95).toFixed(2)),
+      frameMsP99: Number(this.percentile(frames, 0.99).toFixed(2)),
+      raycastMsLast: Number((raycasts[raycasts.length - 1] ?? 0).toFixed(2)),
+      raycastMsP95: Number(this.percentile(raycasts, 0.95).toFixed(2)),
+      drawCalls: info.render.calls,
+      triangles: info.render.triangles,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+      sceneObjects,
+      pickables: this.performancePickables,
+      labels: this.labeler?.count ?? 0,
+    }
+  }
+
+  private resetBenchmarkSamples() {
+    this.performanceFrameSamples.length = 0
+    this.performanceRaycastSamples.length = 0
+    this.performancePickables = 0
+  }
+
+  private waitForBenchmarkPhase(durationMs: number, onFrame?: (elapsedMs: number) => void): Promise<void> {
+    return new Promise(resolve => {
+      const startedAt = performance.now()
+      const tick = (now: number) => {
+        const elapsed = now - startedAt
+        onFrame?.(elapsed)
+        if (elapsed >= durationMs) resolve()
+        else requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+    })
+  }
+
+  private updateBenchmarkProgress(value: number) {
+    const rounded = Math.max(0, Math.min(100, Math.round(value)))
+    if (rounded !== this.benchmarkProgress) this.benchmarkProgress = rounded
+  }
+
+  private captureBenchmarkPhase(durationMs: number): ViewerBenchmarkPhase {
+    const frames = this.performanceFrameSamples
+    const raycasts = this.performanceRaycastSamples
+    const avg = frames.length ? frames.reduce((sum, value) => sum + value, 0) / frames.length : 0
+    let sceneObjects = 0
+    this.scene.traverse(() => { sceneObjects++ })
+    const info = this.renderer.info
+    return {
+      fps: avg > 0 ? Number((1000 / avg).toFixed(1)) : 0,
+      frameMsAvg: Number(avg.toFixed(2)),
+      frameMsP95: Number(this.percentile(frames, 0.95).toFixed(2)),
+      frameMsP99: Number(this.percentile(frames, 0.99).toFixed(2)),
+      raycastMsLast: Number((raycasts[raycasts.length - 1] ?? 0).toFixed(2)),
+      raycastMsP95: Number(this.percentile(raycasts, 0.95).toFixed(2)),
+      drawCalls: info.render.calls,
+      triangles: info.render.triangles,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+      sceneObjects,
+      pickables: this.performancePickables,
+      labels: this.labeler?.count ?? 0,
+      durationMs,
+      frameSamples: frames.length,
+      raycastSamples: raycasts.length,
+    }
+  }
+
+  private getGpuDescription(): string {
+    try {
+      const gl = this.renderer.getContext()
+      const extension = gl.getExtension('WEBGL_debug_renderer_info')
+      return extension ? String(gl.getParameter(extension.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER))
+    } catch {
+      return 'unavailable'
+    }
+  }
+
+  /**
+   * Deterministic in-app benchmark used before/after every viewer optimization.
+   * It intentionally exercises the existing render and selector code paths;
+   * no browser event synthesis or external automation is required.
+   */
+  async runPerformanceBenchmark(): Promise<string> {
+    if (this.benchmarkRunning) return this.benchmarkReport
+
+    const durations = { warmup: 1500, idle: 3000, orbit: 3000, pointerSweep: 3000 }
+    const cam = this.camera.cam
+    const controls = this.camera.controls
+    const original = {
+      position: cam.position.clone(),
+      quaternion: cam.quaternion.clone(),
+      up: cam.up.clone(),
+      target: controls.target.clone(),
+      controlsEnabled: controls.enabled,
+      hoverEnabled: this.selector.enableHover,
+      showFps: this.showFps,
+      pointer: this.pointerCoords.clone(),
+    }
+
+    this.benchmarkRunning = true
+    this.benchmarkReport = ''
+    this.showFps = true
+    controls.enabled = false
+
+    try {
+      this.benchmarkPhase = 'Warmup'
+      this.benchmarkProgress = 0
+      this.resetBenchmarkSamples()
+      await this.waitForBenchmarkPhase(durations.warmup, elapsed => {
+        this.updateBenchmarkProgress(Math.min(14, (elapsed / durations.warmup) * 14))
+      })
+
+      this.benchmarkPhase = 'Idle'
+      this.resetBenchmarkSamples()
+      await this.waitForBenchmarkPhase(durations.idle, elapsed => {
+        this.updateBenchmarkProgress(14 + Math.min(28, (elapsed / durations.idle) * 28))
+      })
+      const idle = this.captureBenchmarkPhase(durations.idle)
+
+      this.benchmarkPhase = 'Orbit'
+      this.resetBenchmarkSamples()
+      const target = controls.target.clone()
+      const currentDistance = Math.max(cam.position.distanceTo(target), 10)
+      const orbitRadius = currentDistance * 0.8
+      const orbitHeight = currentDistance * 0.6
+      cam.position.set(target.x + orbitRadius, target.y + orbitHeight, target.z + orbitRadius)
+      cam.lookAt(target)
+      await this.waitForBenchmarkPhase(durations.orbit, elapsed => {
+        const angle = (elapsed / durations.orbit) * Math.PI * 2
+        cam.position.set(
+          target.x + Math.cos(angle) * orbitRadius,
+          target.y + orbitHeight,
+          target.z + Math.sin(angle) * orbitRadius,
+        )
+        cam.lookAt(target)
+        this.updateBenchmarkProgress(42 + Math.min(29, (elapsed / durations.orbit) * 29))
+      })
+      const orbit = this.captureBenchmarkPhase(durations.orbit)
+
+      this.benchmarkPhase = 'Pointer sweep'
+      cam.position.copy(original.position)
+      cam.quaternion.copy(original.quaternion)
+      cam.up.copy(original.up)
+      controls.target.copy(original.target)
+      cam.updateMatrixWorld()
+      this.selector.enableHover = true
+      this.resetBenchmarkSamples()
+      await this.waitForBenchmarkPhase(durations.pointerSweep, elapsed => {
+        const phase = (elapsed / durations.pointerSweep) * Math.PI * 8
+        this.pointerCoords.set(Math.sin(phase) * 0.8, Math.sin(phase * 0.57) * 0.7, 0)
+        this.selector.onHover()
+        this.updateBenchmarkProgress(71 + Math.min(29, (elapsed / durations.pointerSweep) * 29))
+      })
+      const pointerSweep = this.captureBenchmarkPhase(durations.pointerSweep)
+
+      const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? null
+      const size = this.renderer.getSize(new THREE.Vector2())
+      const report: ViewerBenchmarkReport = {
+        benchmarkVersion: 'viewer3d-v2',
+        timestamp: new Date().toISOString(),
+        durationsMs: durations,
+        environment: {
+          userAgent: navigator.userAgent,
+          logicalProcessors: navigator.hardwareConcurrency || null,
+          deviceMemoryGb: memory,
+          viewport: { width: size.x, height: size.y, devicePixelRatio: window.devicePixelRatio || 1 },
+          gpu: this.getGpuDescription(),
+        },
+        model: {
+          nodes: this.nodes.length,
+          members: this.members.length,
+          shells: this.shells.length,
+          loads: this.loads.length,
+          labels: this.labeler?.count ?? 0,
+        },
+        batching: {
+          memberSolids: this.memberSolidBatch.diagnostics,
+          nodes: this.nodeBatch.diagnostics,
+          shells: this.shellBatch.diagnostics,
+        },
+        phases: { idle, orbit, pointerSweep },
+      }
+      this.benchmarkReport = JSON.stringify(report, null, 2)
+      console.log('=== BUCKLE VIEWER BENCHMARK START ===\n' + this.benchmarkReport + '\n=== BUCKLE VIEWER BENCHMARK END ===')
+      return this.benchmarkReport
+    } catch (error) {
+      console.error('Viewer benchmark failed', error)
+      throw error
+    } finally {
+      cam.position.copy(original.position)
+      cam.quaternion.copy(original.quaternion)
+      cam.up.copy(original.up)
+      controls.target.copy(original.target)
+      controls.enabled = original.controlsEnabled
+      this.selector.enableHover = original.hoverEnabled
+      this.pointerCoords.copy(original.pointer)
+      cam.updateMatrixWorld()
+      this.benchmarkProgress = 100
+      this.benchmarkPhase = 'Complete'
+      this.benchmarkRunning = false
+      // Keep diagnostics visible with the completed report. The user may turn
+      // it off manually after copying; a pre-existing off state is noted only
+      // to avoid silently hiding the result at completion.
+      if (original.showFps) this.showFps = true
+    }
   }
 
   public dispose = () => {
@@ -796,6 +1135,10 @@ export class Model {
     this.labeler.dispose()
     this.levelVisual?.dispose()
     this.workPlaneReferenceVisual?.dispose()
+    this.memberLineBatch?.dispose()
+    this.memberSolidBatch?.dispose()
+    this.shellBatch?.dispose()
+    this.nodeBatch?.dispose()
     this.gizmo.dispose()
     // Tear down the dedicated nav-cube canvas + its WebGL context. (The canvas
     // lived inside the gizmo's overlay, which gizmo.dispose() already removed.)
@@ -855,6 +1198,10 @@ export class Model {
     // Clear post processing
     this.postProcessing.dispose()
     this.reactionViz.dispose()
+    this.memberLineBatch.rebuild()
+    this.memberSolidBatch.rebuild()
+    this.shellBatch.rebuild()
+    this.nodeBatch.rebuild()
     
     // Clear labeler
     this.labeler.deleteAll('effort')

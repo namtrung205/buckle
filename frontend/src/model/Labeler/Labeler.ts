@@ -79,6 +79,11 @@ class Labeler {
   enabled = true
   private labelObjects: CSS2DObject[] = [];
 
+  /** Number of live DOM-backed labels. Exposed for lightweight performance telemetry. */
+  get count(): number {
+    return this.labelObjects.length
+  }
+
   set setupEvent(enabled: boolean) {
     // if (enabled) {
     //  window.addEventListener('click', this.addLabelOnClick)

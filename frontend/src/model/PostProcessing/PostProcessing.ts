@@ -363,6 +363,7 @@ class PostProcessing {
 
     this.activeType = type
     const isStress = (STRESS_TYPES as readonly string[]).includes(type)
+    this.model.memberSolidBatch.setBatchedRenderingEnabled(!(isStress && this.showStressSolid))
     this.unit = type === DEFLECTION_TYPE ? 'mm' : isStress ? STRESS_UNIT : (FORCE_UNITS[type] ?? '')
 
     const selected = output.members.filter(
@@ -843,6 +844,7 @@ class PostProcessing {
     this.membersData = []
     this.hoverMeshes = []
     this.restoreMemberSolids()
+    this.model.memberSolidBatch.setBatchedRenderingEnabled(true)
     this.labels = []
     this.hover.clearTargets()
     this.activeType = null

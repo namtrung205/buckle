@@ -71,8 +71,23 @@ class Selector {
     makeAutoObservable(this)
   }
 
+  private setMeshColor(mesh: THREE.Mesh, color: number) {
+    const material = mesh.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[]
+    if (Array.isArray(material)) material[0]?.color?.setHex(color)
+    else material?.color?.setHex(color)
+
+    let userData = mesh.userData
+    if (!userData?.type && mesh.parent instanceof THREE.Group) userData = mesh.parent.userData
+    if (userData?.type === 'elasticBeamColumn' && typeof userData.id === 'number') {
+      this.model.memberSolidBatch?.setEntityColor(userData.id, color)
+    } else if (userData?.type === 'node' && typeof userData.id === 'number') {
+      this.model.nodeBatch?.setEntityColor(userData.id, color)
+    }
+  }
+
   onHover() {
     if (this.enableHover) {
+      const raycastStartedAt = performance.now()
       const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
       this.rayCaster.setFromCamera(pointer, this.model.camera.cam)
       if (this.model.camera.viewMode == '2d') {
@@ -86,6 +101,7 @@ class Selector {
       this.model.scene.children.forEach(element => this.getMeshes(element, meshesArray))
       // https://github.com/ThatOpen/engine_components/blob/main/packages/front/src/fragments/Highlighter/index.ts
       const intersects = this.rayCaster.intersectObjects(meshesArray, false)
+      this.model.recordRaycastPerformance(performance.now() - raycastStartedAt, meshesArray.length)
       let materialOnHover = null
       if (intersects.length > 0) {
 
@@ -103,21 +119,13 @@ class Selector {
 
             const isPreviousHoverSelected = this.isMeshSelected(this.hovered)
             if (!isPreviousHoverSelected) {
-              if (Array.isArray(materialOnHover)) {
-                materialOnHover[0].color.setHex(meshOriginalColor ? meshOriginalColor : this.originalColor);
-              } else {
-                materialOnHover.color.setHex(meshOriginalColor ? meshOriginalColor : this.originalColor);
-              }
+              this.setMeshColor(this.hovered, meshOriginalColor ? meshOriginalColor : this.originalColor)
             }
           }
           this.hovered = intersects[0].object as THREE.Mesh;
           materialOnHover = this.hovered.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[]
 
-          if (Array.isArray(materialOnHover)) {
-            materialOnHover[0].color.setHex(this.colorOnHover);
-          } else {
-            materialOnHover.color.setHex(this.colorOnHover);
-          }
+          this.setMeshColor(this.hovered, this.colorOnHover)
         }
       }
       else {
@@ -132,11 +140,7 @@ class Selector {
           const meshOriginalColor = userData.originalColor
           if (isSelected) return
           materialOnHover = this.hovered.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[]
-          if (Array.isArray(materialOnHover)) {
-            materialOnHover[0].color.setHex(meshOriginalColor ? meshOriginalColor : this.originalColor);
-          } else {
-            materialOnHover.color.setHex(meshOriginalColor ? meshOriginalColor : this.originalColor);
-          }
+          this.setMeshColor(this.hovered, meshOriginalColor ? meshOriginalColor : this.originalColor)
         }
         // (this.hovered.material as THREE.MeshBasicMaterial).color.setHex( this.originalColor );
         this.hovered = null;
@@ -318,12 +322,7 @@ class Selector {
                 originalColor: meshOriginalColor
               }];
               
-              const material = objectSelect.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[];
-              if (Array.isArray(material)) {
-                material[0].color.setHex(this.colorOnHover);
-              } else {
-                material.color.setHex(this.colorOnHover);
-              }
+              this.setMeshColor(objectSelect, this.colorOnHover)
             }
           }
         });
@@ -353,6 +352,10 @@ class Selector {
       const viewMode = camera.viewMode
       const layer = camera.cam.layers
       const visible = object.visible
+      // Batched rendering keeps one hidden source mesh per entity for precise
+      // legacy raycast/SelectionBox semantics. Its independent active flag
+      // prevents hidden Nodes/Sections from remaining selectable.
+      const pickProxyActive = object.userData?.pickProxyActive === true
       const objectOnLayer = object.layers.test(layer)
       const lineTool = Line.getInstance()
       const meshInProgress = lineTool.mesh
@@ -374,11 +377,11 @@ class Selector {
       if (type === 'elasticBeamColumn' || type === '3dLine' || type === 'node') {
         switch (viewMode) {
           case '2d':
-            if (objectOnLayer && visible && object.uuid !== meshInProgress?.uuid)
+            if (objectOnLayer && (visible || pickProxyActive) && object.uuid !== meshInProgress?.uuid)
               meshesArray.push(object);
             break;
           default:
-            if (visible && object.uuid !== meshInProgress?.uuid)
+            if ((visible || pickProxyActive) && object.uuid !== meshInProgress?.uuid)
               meshesArray.push(object);
             break;
         }
@@ -427,13 +430,7 @@ class Selector {
 
   clear() {
     this.selected.forEach(m => {
-      if (Array.isArray(m.object.material)) {
-        const material = m.object.material as THREE.MeshLambertMaterial[]
-        material[0].color.setHex(m.originalColor)
-      } else {
-        const material = m.object.material as THREE.MeshLambertMaterial
-        material.color.setHex(m.originalColor)
-      }
+      this.setMeshColor(m.object, m.originalColor)
     })
     this.selected = []
   }
@@ -448,12 +445,7 @@ class Selector {
     const object = this.selected.find(m => m.object === mesh)
     this.selected = this.selected.filter(m => m.object !== mesh)
     const originalColor = object!.originalColor
-    const material = mesh.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[]
-    if (Array.isArray(material)) {
-      material[0].color.setHex(originalColor)
-    } else {
-      material.color.setHex(originalColor)
-    }
+    this.setMeshColor(mesh, originalColor)
   }
   divideSelection() {
     const members = this.model.members;
