@@ -3,6 +3,7 @@
 ## Functional gates
 
 - [x] Centerline and thin-shell modes use one offscreen WebGL2 ID pass rather than per-member raycasts.
+- [x] Node mode uses a GPU point-ID pass and shared point-state shader; legacy node spheres stay outside the data-driven render path.
 - [x] The pick buffer stores dense `renderIndex` values and resolves them back to stable domain `entityId` values.
 - [x] Pointer hover is throttled to one request per animation frame and reuses the cached ID target while camera/model state is unchanged.
 - [x] Click selection, Ctrl multi-selection, hover and visibility use shared entity flag buffers.
@@ -12,6 +13,7 @@
 - [x] Selection is canonical across centerline/thin-shell mode switches and synchronizes to retained legacy objects when entering solid-extrude.
 - [x] Status bar and FPS overlay report data-driven member selections.
 - [x] Right-click Edit, Copy, Hide and Delete actions consume the same canonical member IDs.
+- [x] `Select Mode` scopes picking and context actions to Node, Element (1D), or Shell (2D), clearing mixed stale selections when changed.
 - [x] Hidden state survives render-mode switches and global member/section visibility toggles.
 - [x] Property changes and deletes coalesce into one SceneDB rebuild; stable selection/visibility flags survive dense compaction.
 - [x] Benchmark execution preserves the user's pre-existing selection and reports main-scene stats rather than the offscreen pass stats.
@@ -22,7 +24,7 @@
 - [x] Window/crossing semantics and hidden-member exclusion have deterministic tests.
 - [x] Entity resolution remains stable after dense member compaction.
 - [x] Pointer movement performs no O(N) scene traversal or Three.js raycast in data-driven modes.
-- [x] 36 fixture/database/renderer/picking tests pass.
+- [x] 38 fixture/database/renderer/picking tests pass.
 - [x] Production TypeScript/Vite build passes.
 - [x] `git diff --check` passes (line-ending notices only).
 
@@ -57,10 +59,12 @@ sweep with GPU picking P95 at 3.5 ms. Both data-driven modes are below the Goal 
 - [x] Hide clears the selection/status and removes the entity through its shared visibility flag.
 - [x] Copy synchronizes selected domain IDs to the existing legacy copy workflow.
 - [x] Delete schedules SceneDB resynchronization; compaction/ID resolution is covered by the automated golden test.
+- [x] Node click and drag-selection update both the FPS overlay and status bar; Node context menu exposes only Edit/Move/Load/Support/Delete.
+- [x] Element context menu exposes only Edit/Load/Copy/Hide/Delete without a hover submenu.
 
 ## Known limits and deferred work
 
-- GPU ID picking in Goal 5 targets structural members. Data-driven node picking is deferred until nodes gain their own interaction representation.
+- GPU ID picking now covers structural members and nodes. Shell selection still uses the existing shell meshes until shells receive a data-driven batched renderer.
 - WebGL2 `readRenderTargetPixels` is synchronous. The cached render target and frame throttling meet the current 10k latency gate; PBO/fence-based asynchronous readback remains an optional later optimization.
 - The pick target currently matches the drawing-buffer size. A scaled target or small scissored pick pass may reduce memory and invalidation cost on 4K displays.
 - Window/crossing selection uses projected member segments. Profile-volume intersection is intentionally not part of the simplified data-driven selection contract.

@@ -550,7 +550,7 @@ export class Model {
     if (this.isLocked && this.editingDialogs.includes(dialog)) {
       return false;
     }
-    if (dialog === 'copy' && this.renderMode !== 'solid-extrude') {
+    if ((dialog === 'copy' || dialog === 'move') && this.renderMode !== 'solid-extrude') {
       this.selector.syncLegacySelectionFromCenterline();
     }
     this.activeDialog = dialog;

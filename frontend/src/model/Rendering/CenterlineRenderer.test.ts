@@ -66,6 +66,17 @@ test('selection and visibility update GPU flags without replacing the batch', ()
   assert.equal(Number(flags.array[4]) & ENTITY_SELECTED, ENTITY_SELECTED)
 })
 
+test('node selection and hover update the shared point flags without creating meshes', () => {
+  const { db, renderer } = makeRenderer(10)
+  const entityId = db.entityIdForNodeIndex(1)!
+  const pointsBefore = renderer.nodes
+  renderer.setNodeState(entityId, { selected: true, hovered: true })
+  const flags = renderer.nodeGeometry.getAttribute('entityFlags') as THREE.BufferAttribute
+  assert.equal(Number(flags.array[1]) & ENTITY_SELECTED, ENTITY_SELECTED)
+  assert.equal(Number(flags.array[1]) & 4, 4)
+  assert.equal(renderer.nodes, pointsBefore)
+})
+
 test('member gamma does not alter centerline endpoints', () => {
   const { db, renderer } = makeRenderer(10)
   const entityId = db.entityIdForMemberIndex(0)!

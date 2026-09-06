@@ -63,6 +63,7 @@ class Shell {
     this.mesh.userData.id = this.id;
     this.mesh.userData.type = this.type;
     this.mesh.userData.label = this.label;
+    this.mesh.userData.originalColor = 0xeeeeee;
 
     this.model.scene.add(this.mesh);
   };

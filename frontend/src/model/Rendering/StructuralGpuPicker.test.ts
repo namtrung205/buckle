@@ -25,7 +25,10 @@ test('pick buffers keep dense render indices separate from sparse entity IDs', (
   assert.ok(Math.abs(buffers.starts[0] + .8) < 1e-6)
   assert.ok(Math.abs(buffers.starts[3] - .2) < 1e-6)
   assert.deepEqual(Array.from(buffers.starts.slice(6)), [-2, 0, 0])
+  assert.deepEqual(Array.from(buffers.nodeRenderIndices), [0, 1, 2, 3, 4, 5])
+  assert.equal(buffers.nodePositions.length, 18)
   assert.equal(db.entityIdForMemberIndex(1), 305)
+  assert.equal(db.entityIdForNodeIndex(4), 5)
 })
 
 test('RGB pick IDs round-trip and zero remains the no-hit sentinel', () => {
@@ -63,6 +66,22 @@ test('hidden members are excluded from rectangle selection', () => {
   camera.updateMatrixWorld(true)
   const ids = selector.select(camera, new THREE.Vector2(-1, -1), new THREE.Vector2(1, 1))
   assert.deepEqual(ids, [305])
+})
+
+test('node rectangle selection uses stable IDs and excludes hidden nodes', () => {
+  const db = new StructuralSceneDB(source())
+  db.setNodeFlag(2, 1, false)
+  const selector = new StructuralWindowSelector()
+  selector.upload(db)
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, .1, 10)
+  camera.position.z = 5
+  camera.lookAt(0, 0, 0)
+  camera.updateProjectionMatrix()
+  camera.updateMatrixWorld(true)
+  assert.deepEqual(
+    selector.selectNodes(camera, new THREE.Vector2(-.9, -.1), new THREE.Vector2(-.1, .1)),
+    [1],
+  )
 })
 
 test('entity resolution remains stable after dense member compaction', () => {

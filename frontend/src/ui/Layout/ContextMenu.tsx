@@ -11,6 +11,7 @@ import {
 import { useModel } from '../../model/Context';
 import { observer } from 'mobx-react-lite';
 import { colors } from '../../theme';
+import type { ReactNode } from 'react';
 
 const menuPaperSx = {
   '& .MuiPaper-root': {
@@ -38,7 +39,7 @@ const ContextMenu = observer(() => {
 
   const close = () => model.closeContextMenu();
   const action = (callback: () => void) => () => { callback(); close(); };
-  const item = (label: string, icon: React.ReactNode, callback: () => void, danger = false) => (
+  const item = (label: string, icon: ReactNode, callback: () => void, danger = false) => (
     <MenuItem key={label} onClick={action(callback)} sx={danger ? dangerRowSx : rowSx}>
       <ListItemIcon sx={{ color: danger ? colors.danger : colors.text, minWidth: '32px' }}>{icon}</ListItemIcon>
       <ListItemText primary={label} primaryTypographyProps={{ fontSize: '0.85rem', color: danger ? colors.danger : undefined }} />
