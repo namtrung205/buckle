@@ -79,6 +79,10 @@ class Labeler {
   enabled = true
   private labelObjects: CSS2DObject[] = [];
 
+  get count() {
+    return this.labelObjects.length
+  }
+
   set setupEvent(enabled: boolean) {
     // if (enabled) {
     //  window.addEventListener('click', this.addLabelOnClick)

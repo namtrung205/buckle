@@ -7,6 +7,7 @@ import { Level } from '../../../types';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import Line from '../Tools/Line';
 import { SelectionBox } from 'three/examples/jsm/interactive/SelectionBox.js';
+import { ENTITY_VISIBLE } from '../../Rendering/StructuralSceneDB';
 
 type Mesh = {
   object: THREE.Mesh
@@ -24,6 +25,8 @@ class Selector {
   colorOnHover: number
   isCtrlPressed: boolean
   selected: Mesh[]
+  selectedCenterlineIds: number[] = []
+  hoveredCenterlineId: number | null = null
   selectionBox: SelectionBox | null = null;
   selectionHtmlElement: HTMLDivElement | null = null;
   pointerDownPoint: THREE.Vector2 = new THREE.Vector2();
@@ -71,8 +74,96 @@ class Selector {
     makeAutoObservable(this)
   }
 
+  private pickCenterline() {
+    const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
+    this.rayCaster.setFromCamera(pointer, this.model.camera.cam)
+    this.rayCaster.params.Line = {
+      threshold: this.model.pixelToWorld(this.model.camera.controls.target, 6),
+    }
+    const intersections = this.rayCaster.intersectObject(this.model.centerlineRenderer.lines, false)
+    for (const intersection of intersections) {
+      if (intersection.index === undefined || intersection.index === null) continue
+      const renderIndex = Math.floor(intersection.index / 2)
+      if (!(this.model.structuralSceneDB.memberFlags[renderIndex] & ENTITY_VISIBLE)) continue
+      const entityId = this.model.centerlineRenderer.entityIdForVertexIndex(intersection.index)
+      if (entityId !== undefined) return entityId
+    }
+    return null
+  }
+
+  private hoverCenterline() {
+    const startedAt = performance.now()
+    const entityId = this.pickCenterline()
+    this.model.performanceBenchmark?.recordRaycast(
+      performance.now() - startedAt,
+      this.model.structuralSceneDB.memberCount,
+    )
+    if (entityId === this.hoveredCenterlineId) return
+    if (this.hoveredCenterlineId !== null) {
+      this.model.setStructuralMemberState(this.hoveredCenterlineId, { hovered: false })
+    }
+    this.hoveredCenterlineId = entityId
+    if (entityId !== null) this.model.setStructuralMemberState(entityId, { hovered: true })
+  }
+
+  private clickCenterline() {
+    const entityId = this.pickCenterline()
+    if (entityId === null) {
+      if (!this.isCtrlPressed) this.clearCenterlineSelection()
+      return
+    }
+    if (!this.isCtrlPressed) {
+      this.clearCenterlineSelection()
+      this.selectedCenterlineIds = [entityId]
+      this.model.setStructuralMemberState(entityId, { selected: true })
+      return
+    }
+    const selected = this.selectedCenterlineIds.includes(entityId)
+    this.selectedCenterlineIds = selected
+      ? this.selectedCenterlineIds.filter(id => id !== entityId)
+      : [...this.selectedCenterlineIds, entityId]
+    this.model.setStructuralMemberState(entityId, { selected: !selected })
+  }
+
+  private clearCenterlineSelection() {
+    for (const entityId of this.selectedCenterlineIds) {
+      this.model.setStructuralMemberState(entityId, { selected: false })
+    }
+    this.selectedCenterlineIds = []
+  }
+
+  syncCenterlineSelectionFromLegacy() {
+    this.clearCenterlineSelection()
+    const ids = new Set<number>()
+    for (const item of this.selected) {
+      const parentData = item.object.parent instanceof THREE.Group ? item.object.parent.userData : undefined
+      const data = item.object.userData?.type ? item.object.userData : parentData
+      if (data?.type === 'elasticBeamColumn' && typeof data.id === 'number') ids.add(data.id)
+    }
+    this.selectedCenterlineIds = [...ids]
+    for (const id of this.selectedCenterlineIds) {
+      this.model.setStructuralMemberState(id, { selected: true })
+    }
+  }
+
+  syncLegacySelectionFromCenterline() {
+    for (const id of this.selectedCenterlineIds) {
+      const member = this.model.members.find(candidate => candidate.id === id)
+      if (!member?.mesh || this.isMeshSelected(member.mesh)) continue
+      this.selected.push({ object: member.mesh, originalColor: this.originalColor })
+      const material = member.mesh.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[]
+      if (Array.isArray(material)) material[0].color.setHex(this.colorOnHover)
+      else material.color.setHex(this.colorOnHover)
+    }
+  }
+
   onHover() {
     if (this.enableHover) {
+      if (this.model.renderMode !== 'solid-extrude') {
+        this.hoverCenterline()
+        return
+      }
+      const raycastStartedAt = performance.now()
       const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
       this.rayCaster.setFromCamera(pointer, this.model.camera.cam)
       if (this.model.camera.viewMode == '2d') {
@@ -86,6 +177,7 @@ class Selector {
       this.model.scene.children.forEach(element => this.getMeshes(element, meshesArray))
       // https://github.com/ThatOpen/engine_components/blob/main/packages/front/src/fragments/Highlighter/index.ts
       const intersects = this.rayCaster.intersectObjects(meshesArray, false)
+      this.model.performanceBenchmark?.recordRaycast(performance.now() - raycastStartedAt, meshesArray.length)
       let materialOnHover = null
       if (intersects.length > 0) {
 
@@ -145,6 +237,10 @@ class Selector {
   }
   onClick() {
     if (this.enableClick) {
+      if (this.model.renderMode !== 'solid-extrude') {
+        this.clickCenterline()
+        return
+      }
       const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
       this.rayCaster.setFromCamera(pointer, this.model.camera.cam)
       const meshesArray = [] as THREE.Mesh[]
@@ -426,6 +522,11 @@ class Selector {
   }
 
   clear() {
+    this.clearCenterlineSelection()
+    if (this.hoveredCenterlineId !== null) {
+      this.model.setStructuralMemberState(this.hoveredCenterlineId, { hovered: false })
+      this.hoveredCenterlineId = null
+    }
     this.selected.forEach(m => {
       if (Array.isArray(m.object.material)) {
         const material = m.object.material as THREE.MeshLambertMaterial[]

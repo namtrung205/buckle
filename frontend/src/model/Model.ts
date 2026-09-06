@@ -27,10 +27,17 @@ import { GUI } from "lil-gui";
 import { Line3D, Member, Level, mockLevels } from "../types";
 import BoundaryCondition from "./BoundaryCondition/BoundaryCondition";
 import Load from "./Load/Load";
-import { buildModelOnjson } from "../helpers";
+import { buildModelFromJson, buildModelOnjson } from "../helpers";
 import ToolsController from "./Geometry/Tools/Controller";
 import ZoomTool from "./Geometry/Tools/Zoom";
 import { preloadToolCursors, toolCursor } from "./Utils/CursorIcons";
+import ViewerBenchmark from "./Benchmark/viewerBenchmark";
+import { generateStructuralBenchmarkFixture } from "./Benchmark/structuralFixture";
+import { isQualityProfile, isRenderMode, type QualityProfile, type RenderMode } from "./Rendering/contracts";
+import { StructuralSceneDB } from "./Rendering/StructuralSceneDB";
+import { legacyModelToStructuralSource } from "./Rendering/structuralSceneAdapters";
+import CenterlineRenderer from "./Rendering/CenterlineRenderer";
+import ThinShellRenderer from "./Rendering/ThinShellRenderer";
 export type PointerCoords = {
   x: number;
   y: number;
@@ -38,6 +45,16 @@ export type PointerCoords = {
 };
 
 const SIZE_VECTOR = new THREE.Vector2()
+
+const storedRenderMode = (): RenderMode => {
+  const value = typeof localStorage === 'undefined' ? null : localStorage.getItem('buckle.renderMode')
+  return isRenderMode(value) ? value : 'solid-extrude'
+}
+
+const storedQualityProfile = (): QualityProfile => {
+  const value = typeof localStorage === 'undefined' ? null : localStorage.getItem('buckle.qualityProfile')
+  return isQualityProfile(value) ? value : 'balanced'
+}
 
 
 
@@ -48,11 +65,22 @@ export class Model {
   showVolumes = true
   /** On-screen FPS readout toggle (Settings → View → Show FPS). */
   showFps = false
+  /** Goal-0 schema only: legacy rendering remains unchanged until Goal 2. */
+  renderMode: RenderMode = storedRenderMode()
+  qualityProfile: QualityProfile = storedQualityProfile()
+  performanceBenchmark: ViewerBenchmark
+  /** Goal-1 render database; the legacy Object3D renderer remains authoritative for now. */
+  structuralSceneDB = new StructuralSceneDB()
+  structuralSceneDBBuildMs = 0
+  centerlineRenderer: CenterlineRenderer
+  thinShellRenderer: ThinShellRenderer
   /** Last measured frame rate, refreshed ~2×/s from the render loop (0 = not
    *  measured yet). Kept as a low-frequency observable so the HUD re-render
    *  cost stays negligible. */
   fps = 0
   public scene = new THREE.Scene()
+  /** Detached as one unit in centerline mode to avoid traversing legacy objects. */
+  public legacyStructuralRoot = new THREE.Group()
   public camera : Camera
   public renderer =  new THREE.WebGLRenderer();
   public container !: HTMLDivElement
@@ -602,6 +630,7 @@ export class Model {
     
     this.snapper = new Snapper(this)
     this.workingPlane = new WorkingPlane(this)
+    this.performanceBenchmark = new ViewerBenchmark(this)
  
     this.update()
     this.init()
@@ -651,12 +680,25 @@ export class Model {
     this.members = []
     this.shells = []
     this.layer = 0
+    this.legacyStructuralRoot.name = 'LegacyStructuralRoot'
+    this.legacyStructuralRoot.layers.set(this.layer)
+    this.scene.add(this.legacyStructuralRoot)
+    this.centerlineRenderer = new CenterlineRenderer(this.scene, this.layer)
+    this.centerlineRenderer.setQualityProfile(this.qualityProfile)
+    this.thinShellRenderer = new ThinShellRenderer(this.scene, this.layer)
+    this.thinShellRenderer.setQualityProfile(this.qualityProfile)
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
     makeAutoObservable(this, {
       fpsFrameCount: false,
       fpsAccumMs: false,
       fpsLastFrameTime: false,
+      performanceBenchmark: false,
+      structuralSceneDB: false,
+      structuralSceneDBBuildMs: false,
+      centerlineRenderer: false,
+      thinShellRenderer: false,
+      legacyStructuralRoot: false,
     })
 
     // Rasterise the pan / orbit toolbar icons into custom PNG cursors up front,
@@ -708,6 +750,95 @@ export class Model {
     return (pixels * 2 * distance * Math.tan((perspective.fov * Math.PI) / 360)) / height
   }
 
+  /** Replace the current model with an explicit user-requested deterministic fixture. */
+  async loadBenchmarkFixture(beamCount: 1_000 | 10_000, seed = 0x4255434b) {
+    if (this.performanceBenchmark.running) throw new Error('Wait for the active benchmark to finish')
+    this.performanceBenchmark.fixtureLoading = true
+    this.performanceBenchmark.setFixture(null)
+    try {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const startedAt = performance.now()
+      const fixture = generateStructuralBenchmarkFixture({ beamCount, seed })
+      buildModelFromJson(this, fixture)
+      const loadMs = performance.now() - startedAt
+      this.performanceBenchmark.setFixture({
+        kind: fixture.metadata.fixture,
+        version: fixture.metadata.version,
+        seed: fixture.metadata.seed,
+        requestedBeamCount: fixture.metadata.requestedBeamCount,
+        loadMs: Number(loadMs.toFixed(2)),
+      })
+      return this.performanceBenchmark.fixture
+    } finally {
+      this.performanceBenchmark.fixtureLoading = false
+    }
+  }
+
+  /** Snapshot the current legacy domain model into render-ready SoA buffers. */
+  syncStructuralSceneDB() {
+    const startedAt = performance.now()
+    this.structuralSceneDB.replace(legacyModelToStructuralSource(this))
+    this.structuralSceneDBBuildMs = performance.now() - startedAt
+    this.centerlineRenderer.upload(this.structuralSceneDB)
+    this.thinShellRenderer.upload(this.structuralSceneDB)
+    return this.structuralSceneDB
+  }
+
+  setRenderMode(mode: RenderMode) {
+    if (!isRenderMode(mode)) throw new Error(`Unsupported render mode: ${mode}`)
+    const wasDataDriven = this.renderMode !== 'solid-extrude'
+    const willBeDataDriven = mode !== 'solid-extrude'
+    if (willBeDataDriven && !wasDataDriven) {
+      this.selector?.syncCenterlineSelectionFromLegacy()
+    } else if (!willBeDataDriven && wasDataDriven) {
+      this.selector?.syncLegacySelectionFromCenterline()
+    }
+    this.renderMode = mode
+    localStorage.setItem('buckle.renderMode', mode)
+    this.applyRenderModeVisibility()
+  }
+
+  setQualityProfile(profile: QualityProfile) {
+    if (!isQualityProfile(profile)) throw new Error(`Unsupported quality profile: ${profile}`)
+    this.qualityProfile = profile
+    localStorage.setItem('buckle.qualityProfile', profile)
+    this.centerlineRenderer.setQualityProfile(profile)
+    this.thinShellRenderer.setQualityProfile(profile)
+  }
+
+  setStructuralMemberState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
+    this.centerlineRenderer.setMemberState(entityId, state)
+    this.thinShellRenderer.syncMemberState(entityId)
+  }
+
+  /** Keep legacy objects resident so switching mode is immediate and lossless. */
+  applyRenderModeVisibility() {
+    const useCenterlines = this.renderMode === 'centerline-only'
+    const useThinShell = this.renderMode === 'thin-shell'
+    const useDataDriven = useCenterlines || useThinShell
+    this.centerlineRenderer.setVisible(useDataDriven)
+    this.centerlineRenderer.setMembersVisible(useCenterlines && (this.visibility?.members ?? true))
+    this.centerlineRenderer.setNodesVisible(useDataDriven && (this.visibility?.nodes ?? true))
+    this.thinShellRenderer.setVisible(useThinShell)
+    this.thinShellRenderer.setMembersVisible(
+      (this.visibility?.members ?? true) && (this.visibility?.sections ?? true),
+    )
+
+    if (useDataDriven) {
+      this.legacyStructuralRoot.removeFromParent()
+    } else if (this.legacyStructuralRoot.parent !== this.scene) {
+      this.scene.add(this.legacyStructuralRoot)
+    }
+
+    for (const member of this.members) {
+      if (member.group) member.group.visible = !useDataDriven
+      if (member.mesh) member.mesh.visible = !useDataDriven && (this.visibility?.sections ?? true)
+      if (member.edges) member.edges.visible = !useDataDriven && (this.visibility?.sections ?? true)
+      if (member.line) member.line.mesh.visible = !useDataDriven && (this.visibility?.members ?? true)
+    }
+    for (const node of this.nodes) node.mesh.visible = !useDataDriven && (this.visibility?.nodes ?? true)
+  }
+
   private onResize = () => 
 
   {
@@ -724,6 +855,7 @@ export class Model {
     // The first frame only seeds the baseline so the initial sample is not
     // polluted by the time spent before the loop started.
     const now = performance.now()
+    const frameUpdateStartedAt = now
     if (this.fpsLastFrameTime) {
       this.fpsFrameCount++
       this.fpsAccumMs += now - this.fpsLastFrameTime
@@ -751,10 +883,16 @@ export class Model {
     this.camera.updateOrbitTargetMarker(); // orbit pivot bubble follows the target
     this.camera.cam.updateProjectionMatrix();
     this.reactionViz?.onFrame();
+    if (this.renderMode === 'thin-shell') this.thinShellRenderer?.syncDirty()
+    if (this.renderMode !== 'solid-extrude') this.centerlineRenderer?.syncDirty()
     this.nodes?.forEach((node: any) => node.updateScreenScale?.());
     // Grid end bubbles keep a constant on-screen size, just like the nodes.
     this.grids?.forEach((grid) => grid.updateScreenScale());
+    const renderStartedAt = performance.now()
+    const updateMs = renderStartedAt - frameUpdateStartedAt
     this.renderer.render(this.scene, this.camera.cam);
+    const renderSubmitMs = performance.now() - renderStartedAt
+    this.performanceBenchmark?.recordFrame(now, updateMs, renderSubmitMs)
     // While the nav cube animates a face-click it owns the camera pose; a
     // concurrent OrbitControls update() would re-roll the orientation mid-flight.
     if (!this.gizmo?.animating) this.camera.controls.update()
@@ -762,7 +900,9 @@ export class Model {
     this.camera.directionalLight.target.updateMatrixWorld()
     requestAnimationFrame(this.update);
     this.gizmo?.render()
+    const labelRenderStartedAt = performance.now()
     this.labeler?.renderer.render(this.scene, this.camera.cam)
+    this.performanceBenchmark?.recordLabelRender(performance.now() - labelRenderStartedAt)
   }
 
   public dispose = () => {
@@ -796,6 +936,9 @@ export class Model {
     this.labeler.dispose()
     this.levelVisual?.dispose()
     this.workPlaneReferenceVisual?.dispose()
+    this.centerlineRenderer?.dispose()
+    this.thinShellRenderer?.dispose()
+    this.legacyStructuralRoot.clear()
     this.gizmo.dispose()
     // Tear down the dedicated nav-cube canvas + its WebGL context. (The canvas
     // lived inside the gizmo's overlay, which gizmo.dispose() already removed.)
@@ -818,6 +961,10 @@ export class Model {
   public clear = () => {
     // Clear all existing model data
     console.log('Clearing existing this...')
+    this.selector?.clear()
+    this.structuralSceneDB.clear()
+    this.centerlineRenderer?.upload(this.structuralSceneDB)
+    this.thinShellRenderer?.upload(this.structuralSceneDB)
     
     // Dispose of all loads
     this.loads.forEach(load => load.dispose())
@@ -828,10 +975,8 @@ export class Model {
     this.boundaryConditions = []
     
     // Dispose of all members
-    console.log('MEMBERS TO DISPOSE', this.members.length)
     const members = [...this.members]
     members.forEach(member => {
-      console.log('disposing', member)
       member.remove()
     })
     this.members = []

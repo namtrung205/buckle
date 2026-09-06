@@ -131,7 +131,7 @@ class ElasticBeamColumn {
     this.group.add(this.mesh);
     this.group.add(this.edges);
 
-    this.model.scene.add(this.group);
+    this.model.legacyStructuralRoot.add(this.group);
     const midpoint = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
     direction.normalize();
 
@@ -179,7 +179,7 @@ class ElasticBeamColumn {
     this.mesh.visible = this.model.visibility.sections
     this.group.layers.set(this.model.layer)
 
-    this.model.scene.add(lineMesh);
+    this.model.legacyStructuralRoot.add(lineMesh);
     lineMesh.userData.id = this.id
     lineMesh.userData.type = this.type
     lineMesh.userData.label = this.label
@@ -208,9 +208,7 @@ class ElasticBeamColumn {
     // Dispose the group and all its children
     if (this.group) {
       // Remove group from scene first
-      if (this.group.parent) {
-        this.model.scene.remove(this.group)
-      }
+      this.group.removeFromParent()
       
       // Dispose all children (mesh and edges)
       this.group.children.forEach((child) => {
@@ -294,7 +292,6 @@ class ElasticBeamColumn {
     const rotation = new THREE.Quaternion().setFromAxisAngle(local_vecx, gammaRad)
     vecz.applyQuaternion(rotation)
 
-    console.log('MEMBER', this.label, vecz)
     return vecz
   }
 

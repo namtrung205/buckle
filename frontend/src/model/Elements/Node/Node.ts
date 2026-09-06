@@ -33,7 +33,7 @@ class Node {
     mesh.userData.originalColor=  0x0000ff
     mesh.visible = true
     mesh.layers.set(this.model.layer)
-    this.model.scene.add(mesh);
+    this.model.legacyStructuralRoot.add(mesh);
     this.mesh = mesh;
     this.mesh.userData.baseRadius = (geometry as any).parameters?.radius ?? 0.05;
     

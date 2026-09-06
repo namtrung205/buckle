@@ -1,18 +1,43 @@
 import { observer } from 'mobx-react-lite';
-import { Box } from '@mui/material';
+import { Box, Button, Stack } from '@mui/material';
+import { useRef, useState } from 'react';
 import { useModel } from '../../model/Context';
 import { UI } from '../Results/Components/ui';
 
 /**
- * On-screen FPS readout over the 3D viewer. Reads Model.fps, which the render
- * loop refreshes ~2×/s (Settings → View → Show FPS). Pure display — pointer
- * events pass through so orbit / pan / zoom keep working.
+ * Goal-0 benchmark HUD. Fixture replacement only occurs after an explicit click.
  */
 const FpsOverlay = observer(() => {
   const model = useModel();
+  const reportRef = useRef<HTMLTextAreaElement | null>(null);
+  const [copyStatus, setCopyStatus] = useState('');
   if (!model || !model.showFps) return null;
 
-  const low = model.fps > 0 && model.fps < 30;
+  const benchmark = model.performanceBenchmark;
+  const snapshot = benchmark.snapshot;
+  const low = snapshot.fps > 0 && snapshot.fps < 30;
+  const busy = benchmark.running || benchmark.fixtureLoading;
+
+  const copyReport = async () => {
+    if (!benchmark.report) return;
+    let copied = false;
+    const textarea = reportRef.current;
+    if (textarea) {
+      textarea.focus();
+      textarea.select();
+      copied = document.execCommand('copy');
+      textarea.setSelectionRange(0, 0);
+    }
+    if (!copied && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(benchmark.report);
+        copied = true;
+      } catch {
+        // Permission-hardened browsers still leave the JSON selected below.
+      }
+    }
+    setCopyStatus(copied ? 'Copied' : 'Select JSON below');
+  };
 
   return (
     <Box
@@ -32,11 +57,61 @@ const FpsOverlay = observer(() => {
         fontWeight: 600,
         lineHeight: 1.2,
         letterSpacing: '0.04em',
-        pointerEvents: 'none',
+        pointerEvents: 'auto',
         userSelect: 'none',
+        width: 330,
       }}
     >
-      FPS {model.fps > 0 ? model.fps : '–'}
+      <Box>FPS {snapshot.fps || model.fps || '–'} · AVG {snapshot.frameMsAvg || '–'} ms · P95 {snapshot.frameMsP95 || '–'}</Box>
+      <Box>DRAW {snapshot.drawCalls} · TRI {snapshot.triangles.toLocaleString()} · OBJ {snapshot.sceneObjects.toLocaleString()}</Box>
+      <Box>GEO {snapshot.geometries} · TEX {snapshot.textures} · PROGRAM {snapshot.programs}</Box>
+      <Box>CPU update {snapshot.cpuUpdateMsAvg} · submit {snapshot.renderSubmitMsAvg} · labels {snapshot.labelRenderMsAvg} ms</Box>
+      <Box>RAY P95 {snapshot.raycastMsP95} ms · PICK {snapshot.pickables.toLocaleString()}</Box>
+      <Box>SELECTED {model.selector?.selectedCenterlineIds.length ?? 0}</Box>
+      <Box>MODE {model.renderMode} · QUALITY {model.qualityProfile} · WebGL2</Box>
+      {benchmark.fixture && (
+        <Box>FIXTURE {benchmark.fixture.requestedBeamCount.toLocaleString()} beams · load {benchmark.fixture.loadMs} ms</Box>
+      )}
+      {model.structuralSceneDB.memberCount > 0 && (
+        <Box>
+          DB {(model.structuralSceneDB.byteLength / 1048576).toFixed(2)} MB · build {model.structuralSceneDBBuildMs.toFixed(2)} ms
+        </Box>
+      )}
+      {(benchmark.running || benchmark.fixtureLoading) && (
+        <Box sx={{ color: '#fbbf24', mt: 0.5 }}>
+          {benchmark.fixtureLoading ? 'Loading fixture…' : `${benchmark.phase} ${benchmark.progress}%`}
+        </Box>
+      )}
+      <Stack direction="row" spacing={0.5} sx={{ mt: 0.75, flexWrap: 'wrap', gap: 0.5 }}>
+        <Button size="small" variant="outlined" disabled={busy} onClick={() => void model.loadBenchmarkFixture(1_000)}>Load 1k</Button>
+        <Button size="small" variant="outlined" disabled={busy} onClick={() => void model.loadBenchmarkFixture(10_000)}>Load 10k</Button>
+        <Button size="small" variant="contained" disabled={busy} onClick={() => void benchmark.run()}>Run</Button>
+        <Button size="small" variant="text" disabled={!benchmark.report} onClick={() => void copyReport()}>
+          {copyStatus || 'Copy'}
+        </Button>
+      </Stack>
+      {benchmark.report && (
+        <Box
+          component="textarea"
+          ref={reportRef}
+          readOnly
+          value={benchmark.report}
+          aria-label="Viewer benchmark JSON"
+          sx={{
+            mt: 0.75,
+            width: '100%',
+            height: 92,
+            boxSizing: 'border-box',
+            resize: 'vertical',
+            backgroundColor: 'rgba(12,16,20,.9)',
+            color: UI.text,
+            border: '1px solid rgba(130,140,155,.4)',
+            fontFamily: UI.mono,
+            fontSize: '10px',
+            userSelect: 'text',
+          }}
+        />
+      )}
     </Box>
   );
 });

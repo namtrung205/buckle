@@ -28,11 +28,13 @@ class Visibility {
 
   showOrHideMembers(visible : boolean){
     this.members = visible
+    this.model.centerlineRenderer?.setMembersVisible(visible)
+    this.model.thinShellRenderer?.setMembersVisible(visible && this.sections)
     this.model.members.forEach((member) => {
       // member.mesh.visible = visible
 
       const line = member.line
-      if(line) line.mesh.visible = visible
+      if(line) line.mesh.visible = this.model.renderMode === 'solid-extrude' && visible
 
     })
   }
@@ -68,8 +70,9 @@ class Visibility {
   
   showOrHideNodes(visible : boolean){
     this.nodes = visible
+    this.model.centerlineRenderer?.setNodesVisible(visible)
     this.model.nodes.forEach((node) => {
-      node.mesh.visible = visible
+      node.mesh.visible = this.model.renderMode === 'solid-extrude' && visible
     })
   }
 
@@ -97,9 +100,10 @@ class Visibility {
 
   showOrHideSections(visible : boolean){
     this.sections = visible
+    this.model.thinShellRenderer?.setMembersVisible(visible && this.members)
     this.model.members.forEach((member) => {
-      member.mesh.visible = visible
-      member.edges.visible = visible
+      member.mesh.visible = this.model.renderMode === 'solid-extrude' && visible
+      member.edges.visible = this.model.renderMode === 'solid-extrude' && visible
     })
   }
 

@@ -104,6 +104,9 @@ const Settings = ({open, onClose}) => {
     setSelectedType(event.target.value);
   };
 
+  const handleRenderMode = (event) => model.setRenderMode(event.target.value)
+  const handleQualityProfile = (event) => model.setQualityProfile(event.target.value)
+
   return (
     <Dialog
       open={open}
@@ -176,6 +179,23 @@ const Settings = ({open, onClose}) => {
 
       {selectedType === 'View' && (
         <Box>
+          <Typography sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 0.5 }}>Render Mode</Typography>
+          <FormControl size="small" sx={{ width: '100%', mb: 1.5 }}>
+            <Select value={model.renderMode} onChange={handleRenderMode} aria-label="Render Mode">
+              <MenuItem value="centerline-only">Centerline only</MenuItem>
+              <MenuItem value="thin-shell">Thin shell</MenuItem>
+              <MenuItem value="solid-extrude">Solid extrude</MenuItem>
+            </Select>
+          </FormControl>
+          <Typography sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 0.5 }}>Quality Profile</Typography>
+          <FormControl size="small" sx={{ width: '100%', mb: 1.5 }}>
+            <Select value={model.qualityProfile} onChange={handleQualityProfile} aria-label="Quality Profile">
+              <MenuItem value="low">Low</MenuItem>
+              <MenuItem value="balanced">Balanced</MenuItem>
+              <MenuItem value="high">High</MenuItem>
+              <MenuItem value="custom">Custom</MenuItem>
+            </Select>
+          </FormControl>
           {Object.keys(viewOptions).map((key) => {
             const option = viewOptions[key];
             return (

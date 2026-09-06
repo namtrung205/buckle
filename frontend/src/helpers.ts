@@ -257,6 +257,11 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
     console.log(`Created ${jsonData.loads.length} loads`)
   }
 
+  // Build the backend-independent render database after all legacy entities
+  // exist, then apply the user-selected representation without rebuilding it.
+  model.syncStructuralSceneDB()
+  model.applyRenderModeVisibility()
+
   // Fit the camera to the model so large models are not culled by the far plane
   model.camera.fitModelToView()
 
