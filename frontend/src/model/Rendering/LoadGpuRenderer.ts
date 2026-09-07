@@ -4,16 +4,18 @@ import {
   type LoadBandInstance,
   type LoadInstances,
   type Vec3,
+  vecCross,
   vecLength,
   vecNormalize,
   vecScale,
   vecSub,
 } from '../Load/loadInstances.ts'
 
-// The whole model's load set renders in THREE constant draw calls:
-//   1. shafts  — one LineSegments (the line language of the legacy ArrowHelper)
-//   2. heads   — one instanced cone template (mesh language, 12 segments)
-//   3. bands   — one instanced quad template (semi-transparent load band)
+// The whole model's load set renders in FOUR constant draw calls:
+//   1. shafts     — one LineSegments (the line language of the legacy ArrowHelper)
+//   2. heads      — one instanced cone template (filled mesh, 12 segments)
+//   3. headEdges  — one LineSegments stroked outline (ring + ridges) on the cone
+//   4. bands      — one instanced quad template (semi-transparent load band)
 
 const HEAD_RADIAL_SEGMENTS = 12 // legacy ArrowHelper used 5 — smoother silhouette at identical cost
 const BAND_OPACITY = 0.3 // legacy MeshBasicMaterial opacity
@@ -83,6 +85,43 @@ const createHeadTemplate = () => {
   return template
 }
 
+/** Per-vertex stroked edge template for one arrowhead (axial, rx, rz):
+ *  a 12-segment base ring plus 6 base→apex ridges — the "đường line" on the
+ *  cone, giving a CAD-style outlined tip on top of the filled mesh. */
+const HEAD_EDGE_RING_SEGMENTS = 12
+const HEAD_EDGE_RIDGE_SEGMENTS = 6
+const VERTICES_PER_HEAD_EDGE = (HEAD_EDGE_RING_SEGMENTS + HEAD_EDGE_RIDGE_SEGMENTS) * 2
+const createHeadEdgeTemplate = () => {
+  const verts: number[] = []
+  const ring = HEAD_EDGE_RING_SEGMENTS
+  for (let i = 0; i < ring; i++) {
+    const a0 = (i / ring) * Math.PI * 2
+    const a1 = ((i + 1) / ring) * Math.PI * 2
+    verts.push(0, Math.cos(a0), Math.sin(a0))
+    verts.push(0, Math.cos(a1), Math.sin(a1))
+  }
+  const ridges = HEAD_EDGE_RIDGE_SEGMENTS
+  for (let i = 0; i < ridges; i++) {
+    const angle = (i / ridges) * Math.PI * 2
+    verts.push(0, Math.cos(angle), Math.sin(angle)) // base
+    verts.push(1, 0, 0) // apex
+  }
+  return new Float32Array(verts)
+}
+const HEAD_EDGE_TEMPLATE = createHeadEdgeTemplate()
+
+/** CPU twin of the GLSL safePerpendicular — builds a 3D basis for one tip. */
+const safePerpendicular = (direction: Vec3): Vec3 => {
+  const fallback: Vec3 = Math.abs(direction[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0]
+  const dot = direction[0] * fallback[0] + direction[1] * fallback[1] + direction[2] * fallback[2]
+  const projected: Vec3 = [
+    fallback[0] - direction[0] * dot,
+    fallback[1] - direction[1] * dot,
+    fallback[2] - direction[2] * dot,
+  ]
+  return vecLength(projected) < 1e-6 ? ([1, 0, 0] as Vec3) : vecNormalize(projected)
+}
+
 /** Quad template: position.x ∈ {0,1} along the member, position.y ∈ {0,1} along the offset. */
 const createBandTemplate = () => {
   const geometry = new THREE.BufferGeometry()
@@ -114,9 +153,11 @@ export default class LoadGpuRenderer {
   readonly group = new THREE.Group()
   private readonly shaftGeometry = new THREE.BufferGeometry()
   private readonly headGeometry = new THREE.InstancedBufferGeometry()
+  private readonly headEdgeGeometry = new THREE.BufferGeometry()
   private readonly bandGeometry = new THREE.InstancedBufferGeometry()
   private readonly shaftMaterial: THREE.LineBasicMaterial
   private readonly headMaterial: THREE.ShaderMaterial
+  private readonly headEdgeMaterial: THREE.LineBasicMaterial
   private readonly bandMaterial: THREE.ShaderMaterial
 
   constructor(scene: THREE.Scene, layer: number) {
@@ -137,6 +178,12 @@ export default class LoadGpuRenderer {
     heads.name = 'LoadArrows:heads'
     heads.frustumCulled = false
 
+    // Stroked outline (base ring + ridges) drawn over the filled cone.
+    this.headEdgeMaterial = new THREE.LineBasicMaterial({ vertexColors: true })
+    const headEdges = new THREE.LineSegments(this.headEdgeGeometry, this.headEdgeMaterial)
+    headEdges.name = 'LoadArrows:headEdges'
+    headEdges.frustumCulled = false
+
     this.bandGeometry.setAttribute('position', createBandTemplate().getAttribute('position'))
     this.bandGeometry.instanceCount = 0
     this.bandMaterial = new THREE.ShaderMaterial({
@@ -152,10 +199,10 @@ export default class LoadGpuRenderer {
     bands.frustumCulled = false
     bands.renderOrder = 1
 
-    this.group.add(shafts, heads, bands)
+    this.group.add(shafts, heads, headEdges, bands)
     this.group.name = 'LoadGpuRenderer'
     this.group.layers.set(layer)
-    for (const object of [shafts, heads, bands]) object.layers.set(layer)
+    for (const object of [shafts, heads, headEdges, bands]) object.layers.set(layer)
     this.group.visible = false
     scene.add(this.group)
   }
@@ -164,6 +211,7 @@ export default class LoadGpuRenderer {
   upload(instances: LoadInstances) {
     this.uploadShafts(instances.arrows)
     this.uploadHeads(instances.arrows)
+    this.uploadHeadEdges(instances.arrows)
     this.uploadBands(instances.bands)
   }
 
@@ -202,7 +250,40 @@ export default class LoadGpuRenderer {
     invalidateInstanceCapacity(this.headGeometry)
   }
 
-  private uploadBands(bands: readonly LoadBandInstance[]) {
+  /** Lifts the stroked cone outline into world space, one CPU-transformed copy
+   *  per vertex (same per-vertex pattern as the shaft pass). */
+  private uploadHeadEdges(arrows: readonly LoadArrowInstance[]) {
+    const vertexCount = arrows.length * VERTICES_PER_HEAD_EDGE
+    const positions = new Float32Array(vertexCount * 3)
+    const colors = new Float32Array(vertexCount * 3)
+    arrows.forEach((arrow, index) => {
+      const direction = shaftDirection(arrow)
+      const len = arrow.headLength
+      const width = arrow.headWidth
+      const base = vecSub(arrow.tip, vecScale(direction, len))
+      const side = safePerpendicular(direction)
+      const up = vecCross(direction, side)
+      const offset = index * VERTICES_PER_HEAD_EDGE * 3
+      for (let v = 0; v < VERTICES_PER_HEAD_EDGE; v++) {
+        const o = v * 3
+        const axial = HEAD_EDGE_TEMPLATE[o]
+        const rx = HEAD_EDGE_TEMPLATE[o + 1]
+        const rz = HEAD_EDGE_TEMPLATE[o + 2]
+        const world: Vec3 = [
+          base[0] + direction[0] * axial * len + (side[0] * rx + up[0] * rz) * width,
+          base[1] + direction[1] * axial * len + (side[1] * rx + up[1] * rz) * width,
+          base[2] + direction[2] * axial * len + (side[2] * rx + up[2] * rz) * width,
+        ]
+        positions.set(world, offset + o)
+        colors.set(arrow.color, offset + o)
+      }
+    })
+    this.headEdgeGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    this.headEdgeGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    this.headEdgeGeometry.setDrawRange(0, vertexCount)
+    if (arrows.length > 0) this.headEdgeGeometry.computeBoundingSphere()
+  }
+private uploadBands(bands: readonly LoadBandInstance[]) {
     const count = bands.length
     const starts = new Float32Array(count * 3)
     const ends = new Float32Array(count * 3)
@@ -239,17 +320,23 @@ export default class LoadGpuRenderer {
     return this.shaftGeometry.drawRange.count
   }
 
+  get headEdgeVertexCount() {
+    return this.headEdgeGeometry.drawRange.count
+  }
+
   getStats() {
-    return { arrows: this.arrowCount, bands: this.bandCount, drawObjects: 3 }
+    return { arrows: this.arrowCount, bands: this.bandCount, drawObjects: 4 }
   }
 
   dispose() {
     this.group.removeFromParent()
     this.shaftGeometry.dispose()
     this.headGeometry.dispose()
+    this.headEdgeGeometry.dispose()
     this.bandGeometry.dispose()
     this.shaftMaterial.dispose()
     this.headMaterial.dispose()
+    this.headEdgeMaterial.dispose()
     this.bandMaterial.dispose()
   }
 }

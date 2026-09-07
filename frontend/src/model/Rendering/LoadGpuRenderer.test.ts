@@ -118,7 +118,8 @@ test('upload fills three constant batches and visibility flips the group', () =>
   assert.equal(renderer.arrowCount, 2)
   assert.equal(renderer.bandCount, 1)
   assert.equal(renderer.shaftVertexCount, 4)
-  assert.equal(renderer.getStats().drawObjects, 3)
+  assert.equal(renderer.headEdgeVertexCount, 2 * 36)
+  assert.equal(renderer.getStats().drawObjects, 4)
 
   // Shaft: origin → (tip − headLength·dir); f32 rounding on both sides.
   const shaftGeometry = (renderer as unknown as { shaftGeometry: THREE.BufferGeometry }).shaftGeometry
@@ -135,7 +136,7 @@ test('upload fills three constant batches and visibility flips the group', () =>
   const iSize = headGeometry.getAttribute('iSize') as THREE.InstancedBufferAttribute
   assert.deepEqual(Array.from(iTip.array.slice(0, 3)), [0, 0, 0])
   assert.deepEqual(Array.from(iDir.array.slice(0, 3)), Array.from(new Float32Array([0, -1, 0])))
-  assert.deepEqual(Array.from(iSize.array.slice(0, 2)), Array.from(new Float32Array([0.1, 0.1])))
+  assert.deepEqual(Array.from(iSize.array.slice(0, 2)), Array.from(new Float32Array([0.1, 0.015])))
 
   // Band instance spans the member with the load offset.
   const bandGeometry = (renderer as unknown as { bandGeometry: THREE.InstancedBufferGeometry }).bandGeometry

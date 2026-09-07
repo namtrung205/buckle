@@ -68,9 +68,13 @@ const ARROW_LEN_MIN = 0.3
 const NODAL_ARROW_LENGTH = 1.0
 const PRESSURE_ARROW_LENGTH = 1.0
 
-const DISTRIBUTED_HEAD = { length: 0.1, width: 0.1 }
-const NODAL_HEAD = { length: 0.15, width: 0.1 }
-const PRESSURE_HEAD = { length: 0.35, width: 0.25 }
+/** Sharp CAD-style arrowheads: a slim radius (~15% of the length) reads much
+ *  lighter than the legacy ArrowHelper cones, whose radius equalled their
+ *  height (a fat 45° half-angle). */
+const slimHead = (length: number) => ({ length, width: length * 0.15 })
+const DISTRIBUTED_HEAD = slimHead(0.1)
+const NODAL_HEAD = slimHead(0.15)
+const PRESSURE_HEAD = slimHead(0.35)
 
 export const vecSub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 export const vecAdd = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
