@@ -66,7 +66,7 @@ export class Camera {
     this.directionalLight.castShadow = true;
     this.directionalLight.castShadow = true;
     // this.cam.add(this.directionalLight)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
     this.model.scene.add(ambientLight);
     this.model.scene.add(this.cam)
     this.handle3dView()
