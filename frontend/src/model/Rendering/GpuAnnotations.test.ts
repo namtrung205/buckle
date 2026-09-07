@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import * as THREE from 'three'
-import GpuAnnotations, { glyphUvRect, scheduleProjectedLabels, type ProjectedLabel } from './GpuAnnotations.ts'
+import GpuAnnotations, { glyphAdvance, glyphUvRect, scheduleProjectedLabels, type ProjectedLabel } from './GpuAnnotations.ts'
 import { StructuralSceneDB } from './StructuralSceneDB.ts'
 
 const label = (id: string, priority: ProjectedLabel['priority'], x: number): ProjectedLabel => ({
@@ -24,6 +24,12 @@ describe('GPU annotation scheduling', () => {
   it('maps printable glyphs to stable atlas cells', () => {
     assert.deepEqual(glyphUvRect('A'), glyphUvRect('A'))
     assert.notDeepEqual(glyphUvRect('A'), glyphUvRect('B'))
+  })
+
+  it('uses compact per-character CAD text spacing', () => {
+    assert.ok(glyphAdvance('I') < glyphAdvance('H'))
+    assert.ok(glyphAdvance(' ') < glyphAdvance('0'))
+    assert.ok(glyphAdvance('W') > glyphAdvance('0'))
   })
 
   it('uploads member labels and support symbols into the two shared batches', () => {

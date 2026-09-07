@@ -1028,7 +1028,7 @@ export class Model {
           : components.length <= 1
             ? (components[0] ?? 0).toFixed(3)
             : `(${load.value.x.toFixed(3)}, ${load.value.y.toFixed(3)}, ${load.value.z.toFixed(3)})`
-        labels.push({ id: `load-${load.id}-${target}`, text, anchor, priority: 'value', color: [1, .45, .35] })
+        labels.push({ id: `load-${load.id}-${target}`, text, anchor, priority: 'value', color: [1, .86, .12] })
       }
     }
     const active = (['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const).filter(key => this.reactionViz?.show[key])

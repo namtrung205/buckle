@@ -62,6 +62,15 @@ export const glyphUvRect = (character: string): readonly [number, number, number
   return [column / COLUMNS, 1 - (row + 1) / rows, (column + 1) / COLUMNS, 1 - row / rows]
 }
 
+/** Compact CAD-like horizontal metrics. Glyphs still share one atlas/batch,
+ * but punctuation and narrow letters no longer consume a full monospace cell. */
+export const glyphAdvance = (character: string) => {
+  if (character === ' ') return 4
+  if (/[.,:;|!ilI1'`()\[\]]/.test(character)) return 5
+  if (/[MW@%&#]/.test(character)) return 11
+  return 9
+}
+
 const createGlyphAtlas = () => {
   const rows = Math.ceil((LAST_CHAR - FIRST_CHAR + 1) / COLUMNS)
   if (typeof document === 'undefined') {
@@ -80,7 +89,7 @@ const createGlyphAtlas = () => {
   // A light condensed engineering face reads closer to CAD/SHX lettering while
   // remaining a normal canvas font that can be packed into the shared SDF atlas.
   // The fallbacks are ordered for Windows first, then other browser platforms.
-  context.font = '400 20px "Arial Narrow", "Bahnschrift Condensed", "Roboto Condensed", sans-serif'
+  context.font = '400 28px "Arial Narrow", "Bahnschrift Condensed", "Roboto Condensed", sans-serif'
   for (let code = FIRST_CHAR; code <= LAST_CHAR; code++) {
     const index = code - FIRST_CHAR
     context.fillText(String.fromCharCode(code), (index % COLUMNS + 0.5) * CELL_W, (Math.floor(index / COLUMNS) + 0.5) * CELL_H)
@@ -230,7 +239,7 @@ export default class GpuAnnotations {
     )
     const material = new THREE.ShaderMaterial({
       transparent: true, depthTest: false, depthWrite: false, uniforms: { atlas: { value: this.atlas }, viewport: { value: this.viewport } },
-      vertexShader: `attribute vec3 iAnchor; attribute vec2 iOffset; attribute vec4 iUv; attribute vec3 iColor; uniform vec2 viewport; varying vec2 vUv; varying vec3 vColor; void main(){ vec4 c=projectionMatrix*viewMatrix*vec4(iAnchor,1.); c.xy+=(iOffset+position.xy*vec2(17.,24.))*2./viewport*c.w; gl_Position=c; vUv=mix(iUv.xy,iUv.zw,uv); vColor=iColor; }`,
+      vertexShader: `attribute vec3 iAnchor; attribute vec2 iOffset; attribute vec4 iUv; attribute vec3 iColor; uniform vec2 viewport; varying vec2 vUv; varying vec3 vColor; void main(){ vec4 c=projectionMatrix*viewMatrix*vec4(iAnchor,1.); c.xy+=(iOffset+position.xy*vec2(13.,19.))*2./viewport*c.w; gl_Position=c; vUv=mix(iUv.xy,iUv.zw,uv); vColor=iColor; }`,
       fragmentShader: `uniform sampler2D atlas; varying vec2 vUv; varying vec3 vColor; void main(){ float d=texture2D(atlas,vUv).r; float a=smoothstep(.44,.56,d); if(a<.02) discard; gl_FragColor=vec4(vColor,a); }`,
     })
     const mesh = new THREE.Mesh(geometry, material)
@@ -255,9 +264,13 @@ export default class GpuAnnotations {
   private uploadText(labels: readonly ProjectedLabel[]) {
     const anchors: number[] = [], offsets: number[] = [], uvs: number[] = [], colors: number[] = []
     for (const label of labels) {
-      const start = -((label.text.length - 1) * 8.5)
-      ;[...label.text].forEach((character, index) => {
-        anchors.push(...label.anchor); offsets.push(start + index * 17, -18); uvs.push(...glyphUvRect(character)); colors.push(...(label.color ?? [1, 1, 1]))
+      const characters = [...label.text]
+      const advances = characters.map(glyphAdvance)
+      let cursor = -advances.reduce((total, advance) => total + advance, 0) / 2
+      characters.forEach((character, index) => {
+        const advance = advances[index]
+        anchors.push(...label.anchor); offsets.push(cursor + advance / 2, -14); uvs.push(...glyphUvRect(character)); colors.push(...(label.color ?? [1, 1, 1]))
+        cursor += advance
       })
     }
     const g = this.textMesh.geometry as THREE.InstancedBufferGeometry
