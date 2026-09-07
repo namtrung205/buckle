@@ -496,7 +496,19 @@ class PostProcessing {
     )
     // Goal 8 replaces labels with SDF/LOD. Avoid the legacy O(N) CSS2D path;
     // the legend and renderer extrema hook still expose global max/min now.
-    this.membersData = []
+        // Rebuild per-member station data + thin hit ribbons so the hover tooltip
+    // works over the batched GPU diagram again (one batch has no per-member id).
+    const hoverData: MemberDiagramData[] = []
+    for (const member of this.model.output?.members ?? []) {
+      if (selectedMemberIds.length && !selectedMemberIds.includes(member.id)) continue
+      const data = this.buildMemberData(member)
+      if (!data) continue
+      for (const station of data.stations) station.value = this.stationValue(type, station)
+      for (const station of data.stations) station.offset.copy(this.stationOffset(type, data, station, scale))
+      hoverData.push(data)
+    }
+    this.membersData = hoverData
+    this.buildHoverMeshes(hoverData)
     this.updateHoverTargets()
   }
 
@@ -509,6 +521,41 @@ class PostProcessing {
     mesh.userData.type = 'diagram'
     mesh.userData.memberId = memberId
     mesh.userData.hoverable = true
+  }
+
+  /** Transparent per-member ribbons exclusively for the hover raycast. The GPU
+   *  procedural diagram is ONE batched mesh (no per-member identity), so the
+   *  hover controller needs its own thin hit geometry following the same
+   *  station offsets. Fully transparent (opacity 0) — never drawn, only picked. */
+  private buildHoverMeshes(dataList: MemberDiagramData[]) {
+    for (const data of dataList) {
+      const stations = data.stations
+      if (stations.length < 2) continue
+      const vertices: number[] = []
+      const indices: number[] = []
+      for (const station of stations) vertices.push(station.base.x, station.base.y, station.base.z)
+      for (const station of stations) vertices.push(station.offset.x, station.offset.y, station.offset.z)
+      const n = stations.length
+      for (let i = 0; i < n - 1; i++) {
+        const b1 = i, b2 = i + 1, t1 = n + i, t2 = n + i + 1
+        indices.push(b1, t1, b2, b2, t1, t2)
+      }
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+      geometry.setIndex(indices)
+      geometry.computeVertexNormals()
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+      const mesh = new THREE.Mesh(geometry, material)
+      this.addHoverable(mesh, data.memberId)
+      this.model.scene.add(mesh)
+      this.meshes.push(mesh)
+    }
   }
 
   /** Filled area between the member axis and the diagram curve, coloured per-vertex. */

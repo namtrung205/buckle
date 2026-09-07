@@ -105,12 +105,16 @@ const RIBBON_FRAGMENT_SHADER = /* glsl */ `
     }
     if (hasFlag(vFlags, 4.0)) color = vec3(1.0, 0.72, 0.12);
     if (hasFlag(vFlags, 2.0)) color = vec3(1.0, 0.22, 0.12);
-    gl_FragColor = vec4(color, 0.58);
+    gl_FragColor = vec4(color, 0.88);
   }
 `
 
 const LINE_FRAGMENT_SHADER = /* glsl */ `
   precision highp float;
+  uniform sampler2D resultColorLut;
+  uniform float resultMin;
+  uniform float resultMax;
+  uniform float contourEnabled;
   uniform float hatchEnabled;
   varying float vValue;
   varying float vFlags;
@@ -121,6 +125,12 @@ const LINE_FRAGMENT_SHADER = /* glsl */ `
     if (!hasFlag(vFlags, 1.0) || vDiagramVisible < 0.5 || vValue != vValue) discard;
     if (vLineKind > 0.5 && hatchEnabled < 0.5) discard;
     vec3 color = hasFlag(vFlags, 2.0) ? vec3(1.0, 0.22, 0.12) : vec3(0.08, 0.16, 0.22);
+    // Hatch / baseline / outline inherit the contour colormap (same normalisation
+    // as the ribbon) so a contour diagram's lines change colour by value again.
+    if (contourEnabled > 0.5 && !hasFlag(vFlags, 2.0)) {
+      float maxAbs = max(max(abs(resultMin), abs(resultMax)), 0.000000000001);
+      color = texture2D(resultColorLut, vec2(clamp(0.5 + 0.5 * vValue / maxAbs, 0.0, 1.0), 0.5)).rgb;
+    }
     if (hasFlag(vFlags, 4.0)) color = vec3(1.0, 0.72, 0.12);
     gl_FragColor = vec4(color, 0.95);
   }
@@ -209,15 +219,19 @@ export default class DiagramRenderer {
     this.lineGeometry.setAttribute('lineKind', new THREE.BufferAttribute(lineTemplate.kinds, 1))
     this.ribbonMaterial = new THREE.ShaderMaterial({
       vertexShader: VERTEX_SHADER, fragmentShader: RIBBON_FRAGMENT_SHADER,
-      uniforms: resultUniforms(), transparent: true, depthTest: true, depthWrite: false,
+      uniforms: resultUniforms(), transparent: true, depthTest: false, depthWrite: false,
       side: THREE.DoubleSide,
     })
     this.lineMaterial = new THREE.ShaderMaterial({
       vertexShader: VERTEX_SHADER, fragmentShader: LINE_FRAGMENT_SHADER,
-      uniforms: resultUniforms(), transparent: true, depthTest: true, depthWrite: false,
+      uniforms: resultUniforms(), transparent: true, depthTest: false, depthWrite: false,
     })
     this.ribbon = new THREE.Mesh(this.ribbonGeometry, this.ribbonMaterial)
     this.lines = new THREE.LineSegments(this.lineGeometry, this.lineMaterial)
+    // Overlay semantics: depthTest off + high renderOrder keep the diagram
+    // bright and never buried behind the member solids on a dark background.
+    this.ribbon.renderOrder = 90
+    this.lines.renderOrder = 91
     this.ribbon.frustumCulled = this.lines.frustumCulled = false
     this.ribbon.layers.set(layer)
     this.lines.layers.set(layer)
