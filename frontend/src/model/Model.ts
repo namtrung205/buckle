@@ -1359,7 +1359,7 @@ export class Model {
         text: `${prefix} ${component} ${Number(value.toPrecision(5))}${unit ? ` ${unit}` : ''}`,
         anchor,
         priority: 'extrema' as const,
-        color: prefix === 'MAX' ? [1, .3, .2] as const : [.25, .7, 1] as const,
+        color: [1, .75, .14] as const,
       }
     }
     this.gpuAnnotations.setResultLabels([

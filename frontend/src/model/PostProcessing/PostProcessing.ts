@@ -10,6 +10,7 @@ import { valueToColor01 } from './Colormap'
 import DiagramHover, { HoverMember } from './DiagramHover'
 import { jsonArrayToThree, jsonToThree } from '../../utils/axis'
 import { canonicalResultComponent } from '../Rendering/ResultStore'
+import type { WorldLabelCandidate } from '../Rendering/GpuAnnotations'
 
 export const DIAGRAM_TYPES = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz'] as const
 export type DiagramType = (typeof DIAGRAM_TYPES)[number]
@@ -94,7 +95,7 @@ class PostProcessing {
 
   private membersData: MemberDiagramData[] = []
   private hoverMeshes: THREE.Mesh[] = []
-  private labels: any[] = []
+  private labels: WorldLabelCandidate[] = []
   private coloredSolids: Map<string, SolidSave[]> = new Map()
   private currentMin = 0
   private currentMax = 1
@@ -448,7 +449,9 @@ class PostProcessing {
     }
 
     this.membersData = membersData
-    this.model.labeler.batchUpdateOrCreate(this.labels)
+    // Solid, deformation and stress paths share the same single GPU glyph
+    // batch as procedural diagrams. No per-value DOM/CSS2DObject is created.
+    this.model.gpuAnnotations.setResultLabels(this.labels)
     this.updateHoverTargets()
   }
 
@@ -838,7 +841,7 @@ class PostProcessing {
     }
   }
 
-  /** Max/min tags for a member — pill labels coloured to match the diverging colormap. */
+  /** Per-member max/min tags uploaded to the shared GPU glyph batch. */
   private collectExtremes(data: MemberDiagramData, type: string) {
     let max = { value: -Infinity, station: null as StationPoint | null }
     let min = { value: Infinity, station: null as StationPoint | null }
@@ -846,9 +849,6 @@ class PostProcessing {
       if (station.value > max.value) max = { value: station.value, station }
       if (station.value < min.value) min = { value: station.value, station }
     }
-    // Colours follow the diagram colormap: red = positive lobe, blue = negative lobe
-    const POS = '#c62828'
-    const NEG = '#1e56b4'
     const suffix = type === DEFLECTION_TYPE ? 'defl' : type
     if (max.station) {
       const isDefl = type === DEFLECTION_TYPE
@@ -856,19 +856,21 @@ class PostProcessing {
       const text = isDefl ? fmt(max.value * 1000) : fmt(max.value)
       this.labels.push({
         id: `max-${suffix}-label-${data.memberId}`,
-        position: max.station.offset.clone(),
+        anchor: [max.station.offset.x, max.station.offset.y, max.station.offset.z],
         text,
-        type: 'effort',
-        backgroundColor: isDefl ? POS : (max.value >= 0 ? POS : NEG)
+        priority: 'extrema',
+        forceVisible: true,
+        color: [1, .75, .14],
       })
     }
     if (min.station && min.station !== max.station && type !== DEFLECTION_TYPE) {
       this.labels.push({
         id: `min-${suffix}-label-${data.memberId}`,
-        position: min.station.offset.clone(),
+        anchor: [min.station.offset.x, min.station.offset.y, min.station.offset.z],
         text: fmt(min.value),
-        type: 'effort',
-        backgroundColor: min.value >= 0 ? POS : NEG
+        priority: 'extrema',
+        forceVisible: true,
+        color: [1, .75, .14],
       })
     }
   }
