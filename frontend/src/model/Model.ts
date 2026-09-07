@@ -21,7 +21,7 @@ import {
   LevelVisual,
 } from "./index";
 import ReactionViz from "./PostProcessing/ReactionViz";
-import { makeAutoObservable } from "mobx";
+import { makeAutoObservable, runInAction } from "mobx";
 import { Material, mockMaterials, mockSections, Section, NavTool } from "../types";
 import { GUI } from "lil-gui";
 import { Line3D, Member, Level, mockLevels } from "../types";
@@ -46,6 +46,7 @@ import { legacyModelToStructuralSource } from "./Rendering/structuralSceneAdapte
 import CenterlineRenderer from "./Rendering/CenterlineRenderer";
 import ThinShellRenderer from "./Rendering/ThinShellRenderer";
 import StructuralGpuPicker from "./Rendering/StructuralGpuPicker";
+import ResultStore, { type ResultBinding } from "./Rendering/ResultStore";
 export type PointerCoords = {
   x: number;
   y: number;
@@ -85,6 +86,7 @@ export class Model {
   performanceBenchmark: ViewerBenchmark
   /** Goal-1 render database; the legacy Object3D renderer remains authoritative for now. */
   structuralSceneDB = new StructuralSceneDB()
+  resultStore = new ResultStore()
   structuralSceneDBBuildMs = 0
   structuralSceneSyncScheduled = false
   centerlineRenderer: CenterlineRenderer
@@ -560,6 +562,7 @@ export class Model {
 
   /** Lock the model after a successful analysis: results become active, editing is disabled. */
   lockResults = () => {
+    this.resultStore.ingestAnalysisOutput(this.output, this.structuralSceneDB)
     this.isLocked = true;
     // Remember the model-mode visibility BEFORE any result view hides the
     // member centre lines / solid sections / loads, so unlock can restore it.
@@ -759,6 +762,7 @@ export class Model {
       fpsLastFrameTime: false,
       performanceBenchmark: false,
       structuralSceneDB: false,
+      resultStore: false,
       structuralSceneDBBuildMs: false,
       structuralSceneSyncScheduled: false,
       centerlineRenderer: false,
@@ -1065,6 +1069,7 @@ export class Model {
     this.workPlaneReferenceVisual?.dispose()
     this.centerlineRenderer?.dispose()
     this.thinShellRenderer?.dispose()
+    this.resultStore?.dispose()
     this.structuralPicker?.dispose()
     this.legacyStructuralRoot.clear()
     this.gizmo.dispose()
@@ -1091,6 +1096,8 @@ export class Model {
     console.log('Clearing existing this...')
     this.selector?.clear()
     this.structuralSceneDB.clear()
+    this.resultStore.clear()
+    this.clearStructuralResult()
     this.centerlineRenderer?.upload(this.structuralSceneDB)
     this.thinShellRenderer?.upload(this.structuralSceneDB)
     this.structuralPicker?.upload(this.structuralSceneDB)
@@ -1139,7 +1146,85 @@ export class Model {
   public invalidateResults = () => {
     this.postProcessing.dispose()
     this.reactionViz.dispose()
+    this.resultStore.clear()
+    this.clearStructuralResult()
     this.output = null
+  }
+
+  public bindStructuralResult = (binding: ResultBinding | null, min?: number, max?: number) => {
+    this.centerlineRenderer.bindResult(binding)
+    this.thinShellRenderer.bindResult(binding)
+    if (binding && min !== undefined && max !== undefined) {
+      this.centerlineRenderer.setResultRange(min, max)
+      this.thinShellRenderer.setResultRange(min, max)
+    }
+  }
+
+  public clearStructuralResult = () => {
+    this.centerlineRenderer?.bindResult(null)
+    this.thinShellRenderer?.bindResult(null)
+  }
+
+  public runResultBenchmark = async () => {
+    const benchmark = this.performanceBenchmark
+    if (benchmark.resultRunning || this.structuralSceneDB.memberCount === 0) return
+    benchmark.resultRunning = true
+    try {
+      const stationCount = 20
+      const caseInput = (key: string, phase: number) => ({
+        key,
+        members: Array.from({ length: this.structuralSceneDB.memberCount }, (_, memberIndex) => ({
+          entityId: this.structuralSceneDB.memberIds[memberIndex],
+          stations: Array.from({ length: stationCount }, (_, stationIndex) => {
+            const u = stationIndex / (stationCount - 1)
+            const wave = Math.sin(u * Math.PI * (1 + memberIndex % 3) + phase)
+            return {
+              position: u,
+              values: {
+                N: wave * 800, V2: wave * 240, V3: -wave * 180,
+                T: wave * 90, M2: wave * 420, M3: -wave * 360,
+                stress: wave * 500, strain: wave * .002,
+              },
+            }
+          }),
+        })),
+      })
+      const ingestStarted = performance.now()
+      this.resultStore.ingest(caseInput('benchmark-LC1', 0), this.structuralSceneDB)
+      this.resultStore.ingest(caseInput('benchmark-LC2', Math.PI / 3), this.structuralSceneDB)
+      const ingestMs = performance.now() - ingestStarted
+      const lineGeometry = this.centerlineRenderer.lineGeometry
+      const shellKeys = ['h', 'channel', 'angle', 'box', 'pipe']
+      const shellGeometries = shellKeys.map(key => this.thinShellRenderer.batchGeometry(key))
+      const switches: Array<{ caseKey: string; component: string; durationMs: number }> = []
+      for (const [caseKey, component] of [
+        ['benchmark-LC1', 'N'], ['benchmark-LC1', 'M2'], ['benchmark-LC2', 'stress'], ['benchmark-LC2', 'strain'],
+      ] as const) {
+        const started = performance.now()
+        const binding = this.resultStore.getBinding(caseKey, component)
+        this.bindStructuralResult(binding, binding?.min, binding?.max)
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        switches.push({ caseKey, component, durationMs: Number((performance.now() - started).toFixed(2)) })
+      }
+      const identitiesStable = lineGeometry === this.centerlineRenderer.lineGeometry &&
+        shellKeys.every((key, index) => shellGeometries[index] === this.thinShellRenderer.batchGeometry(key))
+      runInAction(() => {
+        benchmark.resultReport = JSON.stringify({
+          benchmarkVersion: 'viewer3d-result-v1',
+          timestamp: new Date().toISOString(),
+          backend: 'webgl2',
+          fixture: { members: this.structuralSceneDB.memberCount, stationsPerMember: stationCount, cases: 2 },
+          ingestMs: Number(ingestMs.toFixed(2)),
+          switches,
+          maxSwitchMs: Math.max(...switches.map(item => item.durationMs)),
+          targetMs: 150,
+          identitiesStable,
+          pass: identitiesStable && switches.every(item => item.durationMs <= 150),
+        }, null, 2)
+      })
+    } finally {
+      runInAction(() => { benchmark.resultRunning = false })
+    }
   }
 
   updatePointerCoords = (event : MouseEvent) =>

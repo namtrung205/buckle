@@ -9,6 +9,7 @@ import { makeAutoObservable } from 'mobx'
 import { valueToColor01 } from './Colormap'
 import DiagramHover, { HoverMember } from './DiagramHover'
 import { jsonArrayToThree, jsonToThree } from '../../utils/axis'
+import { canonicalResultComponent } from '../Rendering/ResultStore'
 
 export const DIAGRAM_TYPES = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz'] as const
 export type DiagramType = (typeof DIAGRAM_TYPES)[number]
@@ -402,6 +403,13 @@ class PostProcessing {
     this.extremeMax = maxHolder ? { label: maxHolder.label, value: max } : null
     this.extremeMin = minHolder ? { label: minHolder.label, value: min } : null
 
+    const gpuResultActive = this.model.renderMode !== 'solid-extrude' &&
+      type !== DEFLECTION_TYPE && (isStress || this.showContour)
+    if (gpuResultActive) {
+      const binding = this.model.resultStore.getBinding('analysis', canonicalResultComponent(type))
+      this.model.bindStructuralResult(binding, this.min, this.max)
+    }
+
     this.modelSize = this.computeModelSize()
     const maxAbs = Math.max(Math.abs(min), Math.abs(max)) || 1
     // Auto-fit: at multiplier 1 the largest |value| occupies 8% of the model size
@@ -422,13 +430,13 @@ class PostProcessing {
         this.buildBaseline(data)
         this.buildOutline(data, this.showContour)
       }
-      if (isStress) {
+      if (isStress && this.model.renderMode === 'solid-extrude') {
         // Full cross-section extrude: paint the member solid mesh itself so the
         // stress colouring is seen on the real 3D member, or fall back to the
         // centreline strip for a line-only stress contour.
         if (this.showStressSolid) this.colorMemberSolids(data)
         else if (this.showContour) this.colorMemberLine(type, data)
-      } else if (this.showContour) this.colorMemberLine(type, data)
+      } else if (this.showContour && this.model.renderMode === 'solid-extrude') this.colorMemberLine(type, data)
       if (this.showLabels) this.collectExtremes(data, type)
     }
 
@@ -829,6 +837,7 @@ class PostProcessing {
   }
 
   dispose() {
+    this.model.clearStructuralResult()
     this.meshes.forEach(mesh => {
       mesh.geometry?.dispose()
       if (Array.isArray(mesh.material)) {

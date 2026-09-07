@@ -6,25 +6,46 @@ import {
   type StructuralSceneDB,
 } from './StructuralSceneDB.ts'
 import type { QualityProfile } from './contracts'
+import type { ResultBinding } from './ResultStore.ts'
 
 const VERTICES_PER_MEMBER = 2
 
 const LINE_VERTEX_SHADER = /* glsl */ `
   attribute float entityFlags;
+  attribute float resultU;
+  attribute float resultRow;
   varying float vFlags;
+  varying float vResultU;
+  varying float vResultRow;
 
   void main() {
     vFlags = entityFlags;
+    vResultU = resultU;
+    vResultRow = resultRow;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
 
 const LINE_FRAGMENT_SHADER = /* glsl */ `
-  precision mediump float;
+  precision highp float;
   varying float vFlags;
+  varying float vResultU;
+  varying float vResultRow;
+  uniform sampler2D resultTexture;
+  uniform sampler2D resultColorLut;
+  uniform vec2 resultTextureSize;
+  uniform float resultStationCount;
+  uniform float resultEnabled;
+  uniform float resultMin;
+  uniform float resultMax;
 
   bool hasFlag(float value, float flag) {
     return mod(floor(value / flag), 2.0) > 0.5;
+  }
+  float resultTexel(float linearIndex) {
+    float x = mod(linearIndex, resultTextureSize.x);
+    float y = floor(linearIndex / resultTextureSize.x);
+    return texture2D(resultTexture, (vec2(x, y) + 0.5) / resultTextureSize).r;
   }
 
   void main() {
@@ -32,6 +53,16 @@ const LINE_FRAGMENT_SHADER = /* glsl */ `
     vec3 color = vec3(0.63, 0.68, 0.72);
     if (hasFlag(vFlags, 4.0)) color = vec3(1.0, 0.72, 0.12);
     if (hasFlag(vFlags, 2.0)) color = vec3(1.0, 0.22, 0.12);
+    if (resultEnabled > 0.5 && !hasFlag(vFlags, 2.0) && !hasFlag(vFlags, 4.0)) {
+      float station = clamp(vResultU, 0.0, 1.0) * (resultStationCount - 1.0);
+      float lower = floor(station);
+      float rowStart = floor(vResultRow + 0.5) * resultStationCount;
+      float value = mix(resultTexel(rowStart + lower), resultTexel(rowStart + min(lower + 1.0, resultStationCount - 1.0)), fract(station));
+      if (value == value) {
+        float maxAbs = max(max(abs(resultMin), abs(resultMax)), 0.000000000001);
+        color = texture2D(resultColorLut, vec2(clamp(0.5 + 0.5 * value / maxAbs, 0.0, 1.0), 0.5)).rgb;
+      }
+    }
     gl_FragColor = vec4(color, 1.0);
   }
 `
@@ -80,11 +111,21 @@ export default class CenterlineRenderer {
   private database: StructuralSceneDB | null = null
   private memberFlags = new Float32Array(0)
   private nodeFlags = new Float32Array(0)
+  private readonly lineMaterial: THREE.ShaderMaterial
 
   constructor(scene: THREE.Scene, layer: number) {
-    const lineMaterial = new THREE.ShaderMaterial({
+    this.lineMaterial = new THREE.ShaderMaterial({
       vertexShader: LINE_VERTEX_SHADER,
       fragmentShader: LINE_FRAGMENT_SHADER,
+      uniforms: {
+        resultTexture: { value: null as THREE.DataTexture | null },
+        resultColorLut: { value: null as THREE.DataTexture | null },
+        resultTextureSize: { value: new THREE.Vector2(1, 1) },
+        resultStationCount: { value: 2 },
+        resultEnabled: { value: 0 },
+        resultMin: { value: 0 },
+        resultMax: { value: 1 },
+      },
       depthTest: true,
       depthWrite: true,
     })
@@ -95,7 +136,7 @@ export default class CenterlineRenderer {
       depthTest: true,
       depthWrite: true,
     })
-    this.lines = new THREE.LineSegments(this.lineGeometry, lineMaterial)
+    this.lines = new THREE.LineSegments(this.lineGeometry, this.lineMaterial)
     this.nodes = new THREE.Points(this.nodeGeometry, nodeMaterial)
     // The single global batch is also the first spatial chunk. Three.js can
     // reject it as a unit when the complete model is outside the frustum.
@@ -117,11 +158,15 @@ export default class CenterlineRenderer {
     const memberCount = database.memberCount
     const nodeCount = database.nodeCount
     const positions = database.memberEndpoints.slice(0, memberCount * 6)
+    const resultU = new Float32Array(memberCount * VERTICES_PER_MEMBER)
+    const resultRows = new Float32Array(memberCount * VERTICES_PER_MEMBER)
     this.memberFlags = new Float32Array(memberCount * VERTICES_PER_MEMBER)
     for (let index = 0; index < memberCount; index++) {
       const flags = database.memberFlags[index]
       this.memberFlags[index * 2] = flags
       this.memberFlags[index * 2 + 1] = flags
+      resultU[index * 2 + 1] = 1
+      resultRows[index * 2] = resultRows[index * 2 + 1] = index
     }
     const nodePositions = new Float32Array(nodeCount * 3)
     nodePositions.set(database.nodePositions.subarray(0, nodeCount * 3))
@@ -129,6 +174,8 @@ export default class CenterlineRenderer {
     for (let index = 0; index < nodeCount; index++) this.nodeFlags[index] = database.nodeFlags[index]
     this.lineGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     this.lineGeometry.setAttribute('entityFlags', new THREE.BufferAttribute(this.memberFlags, 1))
+    this.lineGeometry.setAttribute('resultU', new THREE.BufferAttribute(resultU, 1))
+    this.lineGeometry.setAttribute('resultRow', new THREE.BufferAttribute(resultRows, 1))
     this.lineGeometry.setDrawRange(0, memberCount * VERTICES_PER_MEMBER)
     this.nodeGeometry.setAttribute('position', new THREE.BufferAttribute(nodePositions, 3))
     this.nodeGeometry.setAttribute('entityFlags', new THREE.BufferAttribute(this.nodeFlags, 1))
@@ -193,6 +240,23 @@ export default class CenterlineRenderer {
   setQualityProfile(profile: QualityProfile) {
     const sizes: Record<QualityProfile, number> = { low: 3, balanced: 4, high: 5, custom: 4 }
     ;(this.nodes.material as THREE.ShaderMaterial).uniforms.pointSize.value = sizes[profile]
+  }
+
+  bindResult(binding: ResultBinding | null) {
+    const uniforms = this.lineMaterial.uniforms
+    uniforms.resultEnabled.value = binding ? 1 : 0
+    if (!binding) return
+    uniforms.resultTexture.value = binding.texture
+    uniforms.resultColorLut.value = binding.colorLut
+    uniforms.resultTextureSize.value.set(binding.textureWidth, binding.textureHeight)
+    uniforms.resultStationCount.value = binding.stationCount
+    uniforms.resultMin.value = binding.min
+    uniforms.resultMax.value = binding.max
+  }
+
+  setResultRange(min: number, max: number) {
+    this.lineMaterial.uniforms.resultMin.value = min
+    this.lineMaterial.uniforms.resultMax.value = max
   }
 
   setMemberState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {

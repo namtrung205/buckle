@@ -110,6 +110,8 @@ export default class ViewerBenchmark {
   phase = ''
   progress = 0
   report = ''
+  resultReport = ''
+  resultRunning = false
   fixture: BenchmarkFixtureInfo | null = null
 
   frameSamples: number[] = []

@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { QualityProfile } from './contracts'
+import type { ResultBinding } from './ResultStore.ts'
 import {
   PROFILE_FAMILIES,
   PROFILE_PARAMETER_STRIDE,
@@ -27,8 +28,11 @@ const VERTEX_SHADER = /* glsl */ `
   attribute float instanceGamma;
   attribute float instanceFlags;
   attribute float instanceOrientationFlags;
+  attribute float instanceResultRow;
   varying vec3 vNormal;
   varying float vFlags;
+  varying float vResultU;
+  varying float vResultRow;
 
   bool hasFlag(float value, float flag) {
     return mod(floor(value / flag), 2.0) > 0.5;
@@ -56,15 +60,38 @@ const VERTEX_SHADER = /* glsl */ `
     vec3 worldPosition = mix(instanceStart, instanceEnd, position.x) + axisY * profileY + axisZ * profileZ;
     vNormal = normalize(axisY * normal.y * mirrorY + axisZ * normal.z * mirrorZ);
     vFlags = instanceFlags;
+    vResultU = position.x;
+    vResultRow = instanceResultRow;
     gl_Position = projectionMatrix * viewMatrix * vec4(worldPosition, 1.0);
   }
 `
 
 const FRAGMENT_SHADER = /* glsl */ `
-  precision mediump float;
+  precision highp float;
   varying vec3 vNormal;
   varying float vFlags;
+  varying float vResultU;
+  varying float vResultRow;
+  uniform sampler2D resultTexture;
+  uniform sampler2D resultColorLut;
+  uniform vec2 resultTextureSize;
+  uniform float resultStationCount;
+  uniform float resultEnabled;
+  uniform float resultMin;
+  uniform float resultMax;
   bool hasFlag(float value, float flag) { return mod(floor(value / flag), 2.0) > 0.5; }
+  float resultTexel(float linearIndex) {
+    float x = mod(linearIndex, resultTextureSize.x);
+    float y = floor(linearIndex / resultTextureSize.x);
+    return texture2D(resultTexture, (vec2(x, y) + 0.5) / resultTextureSize).r;
+  }
+  float sampleResult() {
+    float station = clamp(vResultU, 0.0, 1.0) * (resultStationCount - 1.0);
+    float lower = floor(station);
+    float upper = min(lower + 1.0, resultStationCount - 1.0);
+    float rowStart = floor(vResultRow + 0.5) * resultStationCount;
+    return mix(resultTexel(rowStart + lower), resultTexel(rowStart + upper), fract(station));
+  }
   void main() {
     if (!hasFlag(vFlags, 1.0)) discard;
     vec3 base = vec3(0.64, 0.68, 0.71);
@@ -72,32 +99,80 @@ const FRAGMENT_SHADER = /* glsl */ `
     if (hasFlag(vFlags, 2.0)) base = vec3(1.0, 0.22, 0.12);
     vec3 lightDirection = normalize(vec3(0.35, 0.75, 0.55));
     float diffuse = 0.42 + 0.58 * abs(dot(normalize(vNormal), lightDirection));
-    gl_FragColor = vec4(base * diffuse, 1.0);
+    base *= diffuse;
+    if (resultEnabled > 0.5 && !hasFlag(vFlags, 2.0) && !hasFlag(vFlags, 4.0)) {
+      float value = sampleResult();
+      if (value == value) {
+        float maxAbs = max(max(abs(resultMin), abs(resultMax)), 0.000000000001);
+        float t = clamp(0.5 + 0.5 * value / maxAbs, 0.0, 1.0);
+        base = texture2D(resultColorLut, vec2(t, 0.5)).rgb;
+      }
+    }
+    gl_FragColor = vec4(base, 1.0);
   }
 `
 
 const FALLBACK_VERTEX_SHADER = /* glsl */ `
   attribute float entityFlags;
+  attribute float resultU;
+  attribute float resultRow;
   varying float vFlags;
+  varying float vResultU;
+  varying float vResultRow;
   void main() {
     vFlags = entityFlags;
+    vResultU = resultU;
+    vResultRow = resultRow;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
 const FALLBACK_FRAGMENT_SHADER = /* glsl */ `
-  precision mediump float;
+  precision highp float;
   varying float vFlags;
+  varying float vResultU;
+  varying float vResultRow;
+  uniform sampler2D resultTexture;
+  uniform sampler2D resultColorLut;
+  uniform vec2 resultTextureSize;
+  uniform float resultStationCount;
+  uniform float resultEnabled;
+  uniform float resultMin;
+  uniform float resultMax;
   bool hasFlag(float value, float flag) { return mod(floor(value / flag), 2.0) > 0.5; }
+  float resultTexel(float linearIndex) {
+    float x = mod(linearIndex, resultTextureSize.x);
+    float y = floor(linearIndex / resultTextureSize.x);
+    return texture2D(resultTexture, (vec2(x, y) + 0.5) / resultTextureSize).r;
+  }
   void main() {
     if (!hasFlag(vFlags, 1.0)) discard;
     vec3 color = vec3(0.54, 0.58, 0.61);
     if (hasFlag(vFlags, 4.0)) color = vec3(1.0, 0.72, 0.12);
     if (hasFlag(vFlags, 2.0)) color = vec3(1.0, 0.22, 0.12);
+    if (resultEnabled > 0.5 && !hasFlag(vFlags, 2.0) && !hasFlag(vFlags, 4.0)) {
+      float station = clamp(vResultU, 0.0, 1.0) * (resultStationCount - 1.0);
+      float lower = floor(station);
+      float rowStart = floor(vResultRow + 0.5) * resultStationCount;
+      float value = mix(resultTexel(rowStart + lower), resultTexel(rowStart + min(lower + 1.0, resultStationCount - 1.0)), fract(station));
+      if (value == value) {
+        float maxAbs = max(max(abs(resultMin), abs(resultMax)), 0.000000000001);
+        color = texture2D(resultColorLut, vec2(clamp(0.5 + 0.5 * value / maxAbs, 0.0, 1.0), 0.5)).rgb;
+      }
+    }
     gl_FragColor = vec4(color, 1.0);
   }
 `
 
 const PIPE_SEGMENTS: Record<QualityProfile, number> = { low: 8, balanced: 12, high: 20, custom: 16 }
+const resultUniforms = () => ({
+  resultTexture: { value: null as THREE.DataTexture | null },
+  resultColorLut: { value: null as THREE.DataTexture | null },
+  resultTextureSize: { value: new THREE.Vector2(1, 1) },
+  resultStationCount: { value: 2 },
+  resultEnabled: { value: 0 },
+  resultMin: { value: 0 },
+  resultMax: { value: 1 },
+})
 type StandardFamily = 'h' | 'channel' | 'angle' | 'box' | 'pipe'
 type Batch = {
   key: string
@@ -131,10 +206,12 @@ export default class ThinShellRenderer {
   readonly fallbackLines: THREE.LineSegments
   private readonly material = new THREE.ShaderMaterial({
     vertexShader: VERTEX_SHADER, fragmentShader: FRAGMENT_SHADER,
+    uniforms: resultUniforms(),
     side: THREE.DoubleSide, depthTest: true, depthWrite: true,
   })
   private readonly fallbackMaterial = new THREE.ShaderMaterial({
     vertexShader: FALLBACK_VERTEX_SHADER, fragmentShader: FALLBACK_FRAGMENT_SHADER,
+    uniforms: resultUniforms(),
   })
   private readonly batches = new Map<string, Batch>()
   private readonly instanceLocationByEntityId = new Map<number, InstanceLocation>()
@@ -265,6 +342,7 @@ export default class ThinShellRenderer {
     const dimensions = new Float32Array(memberIndices.length * 4)
     const gamma = new Float32Array(memberIndices.length)
     const orientationFlags = new Float32Array(memberIndices.length)
+    const resultRows = new Float32Array(memberIndices.length)
     batch.flags = new Float32Array(memberIndices.length)
     batch.entityIds = new Array(memberIndices.length)
     memberIndices.forEach((memberIndex, instanceIndex) => {
@@ -277,6 +355,7 @@ export default class ThinShellRenderer {
       gamma[instanceIndex] = database.memberGammaRadians[memberIndex]
       batch.flags[instanceIndex] = database.memberFlags[memberIndex]
       orientationFlags[instanceIndex] = database.memberOrientationFlags[memberIndex]
+      resultRows[instanceIndex] = memberIndex
       const entityId = database.memberIds[memberIndex]
       batch.entityIds[instanceIndex] = entityId
       this.instanceLocationByEntityId.set(entityId, { batch, instanceIndex })
@@ -288,6 +367,7 @@ export default class ThinShellRenderer {
     batch.geometry.setAttribute('instanceGamma', new THREE.InstancedBufferAttribute(gamma, 1))
     batch.geometry.setAttribute('instanceFlags', new THREE.InstancedBufferAttribute(batch.flags, 1))
     batch.geometry.setAttribute('instanceOrientationFlags', new THREE.InstancedBufferAttribute(orientationFlags, 1))
+    batch.geometry.setAttribute('instanceResultRow', new THREE.InstancedBufferAttribute(resultRows, 1))
     // WebGLBindingStates caches the smallest instanced-attribute capacity on
     // the geometry. Replacing 1k buffers with 10k buffers must invalidate it or
     // Three.js silently keeps drawing only the first 1k instances.
@@ -297,14 +377,20 @@ export default class ThinShellRenderer {
 
   private uploadFallback(database: StructuralSceneDB, memberIndices: number[]) {
     const positions = new Float32Array(memberIndices.length * 6)
+    const resultU = new Float32Array(memberIndices.length * 2)
+    const resultRows = new Float32Array(memberIndices.length * 2)
     this.fallbackFlags = new Float32Array(memberIndices.length * 2)
     memberIndices.forEach((memberIndex, fallbackIndex) => {
       positions.set(database.memberEndpoints.subarray(memberIndex * 6, memberIndex * 6 + 6), fallbackIndex * 6)
       this.fallbackFlags.fill(database.memberFlags[memberIndex], fallbackIndex * 2, fallbackIndex * 2 + 2)
+      resultU[fallbackIndex * 2 + 1] = 1
+      resultRows.fill(memberIndex, fallbackIndex * 2, fallbackIndex * 2 + 2)
       this.fallbackVertexByEntityId.set(database.memberIds[memberIndex], fallbackIndex * 2)
     })
     this.fallbackGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     this.fallbackGeometry.setAttribute('entityFlags', new THREE.BufferAttribute(this.fallbackFlags, 1))
+    this.fallbackGeometry.setAttribute('resultU', new THREE.BufferAttribute(resultU, 1))
+    this.fallbackGeometry.setAttribute('resultRow', new THREE.BufferAttribute(resultRows, 1))
     this.fallbackGeometry.setDrawRange(0, memberIndices.length * 2)
     this.fallbackGeometry.computeBoundingSphere()
     this.fallbackLines.visible = this.membersVisible && memberIndices.length > 0
@@ -422,6 +508,27 @@ export default class ThinShellRenderer {
     this.qualityProfile = profile
     const pipe = this.batches.get('pipe')
     if (pipe) setTemplate(pipe.geometry, createPipeThinShellTemplate(PIPE_SEGMENTS[profile]))
+  }
+
+  bindResult(binding: ResultBinding | null) {
+    for (const material of [this.material, this.fallbackMaterial]) {
+      const uniforms = material.uniforms
+      uniforms.resultEnabled.value = binding ? 1 : 0
+      if (!binding) continue
+      uniforms.resultTexture.value = binding.texture
+      uniforms.resultColorLut.value = binding.colorLut
+      uniforms.resultTextureSize.value.set(binding.textureWidth, binding.textureHeight)
+      uniforms.resultStationCount.value = binding.stationCount
+      uniforms.resultMin.value = binding.min
+      uniforms.resultMax.value = binding.max
+    }
+  }
+
+  setResultRange(min: number, max: number) {
+    for (const material of [this.material, this.fallbackMaterial]) {
+      material.uniforms.resultMin.value = min
+      material.uniforms.resultMax.value = max
+    }
   }
 
   get instanceCount() {

@@ -54,6 +54,12 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     return active;
   });
 
+  const showActiveStructuralPass = () => {
+    model.visibility.showOrHideMembers(true);
+    model.visibility.showOrHideSections(model.renderMode === 'thin-shell');
+    model.applyRenderModeVisibility();
+  };
+
   const applyForce = (type: string | null) => {
     if (!type) return;
     // Result visualizations are exclusive: applying a diagram clears the reactions
@@ -62,8 +68,10 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     post.showDiagram(type, selectedMembers);
     // Forces render on the member centreline - hide the solid section; contour paints the
     // centreline with the colormap (hiding the neutral grey line), otherwise keep it
-    model.visibility.showOrHideSections(false);
-    model.visibility.showOrHideMembers(!post.showContour);
+    if (model.renderMode === 'solid-extrude') {
+      model.visibility.showOrHideSections(false);
+      model.visibility.showOrHideMembers(!post.showContour);
+    } else showActiveStructuralPass();
     model.visibility.showOrHideLoads(false);
   };
 
@@ -76,8 +84,10 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     // so the solid sections must be SHOWN exactly when the option is on, and
     // hidden when the option is off (centreline-only fallback).
     const showSolid = post.showStressSolid;
-    model.visibility.showOrHideSections(showSolid);
-    model.visibility.showOrHideMembers(!showSolid);
+    if (model.renderMode === 'solid-extrude') {
+      model.visibility.showOrHideSections(showSolid);
+      model.visibility.showOrHideMembers(!showSolid);
+    } else showActiveStructuralPass();
     model.visibility.showOrHideLoads(false);
   };
 
@@ -108,8 +118,10 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
       if (key === 'showContour') {
         // Line-only display: sections always hidden; contour paints the centreline
         // strips, so the neutral grey line only shows when the colours are off
-        model.visibility.showOrHideSections(false);
-        model.visibility.showOrHideMembers(!post.showContour);
+        if (model.renderMode === 'solid-extrude') {
+          model.visibility.showOrHideSections(false);
+          model.visibility.showOrHideMembers(!post.showContour);
+        }
       }
       renderActive();
     };
