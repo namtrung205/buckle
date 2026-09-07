@@ -88,6 +88,8 @@ export class Model {
   showFps = true
   /** Midas-style Shrink display toggle (BottomBar → Shrink). Off by default. */
   shrinkEnabled = false
+  /** Viewer/editor canvas background hex (Settings → View → Background). */
+  viewerBackground = '#212830'
   /** Goal-0 schema only: legacy rendering remains unchanged until Goal 2. */
   renderMode: RenderMode = storedRenderMode()
   qualityProfile: QualityProfile = storedQualityProfile()
@@ -827,7 +829,7 @@ export class Model {
         this.containerResizeObserver.observe(this.container);
       }
       // AutoCAD-style dark blue-black viewport background
-      this.scene.background = new THREE.Color('#212830');
+      this.scene.background = new THREE.Color(this.viewerBackground);
       await this.ws.connect();
       if (this.ws.isConnected())  console.log('Connected!');
       
@@ -940,6 +942,12 @@ export class Model {
     this.centerlineRenderer?.setShrink(perEnd)
     this.thinShellRenderer?.setShrink(perEnd)
     for (const member of this.members) member.applyShrink()
+  }
+
+  /** Change the viewer/editor canvas background colour (Settings → View). */
+  setViewerBackground(hex: string) {
+    this.viewerBackground = hex
+    this.scene.background = new THREE.Color(hex)
   }
 
   /** Coalesce load add/edit/delete into one instanced-batch rebuild (3 draw calls). */

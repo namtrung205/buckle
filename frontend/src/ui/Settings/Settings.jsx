@@ -196,6 +196,27 @@ const Settings = ({open, onClose}) => {
               <MenuItem value="custom">Custom</MenuItem>
             </Select>
           </FormControl>
+<Typography sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 0.5 }}>Background</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, mb: 1.5 }}>
+            {[
+              { label: 'Dark blue-black', value: '#212830' },
+              { label: 'Midnight', value: '#0f131a' },
+              { label: 'Black', value: '#000000' },
+              { label: 'White', value: '#ffffff' },
+              { label: 'Light grey', value: '#ced4da' },
+            ].map((swatch) => (
+              <Box
+                key={swatch.value}
+                onClick={() => model.setViewerBackground(swatch.value)}
+                title={swatch.label}
+                sx={{
+                  width: 22, height: 22, borderRadius: '4px', cursor: 'pointer',
+                  border: `2px solid ${model.viewerBackground.toLowerCase() === swatch.value ? colors.accent : colors.border}`,
+                  backgroundColor: swatch.value,
+                }}
+              />
+            ))}
+          </Box>
           {Object.keys(viewOptions).map((key) => {
             const option = viewOptions[key];
             return (
