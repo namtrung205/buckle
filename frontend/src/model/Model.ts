@@ -1028,7 +1028,7 @@ export class Model {
           : components.length <= 1
             ? (components[0] ?? 0).toFixed(3)
             : `(${load.value.x.toFixed(3)}, ${load.value.y.toFixed(3)}, ${load.value.z.toFixed(3)})`
-        labels.push({ id: `load-${load.id}-${target}`, text, anchor, priority: 'value', color: [1, .86, .12] })
+        labels.push({ id: `load-${load.id}-${target}`, text, anchor, priority: 'value', forceVisible: true, color: [1, .86, .12] })
       }
     }
     const active = (['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const).filter(key => this.reactionViz?.show[key])
@@ -1039,7 +1039,7 @@ export class Model {
         const sign = value >= 0 ? 1 : -1
         const direction = component[1] === 'x' ? [sign, 0, 0] as const : component[1] === 'y' ? [0, 0, sign] as const : [0, sign, 0] as const
         symbols.push({ anchor, direction, kind: component[0] === 'M' ? 3 : 2, color: component[0] === 'M' ? [1, .62, .05] : [0.2, .45, 1] })
-        labels.push({ id: `reaction-${component}-${reaction.id}`, text: `${component} ${value.toPrecision(4)}`, anchor, priority: 'value', color: [1, .45, .72] })
+        labels.push({ id: `reaction-${component}-${reaction.id}`, text: `${component} ${value.toPrecision(4)}`, anchor, priority: 'value', forceVisible: true, color: [1, .45, .72] })
     }
     // Selected member local axes share the same symbol batch (RGB = local
     // x/y/z); there is no Line/ArrowHelper allocation per selected member.

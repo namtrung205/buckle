@@ -26,6 +26,14 @@ describe('GPU annotation scheduling', () => {
     assert.notDeepEqual(glyphUvRect('A'), glyphUvRect('B'))
   })
 
+  it('keeps all entity labels explicitly enabled by the user', () => {
+    const output = scheduleProjectedLabels([
+      { ...label('member-1', 'id', 1), forceVisible: true },
+      { ...label('member-2', 'id', 2), forceVisible: true },
+    ], 0)
+    assert.deepEqual(output.map(item => item.id), ['member-1', 'member-2'])
+  })
+
   it('uses compact per-character CAD text spacing', () => {
     assert.ok(glyphAdvance('I') < glyphAdvance('H'))
     assert.ok(glyphAdvance(' ') < glyphAdvance('0'))
@@ -40,6 +48,9 @@ describe('GPU annotation scheduling', () => {
     })
     const scene = new THREE.Scene()
     const annotations = new GpuAnnotations(scene)
+    assert.equal((annotations.textMesh.material as THREE.ShaderMaterial).depthTest, false)
+    assert.equal((annotations.symbolMesh.material as THREE.ShaderMaterial).depthTest, true)
+    assert.ok(annotations.textMesh.renderOrder > annotations.symbolMesh.renderOrder)
     ;(annotations.textMesh.geometry as any)._maxInstanceCount = 0
     ;(annotations.symbolMesh.geometry as any)._maxInstanceCount = 0
     annotations.setMemberLabels(true)
