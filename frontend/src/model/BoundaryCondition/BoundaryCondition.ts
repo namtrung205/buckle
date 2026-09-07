@@ -122,8 +122,8 @@ class BoundaryCondition {
 
   /**
    * Midas-Civil style support symbol: a hexagon split into 6 sectors
-   * (Dx, Dy, Dz, Rx, Ry, Rz) colored green when the DOF is restrained and
-   * black when it is free. Black radial and perimeter edges keep all six
+   * (Dx, Dy, Dz, Rx, Ry, Rz) colored green when the DOF is restrained and red
+   * when it is free. 80%-black radial and perimeter edges keep all six
    * triangular sectors readable. It is rendered in one GPU symbol batch.
    */
   createSupportSymbols(){
