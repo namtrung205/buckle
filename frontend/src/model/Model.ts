@@ -43,6 +43,7 @@ import {
 } from "./Rendering/contracts";
 import { ENTITY_SELECTED, ENTITY_VISIBLE, StructuralSceneDB } from "./Rendering/StructuralSceneDB";
 import { legacyModelToStructuralSource } from "./Rendering/structuralSceneAdapters";
+import { SHRINK_RATIO_PER_END } from "./Utils/shrink";
 import CenterlineRenderer from "./Rendering/CenterlineRenderer";
 import ThinShellRenderer from "./Rendering/ThinShellRenderer";
 import StructuralGpuPicker from "./Rendering/StructuralGpuPicker";
@@ -83,6 +84,8 @@ export class Model {
   showVolumes = true
   /** On-screen FPS readout toggle (Settings → View → Show FPS). On by default. */
   showFps = true
+  /** Midas-style Shrink display toggle (BottomBar → Shrink). Off by default. */
+  shrinkEnabled = false
   /** Goal-0 schema only: legacy rendering remains unchanged until Goal 2. */
   renderMode: RenderMode = storedRenderMode()
   qualityProfile: QualityProfile = storedQualityProfile()
@@ -763,6 +766,10 @@ export class Model {
     this.centerlineRenderer.setQualityProfile(this.qualityProfile)
     this.thinShellRenderer = new ThinShellRenderer(this.scene, this.layer)
     this.thinShellRenderer.setQualityProfile(this.qualityProfile)
+    // Keep the renderers in sync with the shrink toggle state (no-op while off).
+    const shrinkPerEnd = this.shrinkEnabled ? SHRINK_RATIO_PER_END : 0
+    this.centerlineRenderer.setShrink(shrinkPerEnd)
+    this.thinShellRenderer.setShrink(shrinkPerEnd)
     this.diagramRenderer = new DiagramRenderer(this.scene, this.layer)
     this.gpuAnnotations = new GpuAnnotations(this.scene, this.layer)
     this.camera.controls.addEventListener('end', () => this.gpuAnnotations.markDirty())
@@ -915,6 +922,19 @@ export class Model {
       this.syncStructuralSceneDB()
       this.applyRenderModeVisibility()
     })
+  }
+
+  /**
+   * Midas-style Shrink display: shorten every member at both of its ends so
+   * adjacent elements read as separate bodies around shared joints.
+   * Display-only — node coordinates, GPU picking and analysis are untouched.
+   */
+  setShrinkEnabled(value: boolean) {
+    this.shrinkEnabled = value
+    const perEnd = value ? SHRINK_RATIO_PER_END : 0
+    this.centerlineRenderer?.setShrink(perEnd)
+    this.thinShellRenderer?.setShrink(perEnd)
+    for (const member of this.members) member.applyShrink()
   }
 
   async setRenderMode(mode: RenderMode) {

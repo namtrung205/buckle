@@ -7,8 +7,12 @@ import {
 } from './StructuralSceneDB.ts'
 import type { QualityProfile } from './contracts'
 import type { ResultBinding } from './ResultStore.ts'
+import { clampShrinkRatio } from '../Utils/shrink.ts'
 
 const VERTICES_PER_MEMBER = 2
+
+/** Midas-style Shrink: clamp the per-end trim ratio to a safe display range. */
+const clampShrink = (perEnd: number) => clampShrinkRatio(perEnd)
 
 const LINE_VERTEX_SHADER = /* glsl */ `
   attribute float entityFlags;
@@ -111,6 +115,8 @@ export default class CenterlineRenderer {
   private database: StructuralSceneDB | null = null
   private memberFlags = new Float32Array(0)
   private nodeFlags = new Float32Array(0)
+  /** Midas-style Shrink: fraction of member length trimmed at EACH end (0 = off). */
+  private shrinkPerEnd = 0
   private readonly lineMaterial: THREE.ShaderMaterial
 
   constructor(scene: THREE.Scene, layer: number) {
@@ -158,6 +164,9 @@ export default class CenterlineRenderer {
     const memberCount = database.memberCount
     const nodeCount = database.nodeCount
     const positions = database.memberEndpoints.slice(0, memberCount * 6)
+    if (this.shrinkPerEnd > 0) {
+      for (let index = 0; index < memberCount; index++) this.writeMemberEndpoints(positions, database, index)
+    }
     const resultU = new Float32Array(memberCount * VERTICES_PER_MEMBER)
     const resultRows = new Float32Array(memberCount * VERTICES_PER_MEMBER)
     this.memberFlags = new Float32Array(memberCount * VERTICES_PER_MEMBER)
@@ -193,10 +202,7 @@ export default class CenterlineRenderer {
       const position = this.lineGeometry.getAttribute('position') as THREE.BufferAttribute
       const flags = this.lineGeometry.getAttribute('entityFlags') as THREE.BufferAttribute
       for (let index = range.min; index < range.maxExclusive; index++) {
-        const endpointOffset = index * 6
-        for (let component = 0; component < 6; component++) {
-          position.array[endpointOffset + component] = database.memberEndpoints[endpointOffset + component]
-        }
+        this.writeMemberEndpoints(position.array as Float32Array, database, index)
         this.memberFlags[index * 2] = database.memberFlags[index]
         this.memberFlags[index * 2 + 1] = database.memberFlags[index]
       }
@@ -223,6 +229,40 @@ export default class CenterlineRenderer {
       this.nodeGeometry.setDrawRange(0, database.nodeCount)
     }
     database.clearDirtyRanges()
+  }
+
+  /** Midas-style Shrink display: trim BOTH ends of every member by `perEnd`
+   *  (fraction of the member length). 0 restores full-length centerlines.
+   *  Display-only — the GPU picker keeps using full-length geometry. */
+  setShrink(perEnd: number) {
+    const next = clampShrink(perEnd)
+    if (next === this.shrinkPerEnd) return
+    this.shrinkPerEnd = next
+    const database = this.database
+    const position = this.lineGeometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    if (!database || !position) return
+    const array = position.array as Float32Array
+    for (let index = 0; index < database.memberCount; index++) this.writeMemberEndpoints(array, database, index)
+    position.needsUpdate = true
+    this.lineGeometry.computeBoundingSphere()
+  }
+
+  /** Writes the display endpoints of `memberIndex` (shrink applied) into `target`. */
+  private writeMemberEndpoints(target: Float32Array, database: StructuralSceneDB, memberIndex: number) {
+    const offset = memberIndex * 6
+    const startX = database.memberEndpoints[offset]
+    const startY = database.memberEndpoints[offset + 1]
+    const startZ = database.memberEndpoints[offset + 2]
+    const endX = database.memberEndpoints[offset + 3]
+    const endY = database.memberEndpoints[offset + 4]
+    const endZ = database.memberEndpoints[offset + 5]
+    const trim = this.shrinkPerEnd
+    target[offset] = startX + (endX - startX) * trim
+    target[offset + 1] = startY + (endY - startY) * trim
+    target[offset + 2] = startZ + (endZ - startZ) * trim
+    target[offset + 3] = endX - (endX - startX) * trim
+    target[offset + 4] = endY - (endY - startY) * trim
+    target[offset + 5] = endZ - (endZ - startZ) * trim
   }
 
   setVisible(visible: boolean) {

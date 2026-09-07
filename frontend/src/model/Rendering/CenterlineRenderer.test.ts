@@ -86,3 +86,51 @@ test('member gamma does not alter centerline endpoints', () => {
   renderer.syncDirty()
   assert.deepEqual(Array.from(position.array.slice(0, 6)), before)
 })
+
+test('shrink trims both member ends in the uploaded buffer', () => {
+  const { db } = makeRenderer(4)
+  const shrunk = new CenterlineRenderer(new THREE.Scene(), 0)
+  shrunk.setShrink(0.1)
+  shrunk.upload(db)
+  const positions = shrunk.lineGeometry.getAttribute('position') as THREE.BufferAttribute
+  const endpoints = db.memberEndpoints
+  const expected = new Float32Array([
+    endpoints[0] + (endpoints[3] - endpoints[0]) * 0.1,
+    endpoints[1] + (endpoints[4] - endpoints[1]) * 0.1,
+    endpoints[2] + (endpoints[5] - endpoints[2]) * 0.1,
+    endpoints[3] - (endpoints[3] - endpoints[0]) * 0.1,
+    endpoints[4] - (endpoints[4] - endpoints[1]) * 0.1,
+    endpoints[5] - (endpoints[5] - endpoints[2]) * 0.1,
+  ])
+  assert.deepEqual(Array.from(positions.array.slice(0, 6)), Array.from(expected))
+})
+
+test('setShrink toggles rewrite the uploaded buffer without re-upload', () => {
+  const { db, renderer } = makeRenderer(4)
+  const full = Array.from(db.memberEndpoints.slice(0, 6))
+  renderer.setShrink(0.25)
+  const positions = renderer.lineGeometry.getAttribute('position') as THREE.BufferAttribute
+  assert.notDeepEqual(Array.from(positions.array.slice(0, 6)), full)
+  renderer.setShrink(0)
+  assert.deepEqual(Array.from(positions.array.slice(0, 6)), full)
+})
+
+test('shrink applies to dirty-range syncs as well', () => {
+  const { db, renderer } = makeRenderer(10)
+  renderer.setShrink(0.25)
+  const nodeId = db.nodeIds[db.memberStartNodeIndices[0]]
+  db.updateNode(nodeId, [7, 8, 9])
+  renderer.syncDirty()
+  const positions = renderer.lineGeometry.getAttribute('position') as THREE.BufferAttribute
+  const endpoints = db.memberEndpoints
+  const expected = new Float32Array([
+    endpoints[0] + (endpoints[3] - endpoints[0]) * 0.25,
+    endpoints[1] + (endpoints[4] - endpoints[1]) * 0.25,
+    endpoints[2] + (endpoints[5] - endpoints[2]) * 0.25,
+    endpoints[3] - (endpoints[3] - endpoints[0]) * 0.25,
+    endpoints[4] - (endpoints[4] - endpoints[1]) * 0.25,
+    endpoints[5] - (endpoints[5] - endpoints[2]) * 0.25,
+  ])
+  assert.deepEqual(Array.from(positions.array.slice(0, 6)), Array.from(expected))
+})
+

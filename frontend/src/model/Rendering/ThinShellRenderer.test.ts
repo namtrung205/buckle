@@ -255,3 +255,40 @@ test('custom entropy grows by unique contour topology, not member count', () => 
   assert.equal(renderer.activeBatchCount, 7)
   assert.equal(renderer.group.children.length, 15)
 })
+
+test('shrink drives the uShrink uniform on surface and edge materials', () => {
+  const renderer = new ThinShellRenderer(new THREE.Scene(), 0)
+  const materials = renderer as unknown as { material: THREE.ShaderMaterial; edgeMaterial: THREE.ShaderMaterial }
+  assert.equal(materials.material.uniforms.uShrink.value, 0)
+  renderer.setShrink(0.05)
+  assert.equal(materials.material.uniforms.uShrink.value, 0.05)
+  assert.equal(materials.edgeMaterial.uniforms.uShrink.value, 0.05)
+  renderer.setShrink(0)
+  assert.equal(materials.material.uniforms.uShrink.value, 0)
+})
+
+test('shrink trims fallback centerlines for unbatched profile families', () => {
+  const source: StructuralSceneSource = {
+    nodes: [
+      { id: 1, position: [0, 0, 0] },
+      { id: 2, position: [2, 0, 0] },
+    ],
+    profiles: [{ id: 10, family: 'rectangular', parameters: [.3, .5, 0, 0] }],
+    members: [{ id: 100, startNodeId: 1, endNodeId: 2, profileId: 10 }],
+  }
+  const database = new StructuralSceneDB(source)
+  const renderer = new ThinShellRenderer(new THREE.Scene(), 0)
+  renderer.setShrink(0.1)
+  renderer.upload(database)
+  const positions = renderer.fallbackGeometry.getAttribute('position') as THREE.BufferAttribute
+  assert.deepEqual(
+    Array.from(positions.array.slice(0, 6)),
+    Array.from(new Float32Array([0.2, 0, 0, 1.8, 0, 0])),
+  )
+  renderer.setShrink(0)
+  assert.deepEqual(
+    Array.from(positions.array.slice(0, 6)),
+    Array.from(new Float32Array([0, 0, 0, 2, 0, 0])),
+  )
+})
+

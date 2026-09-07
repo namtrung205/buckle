@@ -16,6 +16,7 @@ import {
   createPipeThinShellTemplate,
   type ThinShellTemplate,
 } from './thinShellTemplates.ts'
+import { clampShrinkRatio } from '../Utils/shrink.ts'
 
 export { createHThinShellTemplate } from './thinShellTemplates.ts'
 
@@ -29,6 +30,7 @@ const VERTEX_SHADER = /* glsl */ `
   attribute float instanceFlags;
   attribute float instanceOrientationFlags;
   attribute float instanceResultRow;
+  uniform float uShrink;
   varying vec3 vNormal;
   varying float vFlags;
   varying float vResultU;
@@ -57,7 +59,7 @@ const VERTEX_SHADER = /* glsl */ `
     float mirrorZ = hasFlag(instanceOrientationFlags, 2.0) ? -1.0 : 1.0;
     float profileY = (position.y * instanceDimensions.y + thicknessWeights.x * instanceDimensions.z) * mirrorY;
     float profileZ = (position.z * instanceDimensions.x + thicknessWeights.y * instanceDimensions.w) * mirrorZ;
-    vec3 worldPosition = mix(instanceStart, instanceEnd, position.x) + axisY * profileY + axisZ * profileZ;
+    vec3 worldPosition = mix(instanceStart, instanceEnd, mix(uShrink, 1.0 - uShrink, position.x)) + axisY * profileY + axisZ * profileZ;
     vNormal = normalize(axisX * normal.x + axisY * normal.y * mirrorY + axisZ * normal.z * mirrorZ);
     vFlags = instanceFlags;
     vResultU = position.x;
@@ -121,6 +123,7 @@ const EDGE_VERTEX_SHADER = /* glsl */ `
   attribute float instanceGamma;
   attribute float instanceFlags;
   attribute float instanceOrientationFlags;
+  uniform float uShrink;
   varying float vFlags;
   bool hasFlag(float value, float flag) { return mod(floor(value / flag), 2.0) > 0.5; }
   vec3 safeReference(vec3 axisX, vec3 referenceAxis) {
@@ -142,7 +145,7 @@ const EDGE_VERTEX_SHADER = /* glsl */ `
     float mirrorZ = hasFlag(instanceOrientationFlags, 2.0) ? -1.0 : 1.0;
     float profileY = (position.y * instanceDimensions.y + thicknessWeights.x * instanceDimensions.z) * mirrorY;
     float profileZ = (position.z * instanceDimensions.x + thicknessWeights.y * instanceDimensions.w) * mirrorZ;
-    vec3 worldPosition = mix(instanceStart, instanceEnd, position.x) + axisY * profileY + axisZ * profileZ;
+    vec3 worldPosition = mix(instanceStart, instanceEnd, mix(uShrink, 1.0 - uShrink, position.x)) + axisY * profileY + axisZ * profileZ;
     vFlags = instanceFlags;
     gl_Position = projectionMatrix * viewMatrix * vec4(worldPosition, 1.0);
   }
@@ -211,6 +214,7 @@ const FALLBACK_FRAGMENT_SHADER = /* glsl */ `
 
 const PIPE_SEGMENTS: Record<QualityProfile, number> = { low: 8, balanced: 12, high: 20, custom: 16 }
 const resultUniforms = () => ({
+  uShrink: { value: 0 },
   resultTexture: { value: null as THREE.DataTexture | null },
   resultColorLut: { value: null as THREE.DataTexture | null },
   resultTextureSize: { value: new THREE.Vector2(1, 1) },
@@ -272,6 +276,7 @@ export default class ThinShellRenderer {
   })
   private readonly edgeMaterial = new THREE.ShaderMaterial({
     vertexShader: EDGE_VERTEX_SHADER, fragmentShader: EDGE_FRAGMENT_SHADER,
+    uniforms: { uShrink: { value: 0 } },
     transparent: true, depthTest: true, depthWrite: false,
   })
   private readonly batches = new Map<string, Batch>()
@@ -283,6 +288,8 @@ export default class ThinShellRenderer {
   private uploadedProfileCount = 0
   private qualityProfile: QualityProfile = 'balanced'
   private membersVisible = true
+  /** Midas-style Shrink: fraction of member length trimmed at EACH end (0 = off). */
+  private shrinkPerEnd = 0
   private readonly layer: number
 
   constructor(scene: THREE.Scene, layer: number) {
@@ -456,7 +463,7 @@ export default class ThinShellRenderer {
     const resultRows = new Float32Array(memberIndices.length * 2)
     this.fallbackFlags = new Float32Array(memberIndices.length * 2)
     memberIndices.forEach((memberIndex, fallbackIndex) => {
-      positions.set(database.memberEndpoints.subarray(memberIndex * 6, memberIndex * 6 + 6), fallbackIndex * 6)
+      this.writeFallbackEndpoints(positions, database, memberIndex, fallbackIndex * 6)
       this.fallbackFlags.fill(database.memberFlags[memberIndex], fallbackIndex * 2, fallbackIndex * 2 + 2)
       resultU[fallbackIndex * 2 + 1] = 1
       resultRows.fill(memberIndex, fallbackIndex * 2, fallbackIndex * 2 + 2)
@@ -469,6 +476,53 @@ export default class ThinShellRenderer {
     this.fallbackGeometry.setDrawRange(0, memberIndices.length * 2)
     this.fallbackGeometry.computeBoundingSphere()
     this.fallbackLines.visible = this.membersVisible && memberIndices.length > 0
+  }
+
+  /** Midas-style Shrink display: trim BOTH ends of every member by `perEnd`
+   *  (fraction of the member length) along the member axis. 0 restores full
+   *  length. Display-only — the GPU picker keeps using full-length geometry.
+   *  Batched profiles shrink on the GPU via the uShrink uniform; fallback
+   *  centerlines (unbatched profile families) are trimmed on the CPU. */
+  setShrink(perEnd: number) {
+    const next = clampShrinkRatio(perEnd)
+    if (next === this.shrinkPerEnd) return
+    this.shrinkPerEnd = next
+    ;(this.material.uniforms as Record<string, { value: number }>).uShrink.value = next
+    ;(this.edgeMaterial.uniforms as Record<string, { value: number }>).uShrink.value = next
+    this.refreshFallbackPositions()
+  }
+
+  /** Writes the display endpoints of `memberIndex` (shrink applied) into `target` at `offset`. */
+  private writeFallbackEndpoints(target: Float32Array, database: StructuralSceneDB, memberIndex: number, offset: number) {
+    const endpointOffset = memberIndex * 6
+    const startX = database.memberEndpoints[endpointOffset]
+    const startY = database.memberEndpoints[endpointOffset + 1]
+    const startZ = database.memberEndpoints[endpointOffset + 2]
+    const endX = database.memberEndpoints[endpointOffset + 3]
+    const endY = database.memberEndpoints[endpointOffset + 4]
+    const endZ = database.memberEndpoints[endpointOffset + 5]
+    const trim = this.shrinkPerEnd
+    target[offset] = startX + (endX - startX) * trim
+    target[offset + 1] = startY + (endY - startY) * trim
+    target[offset + 2] = startZ + (endZ - startZ) * trim
+    target[offset + 3] = endX - (endX - startX) * trim
+    target[offset + 4] = endY - (endY - startY) * trim
+    target[offset + 5] = endZ - (endZ - startZ) * trim
+  }
+
+  /** Rewrites every fallback centerline with the current shrink ratio. */
+  private refreshFallbackPositions() {
+    const database = this.database
+    const positions = this.fallbackGeometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    if (!database || !positions) return
+    const array = positions.array as Float32Array
+    for (const [entityId, fallbackVertex] of this.fallbackVertexByEntityId) {
+      const memberIndex = database.memberIndexById.get(entityId)
+      if (memberIndex === undefined) continue
+      this.writeFallbackEndpoints(array, database, memberIndex, fallbackVertex)
+    }
+    positions.needsUpdate = true
+    this.fallbackGeometry.computeBoundingSphere()
   }
 
   syncMemberState(entityId: number) {
@@ -552,8 +606,7 @@ export default class ThinShellRenderer {
       const fallbackVertex = this.fallbackVertexByEntityId.get(entityId)
       if (fallbackVertex !== undefined) {
         const positions = this.fallbackGeometry.getAttribute('position') as THREE.BufferAttribute
-        positions.setXYZ(fallbackVertex, database.memberEndpoints[endpointOffset], database.memberEndpoints[endpointOffset + 1], database.memberEndpoints[endpointOffset + 2])
-        positions.setXYZ(fallbackVertex + 1, database.memberEndpoints[endpointOffset + 3], database.memberEndpoints[endpointOffset + 4], database.memberEndpoints[endpointOffset + 5])
+        this.writeFallbackEndpoints(positions.array as Float32Array, database, memberIndex, fallbackVertex)
         this.fallbackFlags[fallbackVertex] = this.fallbackFlags[fallbackVertex + 1] = database.memberFlags[memberIndex]
         positions.needsUpdate = true
         ;(this.fallbackGeometry.getAttribute('entityFlags') as THREE.BufferAttribute).needsUpdate = true

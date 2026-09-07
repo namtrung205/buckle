@@ -19,6 +19,7 @@ import {
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
+import { SHRINK_RATIO_PER_END, shrinkEndpoints } from "../../Utils/shrink";
 class ElasticBeamColumn {
   model: Model
   id: number
@@ -204,7 +205,22 @@ class ElasticBeamColumn {
     lineMesh.visible = true
     lineMesh.layers.set(this.model.layer)
     this.addLabel()
+    this.applyShrink()
   }
+
+  /** Midas-style Shrink display: compress the solid + edges about the member
+   *  midpoint along the member axis (the group's local Z) and trim the
+   *  centerline accordingly. Display-only — the solid cache stays full-length. */
+  applyShrink() {
+    const perEnd = this.model.shrinkEnabled ? SHRINK_RATIO_PER_END : 0
+    if (this.group) this.group.scale.z = perEnd > 0 ? 1 - 2 * perEnd : 1
+    if (this.line) {
+      (this.line.mesh.geometry as LineGeometry).setPositions(
+        shrinkEndpoints(this.line.startPoint, this.line.endPoint, perEnd),
+      )
+    }
+  }
+
 
   materializeSolid() {
     if (!this.group) this.create()
