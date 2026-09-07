@@ -105,7 +105,8 @@ export const createHThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [.5, 0], [-.5, 1], [.5, 0], [-.5, 0], 1, 0)
   capBoth(vertices, [[-.5, .5, 0, 0], [.5, .5, 0, 0], [.5, .5, 0, -1], [-.5, .5, 0, -1]])
   capBoth(vertices, [[-.5, -.5, 0, 1], [.5, -.5, 0, 1], [.5, -.5, 0, 0], [-.5, -.5, 0, 0]])
-  capBoth(vertices, [[0, -.5, -.5, 1], [0, .5, -.5, 1], [0, .5, .5, -1], [0, -.5, .5, -1]])
+  // Web end face is a full rectangle between the flanges (t2 flips sign with h).
+  capBoth(vertices, [[0, -.5, -.5, 1], [0, .5, -.5, -1], [0, .5, .5, -1], [0, -.5, .5, 1]])
   return pack(vertices)
 }
 
@@ -116,14 +117,16 @@ export const createChannelThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [-.5, 1], [.5, -1], [.5, 0], [.5, -1], 0, -1)
   face(vertices, [-.5, 0], [-.5, 0], [.5, 0], [-.5, 0], 0, -1)
   face(vertices, [-.5, 1], [-.5, 1], [.5, 0], [-.5, 1], 0, 1)
-  face(vertices, [-.5, 0], [-.5, 1], [-.5, 0], [.5, -1], -1, 0)
+  // Web outer face spans the full depth; the flanges attach beside it.
+  face(vertices, [-.5, 0], [-.5, 0], [-.5, 0], [.5, 0], -1, 0)
   face(vertices, [-.5, 1], [-.5, 1], [-.5, 1], [.5, -1], 1, 0)
   // Flange tip faces at the open +Y edge (height tf).
   face(vertices, [.5, 0], [.5, 0], [.5, 0], [.5, -1], 1, 0)
   face(vertices, [.5, 0], [-.5, 1], [.5, 0], [-.5, 0], 1, 0)
   capBoth(vertices, [[-.5, .5, 1, 0], [.5, .5, 0, 0], [.5, .5, 0, -1], [-.5, .5, 1, -1]])
   capBoth(vertices, [[-.5, -.5, 1, 1], [.5, -.5, 0, 1], [.5, -.5, 0, 0], [-.5, -.5, 1, 0]])
-  capBoth(vertices, [[-.5, -.5, 0, 1], [-.5, -.5, 1, 1], [-.5, .5, 1, -1], [-.5, .5, 0, -1]])
+  // Web end face spans the full depth and tiles the cross-section with the flange caps.
+  capBoth(vertices, [[-.5, -.5, 0, 0], [-.5, -.5, 1, 0], [-.5, .5, 1, 0], [-.5, .5, 0, 0]])
   return pack(vertices)
 }
 
@@ -137,7 +140,8 @@ export const createAngleThinShellTemplate = (): ThinShellTemplate => {
   // Leg tip faces (thickness t) close the L profile sides.
   face(vertices, [-.5, 0], [.5, 0], [-.5, 1], [.5, 0], 0, 1)
   face(vertices, [.5, 0], [-.5, 1], [.5, 0], [-.5, 0], 1, 0)
-  capBoth(vertices, [[-.5, -.5, 0, 0], [-.5, -.5, 1, 0], [-.5, .5, 1, 0], [-.5, .5, 0, 0]])
+  // Vertical leg cap starts above the horizontal leg to avoid double-covering the corner.
+  capBoth(vertices, [[-.5, -.5, 0, 1], [-.5, -.5, 1, 1], [-.5, .5, 1, 0], [-.5, .5, 0, 0]])
   capBoth(vertices, [[-.5, -.5, 0, 0], [.5, -.5, 0, 0], [.5, -.5, 0, 1], [-.5, -.5, 0, 1]])
   return pack(vertices)
 }

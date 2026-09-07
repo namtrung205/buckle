@@ -81,8 +81,8 @@ export class Model {
 
   enabled = true
   showVolumes = true
-  /** On-screen FPS readout toggle (Settings → View → Show FPS). */
-  showFps = false
+  /** On-screen FPS readout toggle (Settings → View → Show FPS). On by default. */
+  showFps = true
   /** Goal-0 schema only: legacy rendering remains unchanged until Goal 2. */
   renderMode: RenderMode = storedRenderMode()
   qualityProfile: QualityProfile = storedQualityProfile()
