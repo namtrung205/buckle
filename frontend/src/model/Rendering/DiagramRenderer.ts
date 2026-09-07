@@ -52,6 +52,7 @@ const VERTEX_SHADER = /* glsl */ `
   varying float vFlags;
   varying float vDiagramVisible;
   varying float vLineKind;
+varying vec3 vNormal;
   ${FRAME_GLSL}
   void main() {
     float u = position.x;
@@ -82,6 +83,9 @@ const VERTEX_SHADER = /* glsl */ `
     vFlags = instanceFlags;
     vDiagramVisible = instanceDiagramVisible;
     vLineKind = lineKind;
+    // Geometric surface normal of the ribbon plane (member axis × diagram
+    // offset axis) — used by the ribbon's ambient+diffuse lighting.
+    vNormal = normalize(cross(axisX, direction));
     gl_Position = projectionMatrix * viewMatrix * vec4(worldPosition, 1.0);
   }
 `
@@ -92,9 +96,13 @@ const RIBBON_FRAGMENT_SHADER = /* glsl */ `
   uniform float resultMin;
   uniform float resultMax;
   uniform float contourEnabled;
+  uniform vec3 lightDirection;
+  uniform float ambientStrength;
+  uniform float diffuseStrength;
   varying float vValue;
   varying float vFlags;
   varying float vDiagramVisible;
+  varying vec3 vNormal;
   bool hasFlag(float value, float flag) { return mod(floor(value / flag), 2.0) > 0.5; }
   void main() {
     if (!hasFlag(vFlags, 1.0) || vDiagramVisible < 0.5 || vValue != vValue) discard;
@@ -105,7 +113,12 @@ const RIBBON_FRAGMENT_SHADER = /* glsl */ `
     }
     if (hasFlag(vFlags, 4.0)) color = vec3(1.0, 0.72, 0.12);
     if (hasFlag(vFlags, 2.0)) color = vec3(1.0, 0.22, 0.12);
-    gl_FragColor = vec4(color, 0.88);
+    // Ambient + one directional light so the ribbon reads like a material-lit
+    // solid instead of a flat constant shader. abs() keeps both faces lit
+    // (DoubleSide ribbon flips the interpolated normal per face).
+    float ndl = abs(dot(normalize(vNormal), normalize(lightDirection)));
+    float lighting = min(ambientStrength + diffuseStrength * ndl, 1.2);
+    gl_FragColor = vec4(color * lighting, 1.0);
   }
 `
 
@@ -124,7 +137,11 @@ const LINE_FRAGMENT_SHADER = /* glsl */ `
   void main() {
     if (!hasFlag(vFlags, 1.0) || vDiagramVisible < 0.5 || vValue != vValue) discard;
     if (vLineKind > 0.5 && hatchEnabled < 0.5) discard;
-    vec3 color = hasFlag(vFlags, 2.0) ? vec3(1.0, 0.22, 0.12) : vec3(0.08, 0.16, 0.22);
+    // Bright lines like the legacy diagram: outline/baseline near-white, hatch
+    // light silver (legacy 0xaeb9c4). The old GPU hatch was near-black navy and
+    // dragged the whole diagram dark.
+    vec3 base = vLineKind > 0.5 ? vec3(0.72, 0.77, 0.82) : vec3(0.90, 0.93, 0.96);
+    vec3 color = hasFlag(vFlags, 2.0) ? vec3(1.0, 0.22, 0.12) : base;
     // Hatch / baseline / outline inherit the contour colormap (same normalisation
     // as the ribbon) so a contour diagram's lines change colour by value again.
     if (contourEnabled > 0.5 && !hasFlag(vFlags, 2.0)) {
@@ -132,7 +149,7 @@ const LINE_FRAGMENT_SHADER = /* glsl */ `
       color = texture2D(resultColorLut, vec2(clamp(0.5 + 0.5 * vValue / maxAbs, 0.0, 1.0), 0.5)).rgb;
     }
     if (hasFlag(vFlags, 4.0)) color = vec3(1.0, 0.72, 0.12);
-    gl_FragColor = vec4(color, 0.95);
+    gl_FragColor = vec4(color, vLineKind > 0.5 ? 0.6 : 0.95);
   }
 `
 
@@ -176,6 +193,11 @@ const resultUniforms = () => ({
   diagramScale: { value: 1 }, directionMode: { value: 0 },
   referenceDeformed: { value: 0 }, deformationScale: { value: 1 },
   contourEnabled: { value: 0 }, hatchEnabled: { value: 1 },
+  // Photo-style lighting for the diagram ribbon (ambient + one directional).
+  // Hardcoded "sun" light: brighten the diagram just like a material-lit solid.
+  lightDirection: { value: new THREE.Vector3(0.55, 0.75, 0.38).normalize() },
+  ambientStrength: { value: 0.82 },
+  diffuseStrength: { value: 0.5 },
 })
 
 export const diagramDirectionForComponent = (component: string) =>
