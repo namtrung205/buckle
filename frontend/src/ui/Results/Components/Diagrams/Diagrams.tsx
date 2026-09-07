@@ -111,7 +111,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     else if (post.activeType) applyForce(post.activeType);
   };
 
-  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine' | 'showLegend' | 'showStressSolid') =>
+  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine' | 'showLegend' | 'showStressSolid' | 'useDeformedDiagramReference') =>
     (event: ChangeEvent<HTMLInputElement>) => {
       post[key] = event.target.checked;
       if (key === 'showLegend') return; // pure on-canvas UI flag — no 3D re-render needed
@@ -215,6 +215,9 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
           <>
             <FormControlLabel control={<Switch size="small" checked={post.showRibbon} onChange={handleToggle('showRibbon')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Filled ribbon</Typography>} sx={{ margin: 0 }} />
             <FormControlLabel control={<Switch size="small" checked={post.showHatch} onChange={handleToggle('showHatch')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Hatch lines</Typography>} sx={{ margin: 0 }} />
+            {model.renderMode !== 'solid-extrude' && (
+              <FormControlLabel control={<Switch size="small" checked={post.useDeformedDiagramReference} onChange={handleToggle('useDeformedDiagramReference')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Diagram on deformed reference</Typography>} sx={{ margin: 0 }} />
+            )}
           </>
         )}
         {isStress && (

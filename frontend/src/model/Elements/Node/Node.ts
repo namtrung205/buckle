@@ -1,6 +1,5 @@
 import Model from "../../Model"
 import * as THREE from "three"
-import { Label } from "../../../types"
 
 const NODE_SCREEN_RADIUS_PX = 3
 const _nodePos = new THREE.Vector3()
@@ -10,7 +9,7 @@ class Node {
   x: number
   y: number
   z: number
-  mesh: THREE.Mesh = new THREE.Mesh()
+  mesh!: THREE.Mesh
   model?: Model
   constructor(coordinates: THREE.Vector3, name? : string, id?: number){
     this.id = id ? id : Math.floor(Math.random() * Number.MAX_SAFE_INTEGER) % 0x80000000
@@ -22,6 +21,11 @@ class Node {
   create()
   {
     if(!this.model) return
+    if (this.model.renderMode !== 'solid-extrude') {
+      if(!this.name) this.name = `Node ${this.model.nodes.length + 1 }`
+      this.model.gpuAnnotations?.markDirty()
+      return
+    }
 
     const geometry = new THREE.SphereGeometry(0.05, 32, 32);
     const material = new THREE.MeshStandardMaterial({ color: 0x0000ff });
@@ -43,11 +47,19 @@ class Node {
     this.addLabel()
   }
 
+  materializeSolid() {
+    if (!this.mesh) this.create()
+  }
+
+  releaseSolid() {
+    this.dispose()
+  }
+
   update(position : THREE.Vector3 ,  name? : string){
     this.x = position.x
     this.y = position.y
     this.z = position.z
-    this.mesh.position.copy(position)
+    this.mesh?.position.copy(position)
     if(name) this.name = name
 
     if(!this.model) return 
@@ -118,6 +130,7 @@ class Node {
   }
 
   dispose(){
+    if (!this.mesh) return
     this.mesh.geometry.dispose()
     const ids = [`node-${this.id}`]
     this.model?.labeler.batchDelete(ids) 
@@ -131,6 +144,7 @@ class Node {
     if(this.mesh.parent){
       this.mesh.parent.remove(this.mesh)
     }
+    this.mesh = undefined as unknown as THREE.Mesh
   }
 
   /** Keep the node sphere a constant on-screen size regardless of zoom. */
@@ -142,18 +156,7 @@ class Node {
   }
 
   addLabel(){
-    if(!this.model || !this.model.visibility.nodeLabels) return 
-
-    const delta = 0.1
-    const labels : Label[] = [
-      {
-          id : `node-${this.id}`,
-          position : new THREE.Vector3(this.x, this.y + delta, this.z),
-          text : this.name || '',
-      }
-    ]
-    
-    this.model.labeler.batchUpdateOrCreate(labels)
+    this.model?.gpuAnnotations?.markDirty()
   }
 }
 

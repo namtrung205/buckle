@@ -62,7 +62,6 @@ class Selector {
     }
   }
   constructor(model: Model) {
-    this.setupEvent = true;
     this.model = model;
     this.enableHover = true
     this.enableClick = true
@@ -74,6 +73,8 @@ class Selector {
     this.isCtrlPressed = false
     this.selected = []
     makeAutoObservable(this)
+    // Bind DOM callbacks only after MobX has wrapped methods as actions.
+    this.setupEvent = true;
   }
 
   private pickStructuralMember() {

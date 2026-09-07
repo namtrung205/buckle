@@ -1,7 +1,5 @@
 import Model from "../Model"
 import Labeler from "../Labeler/Labeler"
-import { Label } from "../../types"
-import * as THREE from "three";
 import { makeAutoObservable } from "mobx";
 class Visibility {
   labeler : Labeler
@@ -46,60 +44,24 @@ class Visibility {
   showOrHideMemberLabels(visible : boolean) {
     this.memberLabels = visible
     const ids = this.model.members.map((member) => `member-${member.id}`)
-    const delta = 0.1
-    if(!visible) {
-      this.model.labeler.batchDelete(ids) 
-      return
-    } 
-
-    const labels : Label[] = this.model.members.map((member) => {
-      const nodes = member.nodes
-      const iNode = nodes[0]
-      const jNode = nodes[1]
-
-      const xCenter = (iNode.x + jNode.x) / 2
-      const yCenter = (iNode.y + jNode.y) / 2
-      const zCenter = (iNode.z + jNode.z) / 2
-      return(
-        {
-          id : `member-${member.id}`,
-          position : new THREE.Vector3(xCenter, yCenter + delta, zCenter),
-          text : member.label ? member.label : '',
-        }
-      )
-    })
-    
-    this.model.labeler.batchUpdateOrCreate(labels)
+    // Remove labels created by older sessions and use one instanced GPU stream.
+    this.model.labeler.batchDelete(ids)
+    this.model.gpuAnnotations.setMemberLabels(visible)
   }
   
   showOrHideNodes(visible : boolean){
     this.nodes = visible
     this.model.centerlineRenderer?.setNodesVisible(visible)
     this.model.nodes.forEach((node) => {
-      node.mesh.visible = this.model.renderMode === 'solid-extrude' && visible
+      if (node.mesh) node.mesh.visible = this.model.renderMode === 'solid-extrude' && visible
     })
   }
 
   showOrHideNodeLabels(visible : boolean) {
     this.nodeLabels = visible
     const ids = this.model.nodes.map((node) => `node-${node.id}`)
-    const delta = 0.1
-    if(!visible) {
-      this.model.labeler.batchDelete(ids) 
-      return
-    } 
-
-    const labels : Label[] = this.model.nodes.map((node) => {
-      return(
-        {
-          id : `node-${node.id}`,
-          position : new THREE.Vector3(node.x, node.y + delta, node.z),
-          text : node.name ? node.name : '',
-        }
-      )
-    })
-    
-    this.model.labeler.batchUpdateOrCreate(labels)
+    this.model.labeler.batchDelete(ids)
+    this.model.gpuAnnotations.setNodeLabels(visible)
   }
 
   showOrHideSections(visible : boolean){
@@ -107,8 +69,8 @@ class Visibility {
     this.model.thinShellRenderer?.setMembersVisible(visible && this.members)
     this.model.members.forEach((member) => {
       const entityVisible = this.model.isStructuralMemberVisible(member.id)
-      member.mesh.visible = this.model.renderMode === 'solid-extrude' && visible && entityVisible
-      member.edges.visible = this.model.renderMode === 'solid-extrude' && visible && entityVisible
+      if (member.mesh) member.mesh.visible = this.model.renderMode === 'solid-extrude' && visible && entityVisible
+      if (member.edges) member.edges.visible = this.model.renderMode === 'solid-extrude' && visible && entityVisible
     })
   }
 
@@ -116,12 +78,9 @@ class Visibility {
     this.loads = visible
     this.model.loads.forEach((load) => {
       load.mesh.forEach(m => m.visible = visible)
-      if (visible) {
-        load.createLabels()
-      } else {
-        load.removeAllLabels()
-      }
+      load.removeAllLabels()
     })
+    this.model.syncGpuAnnotations()
   }
 
   /** Show/hide every structural axis grid (Settings → Visibility). */

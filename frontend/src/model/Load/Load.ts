@@ -71,6 +71,11 @@ class Load {
         break
     }
 
+    // Respect the global Loads visibility even when an entity is created while
+    // the layer is hidden. Existing and newly-created geometry then behave the
+    // same way across every structural render mode.
+    for (const object of this.mesh) object.visible = this.model.visibility?.loads ?? true
+
     this.removeAllLabels()
     this.createLabels()
   }
@@ -381,6 +386,7 @@ class Load {
       if (this.model.loads.length > 0) {
         this.model.loads[0].createLabels()
       }
+      this.model.syncGpuAnnotations()
     }
   }
   dispose() {
@@ -423,9 +429,9 @@ class Load {
     this.mesh = []
   }
   createLabels(){
-    this.createLinearLoadLabels()
-    this.createNodalLoadLabels()
-    this.createPressureLoadLabels()
+    // Entity-scale annotations are rendered by one GPU glyph/symbol stream.
+    this.removeAllLabels()
+    this.model.syncGpuAnnotations()
   }
   createPressureLoadLabels() {
     const labels = [];

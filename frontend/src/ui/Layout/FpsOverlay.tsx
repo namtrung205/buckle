@@ -16,6 +16,7 @@ const FpsOverlay = observer(() => {
 
   const benchmark = model.performanceBenchmark;
   const snapshot = benchmark.snapshot;
+  const annotationStats = model.gpuAnnotations.getStats();
   const low = snapshot.fps > 0 && snapshot.fps < 30;
   const busy = benchmark.running || benchmark.fixtureLoading || benchmark.resultRunning;
 
@@ -79,6 +80,7 @@ const FpsOverlay = observer(() => {
       <Box>GEO {snapshot.geometries} · TEX {snapshot.textures} · PROGRAM {snapshot.programs}</Box>
       <Box>CPU update {snapshot.cpuUpdateMsAvg} · submit {snapshot.renderSubmitMsAvg} · labels {snapshot.labelRenderMsAvg} ms</Box>
       <Box>RAY P95 {snapshot.raycastMsP95} ms · PICK {snapshot.pickables.toLocaleString()}</Box>
+      <Box>ANN GLYPH {annotationStats.glyphInstances.toLocaleString()} · SYMBOL {annotationStats.symbolInstances.toLocaleString()}</Box>
       <Box>SELECTED {model.selectedNodeIds.length + model.selectedMemberIds.length + model.selectedShellIds.length}</Box>
       <Box>MODE {model.renderMode} · QUALITY {model.qualityProfile} · WebGL2</Box>
       {benchmark.fixture && (
@@ -94,11 +96,17 @@ const FpsOverlay = observer(() => {
           {benchmark.fixtureLoading ? 'Loading fixture…' : benchmark.resultRunning ? 'Testing result textures…' : `${benchmark.phase} ${benchmark.progress}%`}
         </Box>
       )}
+      {model.solidPreparation.active && (
+        <Box sx={{ color: '#fbbf24', mt: 0.5 }}>
+          Preparing solid {model.solidPreparation.progress}% · est. {model.solidPreparation.estimatedTriangles.toLocaleString()} tri
+        </Box>
+      )}
       <Stack direction="row" spacing={0.5} sx={{ mt: 0.75, flexWrap: 'wrap', gap: 0.5 }}>
         <Button size="small" variant="outlined" disabled={busy} onClick={() => void model.loadBenchmarkFixture(1_000)}>Load 1k</Button>
         <Button size="small" variant="outlined" disabled={busy} onClick={() => void model.loadBenchmarkFixture(10_000)}>Load 10k</Button>
         <Button size="small" variant="contained" disabled={busy} onClick={() => void benchmark.run()}>Run</Button>
         <Button size="small" variant="outlined" disabled={busy || model.structuralSceneDB.memberCount === 0} onClick={() => void model.runResultBenchmark()}>Result test</Button>
+        <Button size="small" variant="outlined" disabled={busy || model.structuralSceneDB.memberCount === 0} onClick={() => void model.runAnnotationBenchmark()}>Text/symbol test</Button>
         <Button size="small" variant="text" disabled={!benchmark.report} onClick={() => void copyReport()}>
           {copyStatus || 'Copy'}
         </Button>

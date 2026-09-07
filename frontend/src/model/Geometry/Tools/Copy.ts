@@ -99,8 +99,8 @@ class CopyTool implements Tool {
     if(this.model.snapper.snappedScreenCoords) mouse = this.model.snapper.snappedScreenCoords
 
     this.rayCaster.setFromCamera(mouse, this.camera.cam);
-    const nodes = this.model.nodes.map((node) => node.mesh)
-    const members = this.model.members.map(member => member.mesh)
+    const nodes = this.model.nodes.map((node) => node.mesh).filter(Boolean)
+    const members = this.model.members.map(member => member.mesh).filter(Boolean)
     const grid = this.model.gridHelper.grid
     const meshesArray = [...nodes, ...members, grid]
     const intersects: THREE.Intersection[] = this.rayCaster.intersectObjects(meshesArray);

@@ -29,6 +29,7 @@ type StoredCase = {
   label: string
   memberCount: number
   stationCount: number
+  memberIds: Uint32Array
   fields: Map<string, ResultField>
 }
 type ResidentTexture = { texture: THREE.DataTexture; touched: number }
@@ -131,10 +132,14 @@ export default class ResultStore {
       const stations = normalizeStations(member.stations)
       if (stations.length === 0) continue
       for (const [component, field] of fields) {
+        const componentStations = stations.filter(station => Object.entries(station.values).some(
+          ([key, value]) => canonicalResultComponent(key) === component && Number.isFinite(value),
+        ))
+        if (componentStations.length === 0) continue
         const offset = memberIndex * this.stationCount
         for (let sampleIndex = 0; sampleIndex < this.stationCount; sampleIndex++) {
           const u = this.stationCount === 1 ? 0 : sampleIndex / (this.stationCount - 1)
-          const value = sampleStations(stations, component, u)
+          const value = sampleStations(componentStations, component, u)
           field.values[offset + sampleIndex] = value
           if (Number.isFinite(value)) {
             field.min = Math.min(field.min, value)
@@ -153,6 +158,7 @@ export default class ResultStore {
       label: input.label ?? input.key,
       memberCount: database.memberCount,
       stationCount: this.stationCount,
+      memberIds: database.memberIds.slice(0, database.memberCount),
       fields,
     })
     this.version++
@@ -168,21 +174,33 @@ export default class ResultStore {
       const dy = first && last ? last[1] - first[1] : 0
       const dz = first && last ? last[2] - first[2] : 0
       const lengthSq = dx * dx + dy * dy + dz * dz
-      const stations: ResultStationInput[] = raw.map((station: any, index: number) => {
-        const values: ResultValues = station.values ? { ...station.values } : {}
-        for (const [component, effort] of Object.entries(station.efforts ?? {})) {
-          values[component] = Number((effort as any)?.value)
-        }
-        let position = Number(station.position ?? station.xi ?? station.s)
+      const positionOf = (station: any, index: number, source: any[]) => {
+        let position = Number(station.position ?? station.xi)
         if (!Number.isFinite(position) && lengthSq > 1e-16 && station.coord) {
           const cx = station.coord[0] - first![0]
           const cy = station.coord[1] - first![1]
           const cz = station.coord[2] - first![2]
           position = (cx * dx + cy * dy + cz * dz) / lengthSq
         }
-        if (!Number.isFinite(position)) position = raw.length > 1 ? index / (raw.length - 1) : 0
-        return { position, values }
+        if (!Number.isFinite(position)) position = source.length > 1 ? index / (source.length - 1) : 0
+        return position
+      }
+      const stations: ResultStationInput[] = raw.map((station: any, index: number) => {
+        const values: ResultValues = station.values ? { ...station.values } : {}
+        for (const [component, effort] of Object.entries(station.efforts ?? {})) {
+          values[component] = Number((effort as any)?.value)
+        }
+        return { position: positionOf(station, index, raw), values }
       })
+      const displacements = member.displacement_stations ?? []
+      displacements.forEach((station: any, index: number) => stations.push({
+        position: positionOf(station, index, displacements),
+        values: {
+          dX: Number(station.disp?.ux),
+          dY: Number(station.disp?.uz),
+          dZ: Number(station.disp?.uy),
+        },
+      }))
       return { entityId: Number(member.id), stations }
     })
     return this.ingest({ key, label: key, members }, database)
@@ -217,6 +235,22 @@ export default class ResultStore {
     }
   }
 
+  /** Read one interpolated GPU-field value for selection/tooltip text without
+   * rebuilding geometry or downloading a texture. */
+  sample(caseKey: string, component: string, entityId: number, position = .5) {
+    const resultCase = this.cases.get(caseKey)
+    const field = resultCase?.fields.get(canonicalResultComponent(component))
+    if (!resultCase || !field) return Number.NaN
+    const memberIndex = resultCase.memberIds.indexOf(entityId)
+    if (memberIndex < 0) return Number.NaN
+    const scaled = Math.max(0, Math.min(1, position)) * (resultCase.stationCount - 1)
+    const lower = Math.floor(scaled)
+    const upper = Math.min(resultCase.stationCount - 1, lower + 1)
+    const a = field.values[memberIndex * resultCase.stationCount + lower]
+    const b = field.values[memberIndex * resultCase.stationCount + upper]
+    return Number.isFinite(a) && Number.isFinite(b) ? a + (b - a) * (scaled - lower) : Number.NaN
+  }
+
   /** Patch one contiguous member row without reparsing/rebuilding the model. */
   updateMember(
     caseKey: string,
@@ -230,7 +264,9 @@ export default class ResultStore {
     const field = resultCase?.fields.get(canonical)
     const memberIndex = database.memberIndexById.get(entityId)
     if (!resultCase || !field || memberIndex === undefined) return false
-    const stations = normalizeStations(stationsInput)
+    const stations = normalizeStations(stationsInput).filter(station => Object.entries(station.values).some(
+      ([key, value]) => canonicalResultComponent(key) === canonical && Number.isFinite(value),
+    ))
     const offset = memberIndex * resultCase.stationCount
     for (let sampleIndex = 0; sampleIndex < resultCase.stationCount; sampleIndex++) {
       const u = resultCase.stationCount === 1 ? 0 : sampleIndex / (resultCase.stationCount - 1)
@@ -279,6 +315,33 @@ export default class ResultStore {
     const components = new Set<string>()
     for (const resultCase of this.cases.values()) for (const key of resultCase.fields.keys()) components.add(key)
     return [...components]
+  }
+
+  getExtrema(caseKey: string, component: string, memberIds?: readonly number[]) {
+    const resultCase = this.cases.get(caseKey)
+    const field = resultCase?.fields.get(canonicalResultComponent(component))
+    if (!resultCase || !field) return null
+    const filter = memberIds?.length ? new Set(memberIds) : null
+    let min = Infinity
+    let max = -Infinity
+    let minMemberId: number | null = null
+    let maxMemberId: number | null = null
+    let minU = 0
+    let maxU = 0
+    for (let memberIndex = 0; memberIndex < resultCase.memberCount; memberIndex++) {
+      const entityId = resultCase.memberIds[memberIndex]
+      if (filter && !filter.has(entityId)) continue
+      const offset = memberIndex * resultCase.stationCount
+      for (let stationIndex = 0; stationIndex < resultCase.stationCount; stationIndex++) {
+        const value = field.values[offset + stationIndex]
+        if (!Number.isFinite(value)) continue
+        const u = resultCase.stationCount > 1 ? stationIndex / (resultCase.stationCount - 1) : 0
+        if (value < min) { min = value; minMemberId = entityId; minU = u }
+        if (value > max) { max = value; maxMemberId = entityId; maxU = u }
+      }
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return null
+    return { min, max, minMemberId, maxMemberId, minU, maxU }
   }
 
   clear() {

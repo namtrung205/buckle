@@ -24,11 +24,11 @@ các goal tuần tự có artifact, performance gate và bước xác minh rõ r
 | 3 | Parametric thin-shell H/I + orientation shader | Completed |
 | 4 | U/L/Box/Pipe/custom thin-shell families | Completed |
 | 5 | GPU ID picking + interaction buffers | Completed |
-| 6 | ResultStore + stress/strain shader | Queued |
-| 7 | Procedural N/V/T/M diagrams | Queued |
-| 8 | SDF text + instanced structural symbols | Queued |
-| 9 | Lazy solid-extrude + production hardening | Queued |
-| 10 | Optional WebGPU evaluation | Queued, non-blocking |
+| 6 | ResultStore + stress/strain shader | Completed |
+| 7 | Procedural N/V/T/M diagrams | Completed |
+| 8 | SDF text + instanced structural symbols | Completed |
+| 9 | Lazy solid-extrude + production hardening | Completed |
+| 10 | Optional WebGPU evaluation | Deferred per user, non-blocking |
 
 ## Goal 0 — Contract, dependency và benchmark foundation
 

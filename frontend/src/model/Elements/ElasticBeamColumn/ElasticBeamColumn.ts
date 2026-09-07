@@ -19,21 +19,23 @@ import {
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
-import { Label } from "../../../types";
 class ElasticBeamColumn {
   model: Model
   id: number
   index: number
   nodes: Node[]
   label: string
-  mesh: THREE.Mesh
+  mesh!: THREE.Mesh
   group!: THREE.Group
   type: ElementType = 'elasticBeamColumn'
   section: Section
   vecxz: THREE.Vector3
   gamma: number = 0
   line: Line3D | null = null
-  edges : THREE.LineSegments = new THREE.LineSegments()
+  edges!: THREE.LineSegments
+  private solidCacheKey: string | null = null
+  private static solidCache = new Map<string, { geometry: THREE.ExtrudeGeometry; edges: THREE.EdgesGeometry; refs: number; touched: number }>()
+  private static cacheClock = 0
   release: string = ""
   constructor(model: Model, label: string, nodes: Node[], section: Section, id?: number) {
     this.model = model
@@ -43,11 +45,14 @@ class ElasticBeamColumn {
     this.nodes = nodes
     this.label = label ? label : `Member ${this.index}`
     this.section = section
-    this.mesh = new THREE.Mesh(new THREE.BoxGeometry(0, 0, 0), new THREE.MeshStandardMaterial({ color: 0x888888 }))
     this.vecxz = this._vecxz()
   }
 
   create = () => {
+    if (this.model.renderMode !== 'solid-extrude') {
+      this.model.gpuAnnotations?.markDirty()
+      return
+    }
     const start = new THREE.Vector3(this.nodes[0].x, this.nodes[0].y, this.nodes[0].z)
     const end = new THREE.Vector3(this.nodes[1].x, this.nodes[1].y, this.nodes[1].z)
     const direction = new THREE.Vector3().subVectors(end, start);
@@ -63,8 +68,15 @@ class ElasticBeamColumn {
     const sectionType = this.section.type
     let geometry: THREE.ExtrudeGeometry;
     let edges: THREE.EdgesGeometry;
+    const cacheKey = `${sectionType}|${length.toPrecision(12)}|${JSON.stringify(this.section)}`
+    const cached = ElasticBeamColumn.solidCache.get(cacheKey)
 
-    switch (sectionType) {
+    if (cached) {
+      geometry = cached.geometry
+      edges = cached.edges
+      cached.refs++
+      cached.touched = ++ElasticBeamColumn.cacheClock
+    } else switch (sectionType) {
       case 'HollowCircular':
         geometry = this.hollowCircularSection(this.section, length);
         edges = new THREE.EdgesGeometry(geometry);
@@ -108,6 +120,12 @@ class ElasticBeamColumn {
       default:
         throw new Error(`Unknown section type: ${sectionType}`);
     }
+    if (!cached) {
+      geometry.userData.sharedSolidGeometry = true
+      edges.userData.sharedSolidGeometry = true
+      ElasticBeamColumn.solidCache.set(cacheKey, { geometry, edges, refs: 1, touched: ++ElasticBeamColumn.cacheClock })
+    }
+    this.solidCacheKey = cacheKey
     // const material = new THREE.MeshBasicMaterial({ color: 0x575757 });
     // const material = new THREE.MeshStandardMaterial({ color: 0x575757 , metalness : 0.45, roughness: 0.65});
 
@@ -188,6 +206,22 @@ class ElasticBeamColumn {
     this.addLabel()
   }
 
+  materializeSolid() {
+    if (!this.group) this.create()
+  }
+
+  releaseSolid() {
+    this.dispose()
+  }
+
+  evictUnusedSolidCache() {
+    for (const [key, value] of ElasticBeamColumn.solidCache) if (value.refs === 0) {
+      value.geometry.dispose()
+      value.edges.dispose()
+      ElasticBeamColumn.solidCache.delete(key)
+    }
+  }
+
   update(nodes: Node[], section: Section, gamma: number, label: string, release: string) {
     this.nodes = nodes
     this.label = label
@@ -214,9 +248,8 @@ class ElasticBeamColumn {
       // Dispose all children (mesh and edges)
       this.group.children.forEach((child) => {
         if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
-          if (child.geometry) {
-            child.geometry.dispose()
-          }
+          const shared = this.solidCacheKey ? ElasticBeamColumn.solidCache.get(this.solidCacheKey) : null
+          if (child.geometry && child.geometry !== shared?.geometry && child.geometry !== shared?.edges) child.geometry.dispose()
           if (child.material) {
             if (Array.isArray(child.material)) {
               child.material.forEach((mat) => mat.dispose())
@@ -242,6 +275,24 @@ class ElasticBeamColumn {
       }
       if (this.line.mesh.parent) {
         this.line.mesh.parent.remove(this.line.mesh)
+      }
+    }
+    this.group = undefined as unknown as THREE.Group
+    this.line = null
+    this.mesh = undefined as unknown as THREE.Mesh
+    this.edges = undefined as unknown as THREE.LineSegments
+    if (this.solidCacheKey) {
+      const entry = ElasticBeamColumn.solidCache.get(this.solidCacheKey)
+      if (entry) entry.refs = Math.max(0, entry.refs - 1)
+      this.solidCacheKey = null
+      const unused = [...ElasticBeamColumn.solidCache.entries()]
+        .filter(([, value]) => value.refs === 0)
+        .sort((a, b) => a[1].touched - b[1].touched)
+      while (ElasticBeamColumn.solidCache.size > 64 && unused.length) {
+        const [key, value] = unused.shift()!
+        value.geometry.dispose()
+        value.edges.dispose()
+        ElasticBeamColumn.solidCache.delete(key)
       }
     }
   }
@@ -509,24 +560,7 @@ class ElasticBeamColumn {
   }
 
   addLabel() {
-    if (!this.model || !this.model.visibility.memberLabels) return
-
-    const delta = 0.1
-    const iNode = this.nodes[0]
-    const jNode = this.nodes[1]
-
-    const xCenter = (iNode.x + jNode.x) / 2
-    const yCenter = (iNode.y + jNode.y) / 2
-    const zCenter = (iNode.z + jNode.z) / 2
-    const labels: Label[] = [
-      {
-        id: `member-${this.id}`,
-        position: new THREE.Vector3(xCenter, yCenter + delta, zCenter),
-        text: this.label || '',
-      }
-    ]
-
-    this.model.labeler.batchUpdateOrCreate(labels)
+    this.model.gpuAnnotations?.markDirty()
   }
 
 }

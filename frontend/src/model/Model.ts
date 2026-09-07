@@ -47,6 +47,10 @@ import CenterlineRenderer from "./Rendering/CenterlineRenderer";
 import ThinShellRenderer from "./Rendering/ThinShellRenderer";
 import StructuralGpuPicker from "./Rendering/StructuralGpuPicker";
 import ResultStore, { type ResultBinding } from "./Rendering/ResultStore";
+import DiagramRenderer from "./Rendering/DiagramRenderer";
+import GpuAnnotations from "./Rendering/GpuAnnotations";
+import { estimateSolidTriangles, shouldEvictSolidResources } from "./Rendering/solidResourcePolicy";
+import { computeMemberFrame } from "./Rendering/memberFrame";
 export type PointerCoords = {
   x: number;
   y: number;
@@ -91,7 +95,13 @@ export class Model {
   structuralSceneSyncScheduled = false
   centerlineRenderer: CenterlineRenderer
   thinShellRenderer: ThinShellRenderer
+  diagramRenderer: DiagramRenderer
+  gpuAnnotations: GpuAnnotations
   structuralPicker: StructuralGpuPicker
+  private activeResultBinding: ResultBinding | null = null
+  solidPreparation = { active: false, progress: 0, estimatedTriangles: 0 }
+  private solidPreparationToken = 0
+  contextLost = false
   /** Last measured frame rate, refreshed ~2×/s from the render loop (0 = not
    *  measured yet). Kept as a low-frequency observable so the HUD re-render
    *  cost stays negligible. */
@@ -753,6 +763,9 @@ export class Model {
     this.centerlineRenderer.setQualityProfile(this.qualityProfile)
     this.thinShellRenderer = new ThinShellRenderer(this.scene, this.layer)
     this.thinShellRenderer.setQualityProfile(this.qualityProfile)
+    this.diagramRenderer = new DiagramRenderer(this.scene, this.layer)
+    this.gpuAnnotations = new GpuAnnotations(this.scene, this.layer)
+    this.camera.controls.addEventListener('end', () => this.gpuAnnotations.markDirty())
     this.structuralPicker = new StructuralGpuPicker(this.renderer)
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
@@ -767,6 +780,8 @@ export class Model {
       structuralSceneSyncScheduled: false,
       centerlineRenderer: false,
       thinShellRenderer: false,
+      diagramRenderer: false,
+      gpuAnnotations: false,
       structuralPicker: false,
       legacyStructuralRoot: false,
     })
@@ -790,6 +805,8 @@ export class Model {
       this.renderer.setSize( width, height );
       this.container?.appendChild( this.renderer.domElement )
       this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+      this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost)
+      this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored)
       this.camera.handleResize();
       // The visible area also changes WITHOUT a window resize (left bar
       // collapse, right dock open/close) — watch the container itself.
@@ -877,8 +894,13 @@ export class Model {
       if (selectedNodeIds.has(id)) this.structuralSceneDB.nodeFlags[index] |= ENTITY_SELECTED
     }
     this.structuralSceneDBBuildMs = performance.now() - startedAt
+    this.gpuAnnotations.setEntityLabels(
+      new Map(this.members.map(member => [member.id, member.label || `M${member.id}`])),
+      new Map(this.nodes.map(node => [node.id, node.name || `N${node.id}`])),
+    )
     this.centerlineRenderer.upload(this.structuralSceneDB)
     this.thinShellRenderer.upload(this.structuralSceneDB)
+    this.diagramRenderer.upload(this.structuralSceneDB)
     this.structuralPicker.upload(this.structuralSceneDB)
     this.structuralPicker.warmup(this.camera.cam)
     return this.structuralSceneDB
@@ -886,7 +908,7 @@ export class Model {
 
   /** Coalesce property edits/deletes made in one UI action into one render-DB rebuild. */
   scheduleStructuralSceneSync() {
-    if (this.structuralSceneSyncScheduled || !this.centerlineRenderer || !this.thinShellRenderer || !this.structuralPicker) return
+    if (this.structuralSceneSyncScheduled || !this.centerlineRenderer || !this.thinShellRenderer || !this.diagramRenderer || !this.structuralPicker) return
     this.structuralSceneSyncScheduled = true
     queueMicrotask(() => {
       this.structuralSceneSyncScheduled = false
@@ -895,17 +917,47 @@ export class Model {
     })
   }
 
-  setRenderMode(mode: RenderMode) {
+  async setRenderMode(mode: RenderMode) {
     if (!isRenderMode(mode)) throw new Error(`Unsupported render mode: ${mode}`)
     const wasDataDriven = this.renderMode !== 'solid-extrude'
     const willBeDataDriven = mode !== 'solid-extrude'
     if (willBeDataDriven && !wasDataDriven) {
       this.selector?.syncCenterlineSelectionFromLegacy()
-    } else if (!willBeDataDriven && wasDataDriven) {
-      this.selector?.syncLegacySelectionFromCenterline()
     }
     this.renderMode = mode
     localStorage.setItem('buckle.renderMode', mode)
+    const token = ++this.solidPreparationToken
+    if (!willBeDataDriven && wasDataDriven) {
+      this.solidPreparation = {
+        active: true,
+        progress: 0,
+        // Conservative preview; exact renderer.info is available after upload.
+        estimatedTriangles: estimateSolidTriangles(this.members.length, this.nodes.length),
+      }
+      const entities = [...this.nodes, ...this.members]
+      for (let offset = 0; offset < entities.length; offset += 200) {
+        if (token !== this.solidPreparationToken || this.renderMode !== 'solid-extrude') return
+        for (const entity of entities.slice(offset, offset + 200)) entity.materializeSolid()
+        this.solidPreparation = { ...this.solidPreparation, progress: Math.round(100 * Math.min(entities.length, offset + 200) / Math.max(1, entities.length)) }
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      }
+      this.solidPreparation = { ...this.solidPreparation, active: false, progress: 100 }
+      this.selector?.syncLegacySelectionFromCenterline()
+    } else if (willBeDataDriven && shouldEvictSolidResources(this.members.length)) {
+      // Large solids are evicted immediately; small inspection models retain
+      // their shared cache for instant toggling.
+      this.legacyStructuralRoot.removeFromParent()
+      this.solidPreparation = { active: true, progress: 0, estimatedTriangles: 0 }
+      const entities = [...this.members, ...this.nodes]
+      for (let offset = 0; offset < entities.length; offset += 500) {
+        if (token !== this.solidPreparationToken) return
+        for (const entity of entities.slice(offset, offset + 500)) entity.releaseSolid()
+        this.solidPreparation = { ...this.solidPreparation, progress: Math.round(100 * Math.min(entities.length, offset + 500) / Math.max(1, entities.length)) }
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      }
+      this.members[0]?.evictUnusedSolidCache()
+      this.solidPreparation = { active: false, progress: 100, estimatedTriangles: 0 }
+    }
     this.applyRenderModeVisibility()
   }
 
@@ -928,12 +980,88 @@ export class Model {
   setStructuralMemberState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
     this.centerlineRenderer.setMemberState(entityId, state)
     this.thinShellRenderer.syncMemberState(entityId)
+    this.diagramRenderer.syncMemberState(entityId)
     this.structuralPicker.syncMemberState(entityId)
+    this.gpuAnnotations.markDirty()
   }
 
   setStructuralNodeState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
     this.centerlineRenderer.setNodeState(entityId, state)
     this.structuralPicker.syncNodeState(entityId)
+    this.gpuAnnotations.markDirty()
+  }
+
+  /** Rebuild the compact support-symbol stream. Other structural symbol kinds
+   * use this same renderer as their data paths are migrated. */
+  syncGpuAnnotations() {
+    const symbols: import('./Rendering/GpuAnnotations').SymbolCandidate[] = this.boundaryConditions.flatMap((condition) =>
+      condition.targets.flatMap((target) => {
+        const node = this.nodes.find(item => item.id === target)
+        const dofs = [condition.dx, condition.dy, condition.dz, condition.rx, condition.ry, condition.rz]
+        const state = dofs.reduce<number>((mask, value, index) => mask | (value ? 1 << index : 0), 0)
+        return node ? [{ anchor: [node.x, node.y, node.z] as const, kind: 0, state, color: [0.08, 0.82, 0.28] as const }] : []
+      }),
+    )
+    const labels: import('./Rendering/GpuAnnotations').WorldLabelCandidate[] = []
+    if (this.visibility?.loads ?? true) for (const load of this.loads) {
+      for (const target of load.targets) {
+        const node = this.nodes.find(item => item.id === target)
+        const memberIndex = this.structuralSceneDB.memberIndexById.get(target)
+        const shell = this.shells.find(item => item.id === target)
+        let anchor: readonly [number, number, number] | null = node ? [node.x, node.y, node.z] : null
+        if (!anchor && memberIndex !== undefined) {
+          const o = memberIndex * 6
+          anchor = [
+            (this.structuralSceneDB.memberEndpoints[o] + this.structuralSceneDB.memberEndpoints[o + 3]) * .5,
+            (this.structuralSceneDB.memberEndpoints[o + 1] + this.structuralSceneDB.memberEndpoints[o + 4]) * .5,
+            (this.structuralSceneDB.memberEndpoints[o + 2] + this.structuralSceneDB.memberEndpoints[o + 5]) * .5,
+          ]
+        }
+        if (!anchor && shell?.nodes.length) {
+          const center = shell.nodes.reduce((sum, item) => [sum[0] + item.x, sum[1] + item.y, sum[2] + item.z] as [number, number, number], [0, 0, 0])
+          anchor = [center[0] / shell.nodes.length, center[1] / shell.nodes.length, center[2] / shell.nodes.length]
+        }
+        if (!anchor) continue
+        const components = [load.value.x, load.value.y, load.value.z].filter(value => Math.abs(value) > 1e-9)
+        const text = load.magnitude !== undefined
+          ? load.magnitude.toFixed(3)
+          : components.length <= 1
+            ? (components[0] ?? 0).toFixed(3)
+            : `(${load.value.x.toFixed(3)}, ${load.value.y.toFixed(3)}, ${load.value.z.toFixed(3)})`
+        labels.push({ id: `load-${load.id}-${target}`, text, anchor, priority: 'value', color: [1, .45, .35] })
+      }
+    }
+    const active = (['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const).filter(key => this.reactionViz?.show[key])
+    for (const reaction of this.output?.reactions ?? []) for (const component of active) {
+        const value = Number(reaction[component] ?? 0)
+        if (Math.abs(value) < 1e-9) continue
+        const anchor = [Number(reaction.x ?? 0), Number(reaction.z ?? 0), Number(reaction.y ?? 0)] as const
+        const sign = value >= 0 ? 1 : -1
+        const direction = component[1] === 'x' ? [sign, 0, 0] as const : component[1] === 'y' ? [0, 0, sign] as const : [0, sign, 0] as const
+        symbols.push({ anchor, direction, kind: component[0] === 'M' ? 3 : 2, color: component[0] === 'M' ? [1, .62, .05] : [0.2, .45, 1] })
+        labels.push({ id: `reaction-${component}-${reaction.id}`, text: `${component} ${value.toPrecision(4)}`, anchor, priority: 'value', color: [1, .45, .72] })
+    }
+    // Selected member local axes share the same symbol batch (RGB = local
+    // x/y/z); there is no Line/ArrowHelper allocation per selected member.
+    for (let i = 0; i < this.structuralSceneDB.memberCount; i++) if (this.structuralSceneDB.memberFlags[i] & ENTITY_SELECTED) {
+      const o = i * 6
+      const anchor = [
+        (this.structuralSceneDB.memberEndpoints[o] + this.structuralSceneDB.memberEndpoints[o + 3]) * .5,
+        (this.structuralSceneDB.memberEndpoints[o + 1] + this.structuralSceneDB.memberEndpoints[o + 4]) * .5,
+        (this.structuralSceneDB.memberEndpoints[o + 2] + this.structuralSceneDB.memberEndpoints[o + 5]) * .5,
+      ] as const
+      const r = i * 3
+      const start = [this.structuralSceneDB.memberEndpoints[o], this.structuralSceneDB.memberEndpoints[o + 1], this.structuralSceneDB.memberEndpoints[o + 2]] as const
+      const end = [this.structuralSceneDB.memberEndpoints[o + 3], this.structuralSceneDB.memberEndpoints[o + 4], this.structuralSceneDB.memberEndpoints[o + 5]] as const
+      const reference = [this.structuralSceneDB.memberReferenceAxes[r], this.structuralSceneDB.memberReferenceAxes[r + 1], this.structuralSceneDB.memberReferenceAxes[r + 2]] as const
+      const frame = computeMemberFrame(start, end, reference, this.structuralSceneDB.memberGammaRadians[i])
+      symbols.push(
+        { anchor, direction: frame.x, kind: 4, color: [1, .15, .15] },
+        { anchor, direction: frame.y, kind: 5, color: [.15, 1, .3] },
+        { anchor, direction: frame.z, kind: 6, color: [.2, .5, 1] },
+      )
+    }
+    this.gpuAnnotations.setData(symbols, labels)
   }
 
   isStructuralMemberVisible(entityId: number) {
@@ -967,7 +1095,12 @@ export class Model {
       if (member.edges) member.edges.visible = !useDataDriven && entityVisible && (this.visibility?.sections ?? true)
       if (member.line) member.line.mesh.visible = !useDataDriven && entityVisible && (this.visibility?.members ?? true)
     }
-    for (const node of this.nodes) node.mesh.visible = !useDataDriven && (this.visibility?.nodes ?? true)
+    for (const node of this.nodes) if (node.mesh) node.mesh.visible = !useDataDriven && (this.visibility?.nodes ?? true)
+    // Loads intentionally remain true 3D geometry in every structural render
+    // mode. Only their numeric text is emitted by the GPU annotation stream.
+    for (const load of this.loads) for (const object of load.mesh) object.visible = this.visibility?.loads ?? true
+    this.reactionViz?.refresh()
+    this.syncGpuAnnotations()
   }
 
   private onResize = () => 
@@ -1017,6 +1150,12 @@ export class Model {
     if (this.renderMode === 'thin-shell') this.thinShellRenderer?.syncDirty()
     if (this.renderMode !== 'solid-extrude') this.centerlineRenderer?.syncDirty()
     this.nodes?.forEach((node: any) => node.updateScreenScale?.());
+    this.gpuAnnotations?.update(
+      this.structuralSceneDB,
+      this.camera.cam,
+      this.container?.clientWidth || window.innerWidth,
+      this.container?.clientHeight || window.innerHeight,
+    )
     // Grid end bubbles keep a constant on-screen size, just like the nodes.
     this.grids?.forEach((grid) => grid.updateScreenScale());
     const renderStartedAt = performance.now()
@@ -1060,6 +1199,8 @@ export class Model {
     this.scene.traverse(function(obj) {
       removeObjWithChildren(obj)
     });
+    this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost)
+    this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored)
     this.container.removeChild(this.renderer.domElement)
     this.containerResizeObserver?.disconnect()
     this.containerResizeObserver = null
@@ -1069,6 +1210,8 @@ export class Model {
     this.workPlaneReferenceVisual?.dispose()
     this.centerlineRenderer?.dispose()
     this.thinShellRenderer?.dispose()
+    this.diagramRenderer?.dispose()
+    this.gpuAnnotations?.dispose()
     this.resultStore?.dispose()
     this.structuralPicker?.dispose()
     this.legacyStructuralRoot.clear()
@@ -1100,6 +1243,7 @@ export class Model {
     this.clearStructuralResult()
     this.centerlineRenderer?.upload(this.structuralSceneDB)
     this.thinShellRenderer?.upload(this.structuralSceneDB)
+    this.diagramRenderer?.upload(this.structuralSceneDB)
     this.structuralPicker?.upload(this.structuralSceneDB)
     
     // Dispose of all loads
@@ -1151,7 +1295,28 @@ export class Model {
     this.output = null
   }
 
+  private onContextLost = (event: Event) => {
+    event.preventDefault()
+    this.contextLost = true
+  }
+
+  private onContextRestored = () => {
+    this.contextLost = false
+    this.syncStructuralSceneDB()
+    this.gpuAnnotations.markDirty()
+    if (this.activeResultBinding) this.bindStructuralResult(this.resultStore.getBinding(
+      this.activeResultBinding.caseKey,
+      this.activeResultBinding.component,
+    ))
+    this.applyRenderModeVisibility()
+  }
+
   public bindStructuralResult = (binding: ResultBinding | null, min?: number, max?: number) => {
+    this.activeResultBinding = binding
+    this.gpuAnnotations?.setSelectedValueProvider(binding ? (entityId) => {
+      const value = this.resultStore.sample(binding.caseKey, binding.component, entityId)
+      return Number.isFinite(value) ? `${binding.component}=${value.toPrecision(5)}` : null
+    } : null)
     this.centerlineRenderer.bindResult(binding)
     this.thinShellRenderer.bindResult(binding)
     if (binding && min !== undefined && max !== undefined) {
@@ -1163,6 +1328,44 @@ export class Model {
   public clearStructuralResult = () => {
     this.centerlineRenderer?.bindResult(null)
     this.thinShellRenderer?.bindResult(null)
+    this.diagramRenderer?.hide()
+    this.gpuAnnotations?.setResultLabels([])
+  }
+
+  public setDiagramExtremaLabels(
+    component: string,
+    scale: number,
+    extrema: { min: number; max: number; minMemberId: number | null; maxMemberId: number | null; minU: number; maxU: number },
+    unit = '',
+  ) {
+    const at = (entityId: number | null, u: number, value: number, prefix: 'MIN' | 'MAX') => {
+      if (entityId === null) return null
+      const index = this.structuralSceneDB.memberIndexById.get(entityId)
+      if (index === undefined) return null
+      const o = index * 6
+      const start = [this.structuralSceneDB.memberEndpoints[o], this.structuralSceneDB.memberEndpoints[o + 1], this.structuralSceneDB.memberEndpoints[o + 2]] as const
+      const end = [this.structuralSceneDB.memberEndpoints[o + 3], this.structuralSceneDB.memberEndpoints[o + 4], this.structuralSceneDB.memberEndpoints[o + 5]] as const
+      const r = index * 3
+      const reference = [this.structuralSceneDB.memberReferenceAxes[r], this.structuralSceneDB.memberReferenceAxes[r + 1], this.structuralSceneDB.memberReferenceAxes[r + 2]] as const
+      const frame = computeMemberFrame(start, end, reference, this.structuralSceneDB.memberGammaRadians[index])
+      const direction = component === 'V3' || component === 'M2' ? frame.z : frame.y
+      const anchor = [
+        start[0] + (end[0] - start[0]) * u + direction[0] * value * scale,
+        start[1] + (end[1] - start[1]) * u + direction[1] * value * scale,
+        start[2] + (end[2] - start[2]) * u + direction[2] * value * scale,
+      ] as const
+      return {
+        id: `result-${prefix}-${entityId}`,
+        text: `${prefix} ${component} ${Number(value.toPrecision(5))}${unit ? ` ${unit}` : ''}`,
+        anchor,
+        priority: 'extrema' as const,
+        color: prefix === 'MAX' ? [1, .3, .2] as const : [.25, .7, 1] as const,
+      }
+    }
+    this.gpuAnnotations.setResultLabels([
+      at(extrema.minMemberId, extrema.minU, extrema.min, 'MIN'),
+      at(extrema.maxMemberId, extrema.maxU, extrema.max, 'MAX'),
+    ].filter(Boolean) as import('./Rendering/GpuAnnotations').WorldLabelCandidate[])
   }
 
   public runResultBenchmark = async () => {
@@ -1196,6 +1399,8 @@ export class Model {
       const lineGeometry = this.centerlineRenderer.lineGeometry
       const shellKeys = ['h', 'channel', 'angle', 'box', 'pipe']
       const shellGeometries = shellKeys.map(key => this.thinShellRenderer.batchGeometry(key))
+      const diagramRibbonGeometry = this.diagramRenderer.ribbonGeometry
+      const diagramLineGeometry = this.diagramRenderer.lineGeometry
       const switches: Array<{ caseKey: string; component: string; durationMs: number }> = []
       for (const [caseKey, component] of [
         ['benchmark-LC1', 'N'], ['benchmark-LC1', 'M2'], ['benchmark-LC2', 'stress'], ['benchmark-LC2', 'strain'],
@@ -1208,9 +1413,34 @@ export class Model {
       }
       const identitiesStable = lineGeometry === this.centerlineRenderer.lineGeometry &&
         shellKeys.every((key, index) => shellGeometries[index] === this.thinShellRenderer.batchGeometry(key))
+      const diagramSwitches: Array<{ component: string; durationMs: number }> = []
+      for (const component of ['N', 'V2', 'V3', 'T', 'M2', 'M3']) {
+        const started = performance.now()
+        const binding = this.resultStore.getBinding('benchmark-LC1', component)
+        if (!binding) continue
+        this.diagramRenderer.show(binding, {
+          component, scale: .01, min: binding.min, max: binding.max,
+          contour: true, ribbon: true, hatch: true,
+        })
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        diagramSwitches.push({ component, durationMs: Number((performance.now() - started).toFixed(2)) })
+      }
+      const diagramFrameSamples: number[] = []
+      let previousFrame = performance.now()
+      for (let index = 0; index < 30; index++) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        const now = performance.now()
+        diagramFrameSamples.push(now - previousFrame)
+        previousFrame = now
+      }
+      const sortedFrames = [...diagramFrameSamples].sort((a, b) => a - b)
+      const diagramFrameAvgMs = diagramFrameSamples.reduce((total, value) => total + value, 0) / diagramFrameSamples.length
+      const diagramFrameP95Ms = sortedFrames[Math.min(sortedFrames.length - 1, Math.ceil(sortedFrames.length * .95) - 1)]
+      const diagramIdentitiesStable = diagramRibbonGeometry === this.diagramRenderer.ribbonGeometry &&
+        diagramLineGeometry === this.diagramRenderer.lineGeometry
       runInAction(() => {
         benchmark.resultReport = JSON.stringify({
-          benchmarkVersion: 'viewer3d-result-v1',
+          benchmarkVersion: 'viewer3d-result-v2',
           timestamp: new Date().toISOString(),
           backend: 'webgl2',
           fixture: { members: this.structuralSceneDB.memberCount, stationsPerMember: stationCount, cases: 2 },
@@ -1219,9 +1449,54 @@ export class Model {
           maxSwitchMs: Math.max(...switches.map(item => item.durationMs)),
           targetMs: 150,
           identitiesStable,
-          pass: identitiesStable && switches.every(item => item.durationMs <= 150),
+          diagram: {
+            switches: diagramSwitches,
+            maxSwitchMs: Math.max(...diagramSwitches.map(item => item.durationMs)),
+            frameMsAvg: Number(diagramFrameAvgMs.toFixed(2)),
+            frameMsP95: Number(diagramFrameP95Ms.toFixed(2)),
+            fpsApprox: Number((1000 / diagramFrameAvgMs).toFixed(2)),
+            drawCalls: this.renderer.info.render.calls,
+            objects: 2,
+            identitiesStable: diagramIdentitiesStable,
+            targetFrameMs: 33.34,
+          },
+          pass: identitiesStable && diagramIdentitiesStable &&
+            switches.every(item => item.durationMs <= 150) &&
+            diagramSwitches.every(item => item.durationMs <= 150) && diagramFrameP95Ms <= 33.34,
         }, null, 2)
       })
+    } finally {
+      runInAction(() => { benchmark.resultRunning = false })
+    }
+  }
+
+  public runAnnotationBenchmark = async () => {
+    const benchmark = this.performanceBenchmark
+    if (benchmark.resultRunning || this.structuralSceneDB.memberCount === 0) return
+    benchmark.resultRunning = true
+    try {
+      this.visibility.showOrHideMemberLabels(true)
+      const syntheticSymbols: import('./Rendering/GpuAnnotations').SymbolCandidate[] = []
+      for (let i = 0; i < this.structuralSceneDB.memberCount; i++) {
+        const o = i * 6
+        syntheticSymbols.push({ anchor: [
+          (this.structuralSceneDB.memberEndpoints[o] + this.structuralSceneDB.memberEndpoints[o + 3]) * .5,
+          (this.structuralSceneDB.memberEndpoints[o + 1] + this.structuralSceneDB.memberEndpoints[o + 4]) * .5,
+          (this.structuralSceneDB.memberEndpoints[o + 2] + this.structuralSceneDB.memberEndpoints[o + 5]) * .5,
+        ], kind: 1, color: [1, .2, .15] })
+      }
+      this.gpuAnnotations.setData(syntheticSymbols)
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const stats = this.gpuAnnotations.getStats()
+      benchmark.resultReport = JSON.stringify({
+        benchmarkVersion: 'viewer3d-annotations-v1',
+        timestamp: new Date().toISOString(),
+        model: { members: this.structuralSceneDB.memberCount, nodes: this.structuralSceneDB.nodeCount },
+        ...stats,
+        cssEntityLabels: this.labeler.count,
+        pass: stats.drawObjects === 2 && stats.labelBudget <= 200 && this.labeler.count === 0,
+      }, null, 2)
+      this.syncGpuAnnotations()
     } finally {
       runInAction(() => { benchmark.resultRunning = false })
     }
@@ -1231,7 +1506,9 @@ export class Model {
   {
 
     const mouseLoc =  this.getMouseLocation(event)
-    this.pointerCoords = new THREE.Vector3(mouseLoc.x, mouseLoc.y, this.pointerCoords.z);
+    runInAction(() => {
+      this.pointerCoords = new THREE.Vector3(mouseLoc.x, mouseLoc.y, this.pointerCoords.z)
+    })
     if(this.snapper.enabled){
       this.snapper.update()
     }

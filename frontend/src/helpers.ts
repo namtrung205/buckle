@@ -9,6 +9,7 @@ import Load from './model/Load/Load';
 import Shell from './model/Elements/Shell/Shell';
 import Model from './model/Model';
 import { threeToJson, jsonToThree } from './utils/axis';
+import { runInAction } from 'mobx';
 
 /**
  * Export the model to the shared JSON schema.
@@ -146,10 +147,10 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
 
   // 2. Update materials and sections if provided
   if (jsonData.materials) {
-    model.materials = jsonData.materials
+    runInAction(() => { model.materials = jsonData.materials })
   }
   if (jsonData.sections) {
-    model.sections = jsonData.sections
+    runInAction(() => { model.sections = jsonData.sections })
   }
 
   // 3. Create members/elements — convert vecxz from Z-up to three.js (Y-up)

@@ -26,6 +26,7 @@ import TextField from '../../components/TextField/TextField';
 import ElasticBeamColumn from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
 import Load from '../../model/Load/Load';
+import { runInAction } from 'mobx';
 
 /**
  * Right dock panel — Stabileo's PropertyPanel, adapted to Buckle's data model.
@@ -464,7 +465,7 @@ const RightPanel = observer(() => {
         bc.createOrUpdate();
         createdIds.push(bc.id);
       }
-      model.newEntityDraft = null;
+      runInAction(() => { model.newEntityDraft = null; });
       // Focus the first created support so the dock shows its properties.
       if (createdIds.length) model.focusBoundaryCondition(createdIds[0]);
     }

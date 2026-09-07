@@ -132,6 +132,12 @@ class ReactionViz {
   render() {
     this.clearScene()
 
+    // Reactions now share the constant-draw-call GPU annotation stream. The
+    // legacy construction below remains as a temporary reference/fallback but
+    // is intentionally skipped so 10k reactions never create 10k Groups.
+    this.model.syncGpuAnnotations()
+    return
+
     const reactions: ReactionEntry[] = this.model.output?.reactions ?? []
     if (!reactions.length || !this.isAnyActive) return
 
@@ -220,6 +226,7 @@ class ReactionViz {
 
   dispose() {
     this.clearScene()
+    this.model.syncGpuAnnotations()
   }
 
   /** Per-frame hook (Model.update): keep every symbol pixel-sized and the

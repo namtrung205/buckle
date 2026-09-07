@@ -30,6 +30,27 @@ test('station interpolation is numeric, normalized, and supports engineering ali
   assert.equal(canonicalResultComponent('Mz'), 'M3')
 })
 
+test('analysis adapter keeps force and Y-up displacement fields independently resampled', () => {
+  const database = new StructuralSceneDB(compactSource())
+  const store = new ResultStore(3)
+  store.ingestAnalysisOutput({ members: [{
+    id: 100,
+    stations: [
+      { coord: [0, 0, 0], values: { N: 0 } },
+      { coord: [5, 0, 0], values: { N: 10 } },
+    ],
+    displacement_stations: [
+      { coord: [0, 0, 0], disp: { ux: 0, uy: 0, uz: 0 } },
+      { coord: [5, 0, 0], disp: { ux: 1, uy: 2, uz: 3 } },
+    ],
+  }] }, database)
+  assert.deepEqual(store.getExtrema('analysis', 'N'), {
+    min: 0, max: 10, minMemberId: 100, maxMemberId: 100, minU: 0, maxU: 1,
+  })
+  assert.equal(store.getExtrema('analysis', 'dY')?.max, 3)
+  assert.equal(store.getExtrema('analysis', 'dZ')?.max, 2)
+})
+
 test('result binding preserves geometry, local-axis and gamma buffers', () => {
   const database = new StructuralSceneDB(compactSource())
   const scene = new THREE.Scene()
@@ -60,6 +81,11 @@ test('result binding preserves geometry, local-axis and gamma buffers', () => {
   assert.equal(shellGeometry.getAttribute('instanceGamma'), gamma)
   assert.equal((shellGeometry.getAttribute('instanceResultRow') as THREE.BufferAttribute).getX(0), 0)
   assert.deepEqual(Array.from((centerline.lineGeometry.getAttribute('resultU') as THREE.BufferAttribute).array), [0, 1])
+  const extrema = store.getExtrema('LC1', 'N')!
+  assert.equal(extrema.minMemberId, 100)
+  assert.equal(extrema.maxMemberId, 100)
+  assert.equal(extrema.min, -100)
+  assert.equal(extrema.max, 200)
 })
 
 test('10k x 20 station case switches component/range without rebuilding draw batches in <=150ms', () => {

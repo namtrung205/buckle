@@ -38,6 +38,8 @@ export type StationPoint = {
 type SolidSave = {
   mesh: THREE.Mesh
   material: THREE.MeshLambertMaterial
+  geometry: THREE.BufferGeometry
+  clonedGeometry: boolean
   color: number
   hadVertexColors: boolean
   hadOriginalColor: boolean
@@ -79,6 +81,7 @@ class PostProcessing {
   showContour = false
   showLabels = true
   showRefLine = true
+  useDeformedDiagramReference = false
   /** On-canvas contour legend visibility — toggled from the Results tabs. */
   showLegend = true
   /** Stress: paint the full 3D extruded solid (true cross-section colours)
@@ -366,6 +369,11 @@ class PostProcessing {
     const isStress = (STRESS_TYPES as readonly string[]).includes(type)
     this.unit = type === DEFLECTION_TYPE ? 'mm' : isStress ? STRESS_UNIT : (FORCE_UNITS[type] ?? '')
 
+    if (this.model.renderMode !== 'solid-extrude' && type !== DEFLECTION_TYPE && !isStress) {
+      this.renderProceduralDiagram(type, selectedMemberIds)
+      return
+    }
+
     const selected = output.members.filter(
       (member: any) => selectedMemberIds.length === 0 || selectedMemberIds.includes(member.id)
     )
@@ -414,7 +422,6 @@ class PostProcessing {
     const maxAbs = Math.max(Math.abs(min), Math.abs(max)) || 1
     // Auto-fit: at multiplier 1 the largest |value| occupies 8% of the model size
     const scale = ((this.modelSize * 0.08) / maxAbs) * this.scaleMultiplier
-
     for (const data of membersData) {
       for (const station of data.stations) {
         // Stress contours colour the member itself — no diagram offset geometry
@@ -442,6 +449,51 @@ class PostProcessing {
 
     this.membersData = membersData
     this.model.labeler.batchUpdateOrCreate(this.labels)
+    this.updateHoverTargets()
+  }
+
+  private renderProceduralDiagram(type: string, selectedMemberIds: number[]) {
+    const component = canonicalResultComponent(type)
+    const binding = this.model.resultStore.getBinding('analysis', component)
+    const extrema = this.model.resultStore.getExtrema('analysis', component, selectedMemberIds)
+    if (!binding || !extrema) {
+      this.model.gpuAnnotations.setResultLabels([])
+      return
+    }
+    let { min, max } = extrema
+    if (min === max) { min -= 1; max += 1 }
+    this.min = min
+    this.max = max
+    this.currentMin = min
+    this.currentMax = max
+    const labelFor = (entityId: number | null) => {
+      if (entityId === null) return ''
+      const member = (this.model.members as any[]).find(item => item.id === entityId)
+      return member?.label || `Member ${entityId}`
+    }
+    this.extremeMin = extrema.minMemberId === null ? null : { label: labelFor(extrema.minMemberId), value: extrema.min }
+    this.extremeMax = extrema.maxMemberId === null ? null : { label: labelFor(extrema.maxMemberId), value: extrema.max }
+    this.modelSize = this.computeModelSize()
+    const maxAbs = Math.max(Math.abs(min), Math.abs(max)) || 1
+    const scale = ((this.modelSize * .08) / maxAbs) * this.scaleMultiplier
+    this.model.bindStructuralResult(this.showContour ? binding : null, min, max)
+    this.model.diagramRenderer.show(binding, {
+      component: type, scale, min, max, contour: this.showContour,
+      ribbon: this.showRibbon, hatch: this.showHatch, memberIds: selectedMemberIds,
+    })
+    this.model.diagramRenderer.setExtrema(extrema.minMemberId, extrema.maxMemberId)
+    if (this.showLabels) this.model.setDiagramExtremaLabels(component, scale, extrema, this.unit)
+    else this.model.gpuAnnotations.setResultLabels([])
+    const dx = this.model.resultStore.getBinding('analysis', 'dX')
+    const dy = this.model.resultStore.getBinding('analysis', 'dY')
+    const dz = this.model.resultStore.getBinding('analysis', 'dZ')
+    this.model.diagramRenderer.bindDeformedReference(
+      this.useDeformedDiagramReference && dx && dy && dz ? { x: dx, y: dy, z: dz } : null,
+      this.deflectionMultiplier,
+    )
+    // Goal 8 replaces labels with SDF/LOD. Avoid the legacy O(N) CSS2D path;
+    // the legend and renderer extrema hook still expose global max/min now.
+    this.membersData = []
     this.updateHoverTargets()
   }
 
@@ -625,14 +677,22 @@ class PostProcessing {
       if (!material) return
 
       if (!saves.some(save => save.mesh === solid)) {
+        const originalGeometry = solid.geometry
+        const clonedGeometry = originalGeometry.userData.sharedSolidGeometry === true
         saves.push({
           mesh: solid,
           material,
+          geometry: originalGeometry,
+          clonedGeometry,
           color: material.color.getHex(),
           hadVertexColors: material.vertexColors,
           hadOriginalColor: 'originalColor' in solid.userData,
           originalColor: solid.userData.originalColor
         })
+        // Stress colours are per member. Shared exact solids stay shared for
+        // normal viewing, then use copy-on-write only while a vertex-colour
+        // result is active.
+        if (clonedGeometry) solid.geometry = originalGeometry.clone()
       }
 
       // Map the local z extent to the station arc position (works for centred or 0-based extrusions)
@@ -681,6 +741,10 @@ class PostProcessing {
         save.material.needsUpdate = true
         if (save.hadOriginalColor) save.mesh.userData.originalColor = save.originalColor
         else delete save.mesh.userData.originalColor
+        if (save.clonedGeometry) {
+          if (save.mesh.geometry !== save.geometry) save.mesh.geometry.dispose()
+          save.mesh.geometry = save.geometry
+        }
         delete save.mesh.userData.hoverable
         delete save.mesh.userData.memberId
       }

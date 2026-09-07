@@ -23,6 +23,7 @@ import AddOrEditMaterial from '../Model/Materials/AddOrEdit';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
 import axios from 'axios';
+import { runInAction } from 'mobx';
 import Node from '../../model/Elements/Node/Node';
 import ElasticBeamColumnClass from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import Shell from '../../model/Elements/Shell/Shell';
@@ -383,7 +384,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   };
 
   const buildOnJson = (jsonData: any) => {
-    model.isLocked = false; // loading a new model returns to editing mode
+    runInAction(() => { model.isLocked = false; }); // loading a new model returns to editing mode
     try {
       console.log('Loading model from JSON...', jsonData);
       // Reuse the single import path: converts the Z-up JSON schema to the
