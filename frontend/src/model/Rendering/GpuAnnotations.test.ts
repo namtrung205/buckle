@@ -49,7 +49,7 @@ describe('GPU annotation scheduling', () => {
     const scene = new THREE.Scene()
     const annotations = new GpuAnnotations(scene)
     assert.equal((annotations.textMesh.material as THREE.ShaderMaterial).depthTest, false)
-    assert.equal((annotations.symbolMesh.material as THREE.ShaderMaterial).depthTest, true)
+    assert.equal((annotations.symbolMesh.material as THREE.ShaderMaterial).depthTest, false)
     assert.ok(annotations.textMesh.renderOrder > annotations.symbolMesh.renderOrder)
     ;(annotations.textMesh.geometry as any)._maxInstanceCount = 0
     ;(annotations.symbolMesh.geometry as any)._maxInstanceCount = 0
