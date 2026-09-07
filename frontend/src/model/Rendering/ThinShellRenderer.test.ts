@@ -87,9 +87,9 @@ const assertFiniteUnitNormals = (template: { normals: Float32Array }) => {
 
 test('standard and custom templates have stable topology and unit normals', () => {
   const templates = [
-    [createHThinShellTemplate(), 72],
-    [createChannelThinShellTemplate(), 72],
-    [createAngleThinShellTemplate(), 48],
+    [createHThinShellTemplate(), 96],
+    [createChannelThinShellTemplate(), 84],
+    [createAngleThinShellTemplate(), 60],
     [createBoxThinShellTemplate(), 96],
     [createPipeThinShellTemplate(12), 288],
     [createCustomThinShellTemplate(new Float32Array([0, 0, 1, 0, 1, 1]), false), 12],

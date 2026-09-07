@@ -98,6 +98,11 @@ export const createHThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [-.5, 0], [-.5, 1], [.5, 0], [-.5, 1], 0, 1)
   face(vertices, [0, -.5], [-.5, 1], [0, -.5], [.5, -1], -1, 0)
   face(vertices, [0, .5], [-.5, 1], [0, .5], [.5, -1], 1, 0)
+  // Flange edge faces (vertical tip faces of height tf) close the profile sides.
+  face(vertices, [-.5, 0], [.5, -1], [-.5, 0], [.5, 0], -1, 0)
+  face(vertices, [.5, 0], [.5, 0], [.5, 0], [.5, -1], 1, 0)
+  face(vertices, [-.5, 0], [-.5, 0], [-.5, 0], [-.5, 1], -1, 0)
+  face(vertices, [.5, 0], [-.5, 1], [.5, 0], [-.5, 0], 1, 0)
   capBoth(vertices, [[-.5, .5, 0, 0], [.5, .5, 0, 0], [.5, .5, 0, -1], [-.5, .5, 0, -1]])
   capBoth(vertices, [[-.5, -.5, 0, 1], [.5, -.5, 0, 1], [.5, -.5, 0, 0], [-.5, -.5, 0, 0]])
   capBoth(vertices, [[0, -.5, -.5, 1], [0, .5, -.5, 1], [0, .5, .5, -1], [0, -.5, .5, -1]])
@@ -113,6 +118,9 @@ export const createChannelThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [-.5, 1], [-.5, 1], [.5, 0], [-.5, 1], 0, 1)
   face(vertices, [-.5, 0], [-.5, 1], [-.5, 0], [.5, -1], -1, 0)
   face(vertices, [-.5, 1], [-.5, 1], [-.5, 1], [.5, -1], 1, 0)
+  // Flange tip faces at the open +Y edge (height tf).
+  face(vertices, [.5, 0], [.5, 0], [.5, 0], [.5, -1], 1, 0)
+  face(vertices, [.5, 0], [-.5, 1], [.5, 0], [-.5, 0], 1, 0)
   capBoth(vertices, [[-.5, .5, 1, 0], [.5, .5, 0, 0], [.5, .5, 0, -1], [-.5, .5, 1, -1]])
   capBoth(vertices, [[-.5, -.5, 1, 1], [.5, -.5, 0, 1], [.5, -.5, 0, 0], [-.5, -.5, 1, 0]])
   capBoth(vertices, [[-.5, -.5, 0, 1], [-.5, -.5, 1, 1], [-.5, .5, 1, -1], [-.5, .5, 0, -1]])
@@ -126,6 +134,9 @@ export const createAngleThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [-.5, 1], [-.5, 1], [-.5, 1], [.5, 0], 1, 0)
   face(vertices, [-.5, 0], [-.5, 0], [.5, 0], [-.5, 0], 0, -1)
   face(vertices, [-.5, 1], [-.5, 1], [.5, 0], [-.5, 1], 0, 1)
+  // Leg tip faces (thickness t) close the L profile sides.
+  face(vertices, [-.5, 0], [.5, 0], [-.5, 1], [.5, 0], 0, 1)
+  face(vertices, [.5, 0], [-.5, 1], [.5, 0], [-.5, 0], 1, 0)
   capBoth(vertices, [[-.5, -.5, 0, 0], [-.5, -.5, 1, 0], [-.5, .5, 1, 0], [-.5, .5, 0, 0]])
   capBoth(vertices, [[-.5, -.5, 0, 0], [.5, -.5, 0, 0], [.5, -.5, 0, 1], [-.5, -.5, 0, 1]])
   return pack(vertices)
