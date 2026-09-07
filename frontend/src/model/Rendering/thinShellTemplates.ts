@@ -2,7 +2,10 @@ export type ThinShellTemplate = {
   positions: Float32Array
   normals: Float32Array
   thicknessWeights: Float32Array
+  edgePositions: Float32Array
+  edgeThicknessWeights: Float32Array
   vertexCount: number
+  edgeVertexCount: number
 }
 
 type TemplateVertex = {
@@ -11,12 +14,13 @@ type TemplateVertex = {
   h: number
   t1: number
   t2: number
+  nx: number
   ny: number
   nz: number
 }
 
-const vertex = (u: number, b: number, h: number, t1: number, t2: number, ny: number, nz: number): TemplateVertex =>
-  ({ u, b, h, t1, t2, ny, nz })
+const vertex = (u: number, b: number, h: number, t1: number, t2: number, ny: number, nz: number, nx = 0): TemplateVertex =>
+  ({ u, b, h, t1, t2, nx, ny, nz })
 
 const pushQuad = (target: TemplateVertex[], a: TemplateVertex, b: TemplateVertex, c: TemplateVertex, d: TemplateVertex) =>
   target.push(a, b, d, b, c, d)
@@ -34,16 +38,55 @@ const face = (
   vertex(0, y1[0], z1[0], y1[1], z1[1], ny, nz),
 )
 
+type CrossSectionPoint = readonly [b: number, h: number, t1: number, t2: number]
+const capFace = (target: TemplateVertex[], u: 0 | 1, points: readonly [CrossSectionPoint, CrossSectionPoint, CrossSectionPoint, CrossSectionPoint]) => {
+  const nx = u === 0 ? -1 : 1
+  pushQuad(target, ...points.map(point => vertex(u, point[0], point[1], point[2], point[3], 0, 0, nx)) as [TemplateVertex, TemplateVertex, TemplateVertex, TemplateVertex])
+}
+const capBoth = (target: TemplateVertex[], points: readonly [CrossSectionPoint, CrossSectionPoint, CrossSectionPoint, CrossSectionPoint]) => {
+  capFace(target, 0, points)
+  capFace(target, 1, points)
+}
+
+const keyOf = (item: TemplateVertex) => `${item.u}/${item.b}/${item.h}/${item.t1}/${item.t2}`
+const packEdges = (vertices: TemplateVertex[]) => {
+  const edges = new Map<string, readonly [TemplateVertex, TemplateVertex]>()
+  for (let offset = 0; offset < vertices.length; offset += 6) {
+    const corners = [vertices[offset], vertices[offset + 1], vertices[offset + 4], vertices[offset + 2]]
+    for (let edge = 0; edge < 4; edge++) {
+      const a = corners[edge], b = corners[(edge + 1) % 4]
+      const ka = keyOf(a), kb = keyOf(b)
+      edges.set(ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`, [a, b])
+    }
+  }
+  const positions = new Float32Array(edges.size * 6)
+  const thicknessWeights = new Float32Array(edges.size * 4)
+  let index = 0
+  for (const [a, b] of edges.values()) {
+    positions.set([a.u, a.b, a.h, b.u, b.b, b.h], index * 6)
+    thicknessWeights.set([a.t1, a.t2, b.t1, b.t2], index * 4)
+    index++
+  }
+  return { positions, thicknessWeights, vertexCount: edges.size * 2 }
+}
+
 const pack = (vertices: TemplateVertex[]): ThinShellTemplate => {
   const positions = new Float32Array(vertices.length * 3)
   const normals = new Float32Array(vertices.length * 3)
   const thicknessWeights = new Float32Array(vertices.length * 2)
   vertices.forEach((item, index) => {
     positions.set([item.u, item.b, item.h], index * 3)
-    normals.set([0, item.ny, item.nz], index * 3)
+    normals.set([item.nx, item.ny, item.nz], index * 3)
     thicknessWeights.set([item.t1, item.t2], index * 2)
   })
-  return { positions, normals, thicknessWeights, vertexCount: vertices.length }
+  const edges = packEdges(vertices)
+  return {
+    positions, normals, thicknessWeights,
+    edgePositions: edges.positions,
+    edgeThicknessWeights: edges.thicknessWeights,
+    vertexCount: vertices.length,
+    edgeVertexCount: edges.vertexCount,
+  }
 }
 
 /** h,b,t1=tw,t2=tf. */
@@ -55,6 +98,9 @@ export const createHThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [-.5, 0], [-.5, 1], [.5, 0], [-.5, 1], 0, 1)
   face(vertices, [0, -.5], [-.5, 1], [0, -.5], [.5, -1], -1, 0)
   face(vertices, [0, .5], [-.5, 1], [0, .5], [.5, -1], 1, 0)
+  capBoth(vertices, [[-.5, .5, 0, 0], [.5, .5, 0, 0], [.5, .5, 0, -1], [-.5, .5, 0, -1]])
+  capBoth(vertices, [[-.5, -.5, 0, 1], [.5, -.5, 0, 1], [.5, -.5, 0, 0], [-.5, -.5, 0, 0]])
+  capBoth(vertices, [[0, -.5, -.5, 1], [0, .5, -.5, 1], [0, .5, .5, -1], [0, -.5, .5, -1]])
   return pack(vertices)
 }
 
@@ -67,6 +113,9 @@ export const createChannelThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [-.5, 1], [-.5, 1], [.5, 0], [-.5, 1], 0, 1)
   face(vertices, [-.5, 0], [-.5, 1], [-.5, 0], [.5, -1], -1, 0)
   face(vertices, [-.5, 1], [-.5, 1], [-.5, 1], [.5, -1], 1, 0)
+  capBoth(vertices, [[-.5, .5, 1, 0], [.5, .5, 0, 0], [.5, .5, 0, -1], [-.5, .5, 1, -1]])
+  capBoth(vertices, [[-.5, -.5, 1, 1], [.5, -.5, 0, 1], [.5, -.5, 0, 0], [-.5, -.5, 1, 0]])
+  capBoth(vertices, [[-.5, -.5, 0, 1], [-.5, -.5, 1, 1], [-.5, .5, 1, -1], [-.5, .5, 0, -1]])
   return pack(vertices)
 }
 
@@ -77,6 +126,8 @@ export const createAngleThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [-.5, 1], [-.5, 1], [-.5, 1], [.5, 0], 1, 0)
   face(vertices, [-.5, 0], [-.5, 0], [.5, 0], [-.5, 0], 0, -1)
   face(vertices, [-.5, 1], [-.5, 1], [.5, 0], [-.5, 1], 0, 1)
+  capBoth(vertices, [[-.5, -.5, 0, 0], [-.5, -.5, 1, 0], [-.5, .5, 1, 0], [-.5, .5, 0, 0]])
+  capBoth(vertices, [[-.5, -.5, 0, 0], [.5, -.5, 0, 0], [.5, -.5, 0, 1], [-.5, -.5, 0, 1]])
   return pack(vertices)
 }
 
@@ -93,6 +144,11 @@ export const createBoxThinShellTemplate = (): ThinShellTemplate => {
   face(vertices, [.5, -1], [-.5, 1], [.5, -1], [.5, -1], -1, 0)
   face(vertices, [-.5, 1], [-.5, 1], [.5, -1], [-.5, 1], 0, 1)
   face(vertices, [-.5, 1], [.5, -1], [.5, -1], [.5, -1], 0, -1)
+  // Four end-wall rectangles preserve the hollow opening.
+  capBoth(vertices, [[-.5, -.5, 0, 0], [-.5, .5, 0, 0], [-.5, .5, 1, -1], [-.5, -.5, 1, 1]])
+  capBoth(vertices, [[.5, -.5, -1, 1], [.5, .5, -1, -1], [.5, .5, 0, 0], [.5, -.5, 0, 0]])
+  capBoth(vertices, [[-.5, .5, 1, -1], [.5, .5, -1, -1], [.5, .5, 0, 0], [-.5, .5, 0, 0]])
+  capBoth(vertices, [[-.5, -.5, 0, 0], [.5, -.5, 0, 0], [.5, -.5, -1, 1], [-.5, -.5, 1, 1]])
   return pack(vertices)
 }
 
@@ -112,6 +168,19 @@ export const createPipeThinShellTemplate = (segments: number): ThinShellTemplate
       vertex(1, ay, az, 0, 0, Math.cos(a), Math.sin(a)),
       vertex(1, by, bz, 0, 0, Math.cos(b), Math.sin(b)),
       vertex(0, by, bz, 0, 0, Math.cos(b), Math.sin(b)))
+    // Inner wall and annular end caps. Thickness weights move the same
+    // normalized circle inward by the physical pipe wall thickness.
+    pushQuad(vertices,
+      vertex(0, ay, az, -Math.cos(a), -Math.sin(a), -Math.cos(a), -Math.sin(a)),
+      vertex(0, by, bz, -Math.cos(b), -Math.sin(b), -Math.cos(b), -Math.sin(b)),
+      vertex(1, by, bz, -Math.cos(b), -Math.sin(b), -Math.cos(b), -Math.sin(b)),
+      vertex(1, ay, az, -Math.cos(a), -Math.sin(a), -Math.cos(a), -Math.sin(a)))
+    const outerA: CrossSectionPoint = [ay, az, 0, 0]
+    const outerB: CrossSectionPoint = [by, bz, 0, 0]
+    const innerB: CrossSectionPoint = [by, bz, -Math.cos(b), -Math.sin(b)]
+    const innerA: CrossSectionPoint = [ay, az, -Math.cos(a), -Math.sin(a)]
+    capFace(vertices, 0, [outerA, outerB, innerB, innerA])
+    capFace(vertices, 1, [outerA, innerA, innerB, outerB])
   }
   return pack(vertices)
 }

@@ -58,7 +58,7 @@ const VERTEX_SHADER = /* glsl */ `
     float profileY = (position.y * instanceDimensions.y + thicknessWeights.x * instanceDimensions.z) * mirrorY;
     float profileZ = (position.z * instanceDimensions.x + thicknessWeights.y * instanceDimensions.w) * mirrorZ;
     vec3 worldPosition = mix(instanceStart, instanceEnd, position.x) + axisY * profileY + axisZ * profileZ;
-    vNormal = normalize(axisY * normal.y * mirrorY + axisZ * normal.z * mirrorZ);
+    vNormal = normalize(axisX * normal.x + axisY * normal.y * mirrorY + axisZ * normal.z * mirrorZ);
     vFlags = instanceFlags;
     vResultU = position.x;
     vResultRow = instanceResultRow;
@@ -109,6 +109,52 @@ const FRAGMENT_SHADER = /* glsl */ `
       }
     }
     gl_FragColor = vec4(base, 1.0);
+  }
+`
+
+const EDGE_VERTEX_SHADER = /* glsl */ `
+  attribute vec2 thicknessWeights;
+  attribute vec3 instanceStart;
+  attribute vec3 instanceEnd;
+  attribute vec3 instanceReferenceAxis;
+  attribute vec4 instanceDimensions;
+  attribute float instanceGamma;
+  attribute float instanceFlags;
+  attribute float instanceOrientationFlags;
+  varying float vFlags;
+  bool hasFlag(float value, float flag) { return mod(floor(value / flag), 2.0) > 0.5; }
+  vec3 safeReference(vec3 axisX, vec3 referenceAxis) {
+    vec3 projected = referenceAxis - axisX * dot(referenceAxis, axisX);
+    if (length(projected) < 0.000001) {
+      vec3 fallbackAxis = abs(axisX.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+      projected = fallbackAxis - axisX * dot(fallbackAxis, axisX);
+    }
+    return normalize(projected);
+  }
+  void main() {
+    vec3 axisX = normalize(instanceEnd - instanceStart);
+    vec3 baseZ = safeReference(axisX, instanceReferenceAxis);
+    vec3 baseY = normalize(cross(baseZ, axisX));
+    float c = cos(instanceGamma), s = sin(instanceGamma);
+    vec3 axisY = baseY * c + baseZ * s;
+    vec3 axisZ = baseZ * c - baseY * s;
+    float mirrorY = hasFlag(instanceOrientationFlags, 1.0) ? -1.0 : 1.0;
+    float mirrorZ = hasFlag(instanceOrientationFlags, 2.0) ? -1.0 : 1.0;
+    float profileY = (position.y * instanceDimensions.y + thicknessWeights.x * instanceDimensions.z) * mirrorY;
+    float profileZ = (position.z * instanceDimensions.x + thicknessWeights.y * instanceDimensions.w) * mirrorZ;
+    vec3 worldPosition = mix(instanceStart, instanceEnd, position.x) + axisY * profileY + axisZ * profileZ;
+    vFlags = instanceFlags;
+    gl_Position = projectionMatrix * viewMatrix * vec4(worldPosition, 1.0);
+  }
+`
+const EDGE_FRAGMENT_SHADER = /* glsl */ `
+  precision highp float;
+  varying float vFlags;
+  bool hasFlag(float value, float flag) { return mod(floor(value / flag), 2.0) > 0.5; }
+  void main() {
+    if (!hasFlag(vFlags, 1.0)) discard;
+    vec3 color = hasFlag(vFlags, 2.0) ? vec3(.38, .08, .04) : vec3(.08, .10, .12);
+    gl_FragColor = vec4(color, .78);
   }
 `
 
@@ -179,6 +225,8 @@ type Batch = {
   family: ProfileFamily
   geometry: THREE.InstancedBufferGeometry
   mesh: THREE.Mesh
+  edgeGeometry: THREE.InstancedBufferGeometry
+  edges: THREE.LineSegments
   flags: Float32Array
   entityIds: number[]
   customDimensions?: readonly [number, number, number, number]
@@ -194,10 +242,19 @@ const createGeometry = (template: ThinShellTemplate) => {
   geometry.instanceCount = 0
   return geometry
 }
-const setTemplate = (geometry: THREE.InstancedBufferGeometry, template: ThinShellTemplate) => {
+const createEdgeGeometry = (template: ThinShellTemplate) => {
+  const geometry = new THREE.InstancedBufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(template.edgePositions, 3))
+  geometry.setAttribute('thicknessWeights', new THREE.BufferAttribute(template.edgeThicknessWeights, 2))
+  geometry.instanceCount = 0
+  return geometry
+}
+const setTemplate = (geometry: THREE.InstancedBufferGeometry, edgeGeometry: THREE.InstancedBufferGeometry, template: ThinShellTemplate) => {
   geometry.setAttribute('position', new THREE.BufferAttribute(template.positions, 3))
   geometry.setAttribute('normal', new THREE.BufferAttribute(template.normals, 3))
   geometry.setAttribute('thicknessWeights', new THREE.BufferAttribute(template.thicknessWeights, 2))
+  edgeGeometry.setAttribute('position', new THREE.BufferAttribute(template.edgePositions, 3))
+  edgeGeometry.setAttribute('thicknessWeights', new THREE.BufferAttribute(template.edgeThicknessWeights, 2))
 }
 
 export default class ThinShellRenderer {
@@ -212,6 +269,10 @@ export default class ThinShellRenderer {
   private readonly fallbackMaterial = new THREE.ShaderMaterial({
     vertexShader: FALLBACK_VERTEX_SHADER, fragmentShader: FALLBACK_FRAGMENT_SHADER,
     uniforms: resultUniforms(),
+  })
+  private readonly edgeMaterial = new THREE.ShaderMaterial({
+    vertexShader: EDGE_VERTEX_SHADER, fragmentShader: EDGE_FRAGMENT_SHADER,
+    transparent: true, depthTest: true, depthWrite: false,
   })
   private readonly batches = new Map<string, Batch>()
   private readonly instanceLocationByEntityId = new Map<number, InstanceLocation>()
@@ -252,13 +313,20 @@ export default class ThinShellRenderer {
   ) {
     const geometry = createGeometry(template)
     const mesh = new THREE.Mesh(geometry, this.material)
+    const edgeGeometry = createEdgeGeometry(template)
+    const edges = new THREE.LineSegments(edgeGeometry, this.edgeMaterial)
     mesh.name = `ThinShell:${key}`
+    edges.name = `ThinShellEdges:${key}`
     mesh.frustumCulled = false
+    edges.frustumCulled = false
     mesh.layers.set(this.layer)
+    edges.layers.set(this.layer)
     mesh.visible = this.membersVisible
-    const batch: Batch = { key, family, geometry, mesh, flags: new Float32Array(0), entityIds: [], customDimensions }
+    edges.visible = this.membersVisible
+    edges.renderOrder = 1
+    const batch: Batch = { key, family, geometry, mesh, edgeGeometry, edges, flags: new Float32Array(0), entityIds: [], customDimensions }
     this.batches.set(key, batch)
-    this.group.add(mesh)
+    this.group.add(mesh, edges)
     return batch
   }
 
@@ -266,7 +334,9 @@ export default class ThinShellRenderer {
     for (const [key, batch] of this.batches) {
       if (!key.startsWith('custom:')) continue
       batch.mesh.removeFromParent()
+      batch.edges.removeFromParent()
       batch.geometry.dispose()
+      batch.edgeGeometry.dispose()
       this.batches.delete(key)
     }
   }
@@ -368,11 +438,16 @@ export default class ThinShellRenderer {
     batch.geometry.setAttribute('instanceFlags', new THREE.InstancedBufferAttribute(batch.flags, 1))
     batch.geometry.setAttribute('instanceOrientationFlags', new THREE.InstancedBufferAttribute(orientationFlags, 1))
     batch.geometry.setAttribute('instanceResultRow', new THREE.InstancedBufferAttribute(resultRows, 1))
+    for (const name of ['instanceStart', 'instanceEnd', 'instanceReferenceAxis', 'instanceDimensions', 'instanceGamma', 'instanceFlags', 'instanceOrientationFlags']) {
+      batch.edgeGeometry.setAttribute(name, batch.geometry.getAttribute(name))
+    }
     // WebGLBindingStates caches the smallest instanced-attribute capacity on
     // the geometry. Replacing 1k buffers with 10k buffers must invalidate it or
     // Three.js silently keeps drawing only the first 1k instances.
     delete (batch.geometry as THREE.InstancedBufferGeometry & { _maxInstanceCount?: number })._maxInstanceCount
+    delete (batch.edgeGeometry as THREE.InstancedBufferGeometry & { _maxInstanceCount?: number })._maxInstanceCount
     batch.geometry.instanceCount = memberIndices.length
+    batch.edgeGeometry.instanceCount = memberIndices.length
   }
 
   private uploadFallback(database: StructuralSceneDB, memberIndices: number[]) {
@@ -500,14 +575,17 @@ export default class ThinShellRenderer {
   setVisible(visible: boolean) { this.group.visible = visible }
   setMembersVisible(visible: boolean) {
     this.membersVisible = visible
-    for (const batch of this.batches.values()) batch.mesh.visible = visible
+    for (const batch of this.batches.values()) {
+      batch.mesh.visible = visible
+      batch.edges.visible = visible
+    }
     this.fallbackLines.visible = visible && this.fallbackGeometry.drawRange.count > 0
   }
   setQualityProfile(profile: QualityProfile) {
     if (profile === this.qualityProfile) return
     this.qualityProfile = profile
     const pipe = this.batches.get('pipe')
-    if (pipe) setTemplate(pipe.geometry, createPipeThinShellTemplate(PIPE_SEGMENTS[profile]))
+    if (pipe) setTemplate(pipe.geometry, pipe.edgeGeometry, createPipeThinShellTemplate(PIPE_SEGMENTS[profile]))
   }
 
   bindResult(binding: ResultBinding | null) {
@@ -547,9 +625,13 @@ export default class ThinShellRenderer {
 
   dispose() {
     this.group.removeFromParent()
-    for (const batch of this.batches.values()) batch.geometry.dispose()
+    for (const batch of this.batches.values()) {
+      batch.geometry.dispose()
+      batch.edgeGeometry.dispose()
+    }
     this.fallbackGeometry.dispose()
     this.material.dispose()
+    this.edgeMaterial.dispose()
     this.fallbackMaterial.dispose()
   }
 }

@@ -87,17 +87,35 @@ const assertFiniteUnitNormals = (template: { normals: Float32Array }) => {
 
 test('standard and custom templates have stable topology and unit normals', () => {
   const templates = [
-    [createHThinShellTemplate(), 36],
-    [createChannelThinShellTemplate(), 36],
-    [createAngleThinShellTemplate(), 24],
-    [createBoxThinShellTemplate(), 48],
-    [createPipeThinShellTemplate(12), 72],
+    [createHThinShellTemplate(), 72],
+    [createChannelThinShellTemplate(), 72],
+    [createAngleThinShellTemplate(), 48],
+    [createBoxThinShellTemplate(), 96],
+    [createPipeThinShellTemplate(12), 288],
     [createCustomThinShellTemplate(new Float32Array([0, 0, 1, 0, 1, 1]), false), 12],
     [createCustomThinShellTemplate(new Float32Array([0, 0, 1, 0, 1, 1]), true), 18],
   ] as const
   for (const [template, expectedVertices] of templates) {
     assert.equal(template.vertexCount, expectedVertices)
+    assert.ok(template.edgeVertexCount > 0)
+    assert.equal(template.edgePositions.length, template.edgeVertexCount * 3)
+    assert.equal(template.edgeThicknessWeights.length, template.edgeVertexCount * 2)
     assertFiniteUnitNormals(template)
+  }
+})
+
+test('closed standard profiles contain start/end cap normals', () => {
+  for (const template of [
+    createHThinShellTemplate(), createChannelThinShellTemplate(), createAngleThinShellTemplate(),
+    createBoxThinShellTemplate(), createPipeThinShellTemplate(8),
+  ]) {
+    let negative = false, positive = false
+    for (let index = 0; index < template.normals.length; index += 3) {
+      negative ||= template.normals[index] < -.5
+      positive ||= template.normals[index] > .5
+    }
+    assert.equal(negative, true)
+    assert.equal(positive, true)
   }
 })
 
@@ -130,9 +148,9 @@ test('quality profile changes pipe segments without replacing its batch geometry
   const { renderer } = makeRenderer(mixedSource())
   const geometry = renderer.batchGeometry('pipe')!
   renderer.setQualityProfile('low')
-  assert.equal(geometry.getAttribute('position').count, 8 * 6)
+  assert.equal(geometry.getAttribute('position').count, 8 * 24)
   renderer.setQualityProfile('high')
-  assert.equal(geometry.getAttribute('position').count, 20 * 6)
+  assert.equal(geometry.getAttribute('position').count, 20 * 24)
   assert.equal(renderer.batchGeometry('pipe'), geometry)
   assert.equal(renderer.batchInstanceCount('pipe'), 1)
 })
@@ -200,8 +218,8 @@ test('10k and 100k mixed fixtures keep constant standard renderer objects', () =
   assert.equal(large.renderer.instanceCount, 100_000)
   assert.equal(small.renderer.activeBatchCount, 5)
   assert.equal(large.renderer.activeBatchCount, 5)
-  assert.equal(small.renderer.group.children.length, 6)
-  assert.equal(large.renderer.group.children.length, 6)
+  assert.equal(small.renderer.group.children.length, 11)
+  assert.equal(large.renderer.group.children.length, 11)
 })
 
 test('growing a reused batch invalidates the Three.js cached instance capacity', () => {
@@ -235,5 +253,5 @@ test('custom entropy grows by unique contour topology, not member count', () => 
   assert.equal(renderer.batchInstanceCount('custom:60'), 501)
   assert.equal(renderer.batchInstanceCount('custom:80'), 500)
   assert.equal(renderer.activeBatchCount, 7)
-  assert.equal(renderer.group.children.length, 8)
+  assert.equal(renderer.group.children.length, 15)
 })
