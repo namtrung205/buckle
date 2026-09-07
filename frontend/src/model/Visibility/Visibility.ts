@@ -76,10 +76,9 @@ class Visibility {
 
   showOrHideLoads(visible : boolean){
     this.loads = visible
-    this.model.loads.forEach((load) => {
-      load.mesh.forEach(m => m.visible = visible)
-      load.removeAllLabels()
-    })
+    // Loads render through one instanced batch (3 draw calls total) - flip the
+    // whole group; the label stream gates load labels on this same flag.
+    this.model.loadGpuRenderer?.setVisible(visible)
     this.model.syncGpuAnnotations()
   }
 

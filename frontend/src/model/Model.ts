@@ -44,6 +44,8 @@ import {
 import { ENTITY_SELECTED, ENTITY_VISIBLE, StructuralSceneDB } from "./Rendering/StructuralSceneDB";
 import { legacyModelToStructuralSource } from "./Rendering/structuralSceneAdapters";
 import { SHRINK_RATIO_PER_END } from "./Utils/shrink";
+import { buildLoadInstances } from "./Load/loadInstances";
+import LoadGpuRenderer from "./Rendering/LoadGpuRenderer";
 import CenterlineRenderer from "./Rendering/CenterlineRenderer";
 import ThinShellRenderer from "./Rendering/ThinShellRenderer";
 import StructuralGpuPicker from "./Rendering/StructuralGpuPicker";
@@ -100,6 +102,7 @@ export class Model {
   thinShellRenderer: ThinShellRenderer
   diagramRenderer: DiagramRenderer
   gpuAnnotations: GpuAnnotations
+  loadGpuRenderer: LoadGpuRenderer
   structuralPicker: StructuralGpuPicker
   private activeResultBinding: ResultBinding | null = null
   solidPreparation = { active: false, progress: 0, estimatedTriangles: 0 }
@@ -772,6 +775,7 @@ export class Model {
     this.thinShellRenderer.setShrink(shrinkPerEnd)
     this.diagramRenderer = new DiagramRenderer(this.scene, this.layer)
     this.gpuAnnotations = new GpuAnnotations(this.scene, this.layer)
+    this.loadGpuRenderer = new LoadGpuRenderer(this.scene, this.layer)
     this.camera.controls.addEventListener('end', () => this.gpuAnnotations.markDirty())
     this.structuralPicker = new StructuralGpuPicker(this.renderer)
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
@@ -789,6 +793,7 @@ export class Model {
       thinShellRenderer: false,
       diagramRenderer: false,
       gpuAnnotations: false,
+      loadGpuRenderer: false,
       structuralPicker: false,
       legacyStructuralRoot: false,
     })
@@ -936,6 +941,17 @@ export class Model {
     this.thinShellRenderer?.setShrink(perEnd)
     for (const member of this.members) member.applyShrink()
   }
+
+  /** Coalesce load add/edit/delete into one instanced-batch rebuild (3 draw calls). */
+  scheduleLoadGpuSync() {
+    if (!this.loadGpuRenderer) return
+    queueMicrotask(() => {
+      if (!this.loadGpuRenderer) return
+      this.loadGpuRenderer.upload(buildLoadInstances(this))
+      this.loadGpuRenderer.setVisible(this.visibility?.loads ?? true)
+    })
+  }
+
 
   async setRenderMode(mode: RenderMode) {
     if (!isRenderMode(mode)) throw new Error(`Unsupported render mode: ${mode}`)
@@ -1118,7 +1134,9 @@ export class Model {
     for (const node of this.nodes) if (node.mesh) node.mesh.visible = !useDataDriven && (this.visibility?.nodes ?? true)
     // Loads intentionally remain true 3D geometry in every structural render
     // mode. Only their numeric text is emitted by the GPU annotation stream.
-    for (const load of this.loads) for (const object of load.mesh) object.visible = this.visibility?.loads ?? true
+    // Loads render through ONE instanced batch (3 draw calls total); the whole
+    // layer flips via group.visible. Numeric labels ride the annotation stream.
+    this.loadGpuRenderer.setVisible(this.visibility?.loads ?? true)
     this.reactionViz?.refresh()
     this.syncGpuAnnotations()
   }
@@ -1232,6 +1250,7 @@ export class Model {
     this.thinShellRenderer?.dispose()
     this.diagramRenderer?.dispose()
     this.gpuAnnotations?.dispose()
+    this.loadGpuRenderer?.dispose()
     this.resultStore?.dispose()
     this.structuralPicker?.dispose()
     this.legacyStructuralRoot.clear()
