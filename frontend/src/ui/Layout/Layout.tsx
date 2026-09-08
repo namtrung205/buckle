@@ -11,6 +11,7 @@ import Legend from '../Results/Components/Legend/Legend';
 import FpsOverlay from './FpsOverlay';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
+import CopilotPanel from '../Copilot/CopilotPanel';
 
 interface LayoutProps {
   children: ReactNode;
@@ -78,6 +79,7 @@ const Layout = observer(({ children }: LayoutProps) => {
       {/* Bottom Status Bar */}
       <StatusBar />
       <ContextMenu />
+      {model && <CopilotPanel />}
     </Box>
   );
 });

@@ -535,6 +535,16 @@ cho LLM khi gate chưa pass.
 
 ## Goal 15 — AI Tool Registry + modes + permission policy
 
+### POC implementation record — 2026-09-08
+
+- Đã ưu tiên một lát cắt Goal 15/16 trước Goal 14: provider chỉ được lập kế hoạch
+  `CreateNodes`/`CreateMembers`; browser validate và commit một transaction qua Command Gateway.
+- Backend giữ API key, khóa tool schema, Z-up/metre contract, section/node reference và
+  trả clarification thay vì mutation khi prompt thiếu dữ kiện.
+- POC BYOK hỗ trợ OpenAI, DeepSeek, Anthropic, Google Gemini, OpenRouter và HTTPS OpenAI-compatible;
+  connection/key chỉ sống trong backend memory và được cô lập theo browser session.
+- `Generate` mode, full query/mutation registry và permission matrix vẫn để giai đoạn mở rộng.
+
 ### Deliverables
 
 - Tool Registry sinh provider-neutral JSON Schema từ command/query contract.
@@ -573,6 +583,15 @@ cho LLM khi gate chưa pass.
   quan sát viewport và undo toàn bộ chuỗi.
 
 ## Goal 16 — AI Copilot MVP end-to-end
+
+### POC implementation record — 2026-09-08
+
+- Đã thêm floating Copilot panel, prompt history, provider/model selector, connection
+  settings, trạng thái provider/error và Undo.
+- Flow POC: prompt -> `/api/copilot/plan` -> provider tool plan -> canonical transaction ->
+  viewport projection; hỗ trợ tạo node và member thẳng bằng natural language.
+- Chưa phải full Goal 16: chưa streaming/cancel, multi-turn context, Apply/Reject preview,
+  mode/model selector, persistence, eval 50 prompt và session isolation.
 
 ### Deliverables
 

@@ -25,6 +25,7 @@ import mcp_tools
 from opensees import run_analysis
 from opensees.helpers import compute_section_properties
 from schemas import AnalysisResponse, Model as StructuralModel
+from copilot import router as copilot_router
 
 class ConnectionManager:
     def __init__(self):
@@ -98,6 +99,7 @@ build_dir = os.path.join(os.path.dirname(__file__), '../frontend', 'build')
 
 # Inclure les routeurs
 app.include_router(auth_router)
+app.include_router(copilot_router)
 
 # En mode développement, rediriger les requêtes frontend vers le serveur React
 @app.middleware("http")
