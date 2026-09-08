@@ -19,6 +19,8 @@ import TextField from '../../../components/TextField';
 import { Node, ElasticBeamColumn, Load, Shell } from '../../../model';
 import BoundaryCondition from '../../../model/BoundaryCondition/BoundaryCondition';
 import { Section } from '../../../types';
+import { COMMAND_SCHEMA_VERSION, prepareParametricRegeneration } from '../../../core/structural';
+import { generateWarehouseGraph, type WarehouseParameters } from '../../../model/Generators/WarehouseGenerator';
 
 interface WarehouseWizardProps {
   open: boolean;
@@ -69,7 +71,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     snowMagnitude: 0.8, // kN/m2 (Pressure)
     addMembrane: true,
     membraneThickness: 0.002,
-    clearExisting: true,
+    clearExisting: false, // legacy-only; parametric regeneration preserves unrelated entities
     // Targeted shell loads
     windOnRoof: true,
     windOnSideWalls: true,
@@ -78,6 +80,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
   });
 
   const [tabIndex, setTabIndex] = useState(0);
+  const [previewSummary, setPreviewSummary] = useState<string>('');
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabIndex(newValue);
@@ -134,7 +137,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     return areaMm2 * 1e-6; // Convert mm2 to m2
   };
 
-  const handleGenerate = () => {
+  const handleGenerateLegacy = () => {
     if (!model) return;
 
     const { 
@@ -442,6 +445,77 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     onClose();
   };
 
+  const prepareWarehousePlan = () => {
+    if (!model) return;
+    const section = model.sections[0];
+    if (!section) {
+      alert('Please define at least one section first.');
+      return;
+    }
+    const warehouseParams: WarehouseParameters = {
+      ...params,
+      sectionId: section.id,
+      materialId: section.material.id,
+      sectionArea: calculateArea(section),
+    };
+    const existing = [...model.structuralDocument.parametricObjects.values()]
+      .find(object => object.kind === 'Warehouse');
+    return prepareParametricRegeneration(model.structuralDocument, {
+        objectId: existing?.id,
+        kind: 'Warehouse',
+        version: 1,
+        parameters: warehouseParams,
+        generatorVersion: 'warehouse@1',
+        generator: generateWarehouseGraph,
+        constraints: [
+          { type: 'positive', parameters: ['width', 'length', 'height'] },
+          { type: 'integer', parameters: ['numBays', 'numPurlins'] },
+        ],
+        provenance: { source: 'WarehouseWizard' },
+      });
+  };
+
+  const handlePreview = () => {
+    if (!model) return;
+    try {
+      const plan = prepareWarehousePlan();
+      if (!plan) return;
+      model.executeCommand({
+        commandId: crypto.randomUUID(), type: plan.command.type,
+        schemaVersion: COMMAND_SCHEMA_VERSION, dryRun: true,
+        modelRevision: model.structuralDocument.revision, source: 'ui',
+        payload: plan.command.payload,
+      });
+      setPreviewSummary(`Add ${plan.total.created} · Update ${plan.total.updated} · Delete ${plan.total.deleted}`);
+    } catch (error) {
+      setPreviewSummary('');
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleGenerate = () => {
+    if (!model) return;
+    try {
+      const plan = prepareWarehousePlan();
+      if (!plan) return;
+      model.executeCommand({
+        commandId: crypto.randomUUID(), type: plan.command.type,
+        schemaVersion: COMMAND_SCHEMA_VERSION,
+        modelRevision: model.structuralDocument.revision, source: 'ui',
+        payload: plan.command.payload,
+      });
+      setPreviewSummary('');
+      model.camera.fitModelToView();
+      onClose();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  // Kept temporarily as a reference while the new semantic generator reaches
+  // feature parity; it is deliberately not called by the UI.
+  void handleGenerateLegacy;
+
   return (
     <Dialog
       open={open}
@@ -477,8 +551,8 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             <Grid item xs={12}><TextField label="Number of Bays" name="numBays" type="number" value={params.numBays} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
             <Grid item xs={12}>
               <FormControlLabel
-                control={<Checkbox name="clearExisting" checked={params.clearExisting} onChange={handleChange} sx={{ color: colors.textFaint, '&.Mui-checked': { color: colors.danger } }} />}
-                label={<Typography variant="body2" sx={{ color: colors.text, fontWeight: 500 }}>Clear existing model before generation</Typography>}
+                control={<Checkbox checked disabled />}
+                label={<Typography variant="body2" sx={{ color: colors.text, fontWeight: 500 }}>Preserve entities outside this Warehouse</Typography>}
               />
             </Grid>
           </Grid>
@@ -557,7 +631,9 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         </CustomTabPanel>
 
         <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end', gap: 2, p: 2 }}>
+          {previewSummary && <Typography variant="caption" sx={{ color: colors.textDim, alignSelf: 'center', mr: 'auto' }}>{previewSummary}</Typography>}
           <Button onClick={onClose} sx={{ color: colors.textFaint }}>Cancel</Button>
+          <Button onClick={handlePreview} variant="outlined" sx={{ textTransform: 'none' }}>Preview changes</Button>
           <Button
             onClick={handleGenerate}
             variant="contained"

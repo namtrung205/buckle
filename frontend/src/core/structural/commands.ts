@@ -6,6 +6,9 @@ import type {
   MaterialRecord,
   Member1DRecord,
   NodeRecord,
+  GridRecord,
+  LevelRecord,
+  ParametricObjectRecord,
   SectionRecord,
   Shell2DRecord,
   StructuralChangeSet,
@@ -36,6 +39,13 @@ export type StructuralCommandOperation =
   | { type: 'DeleteLoads'; payload: { ids: readonly LocalReference[] } }
   | { type: 'CreateOrUpdateBoundaryConditions'; payload: { boundaryConditions: readonly Creatable<BoundaryConditionRecord>[] } }
   | { type: 'DeleteBoundaryConditions'; payload: { ids: readonly LocalReference[] } }
+  | { type: 'CreateOrUpdateGrids'; payload: { grids: readonly Creatable<GridRecord>[] } }
+  | { type: 'DeleteGrids'; payload: { ids: readonly LocalReference[] } }
+  | { type: 'CreateOrUpdateLevels'; payload: { levels: readonly Creatable<LevelRecord>[] } }
+  | { type: 'DeleteLevels'; payload: { ids: readonly LocalReference[] } }
+  | { type: 'CreateOrUpdateParametricObjects'; payload: { parametricObjects: readonly Creatable<ParametricObjectRecord>[] } }
+  | { type: 'DeleteParametricObjects'; payload: { ids: readonly LocalReference[] } }
+  | { type: 'DetachFromParametricObject'; payload: { objectId: LocalReference; entities: readonly EntityReference[] } }
   | { type: 'SetSelection'; payload: { entities: readonly EntityReference[] } }
   | { type: 'HideEntities'; payload: { entities: readonly EntityReference[] } }
   | { type: 'ShowEntities'; payload: { entities: readonly EntityReference[] } }

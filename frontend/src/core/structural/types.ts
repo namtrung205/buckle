@@ -127,7 +127,16 @@ export type ParametricObjectRecord = {
   version: number
   parameters: Readonly<Record<string, unknown>>
   ownedEntityRefs: readonly EntityReference[]
+  /** Stable semantic role -> concrete document entity. */
+  roleBindings?: Readonly<Record<string, EntityReference>>
+  constraints?: readonly Readonly<Record<string, unknown>>[]
   generatorVersion: string
+  provenance?: Readonly<{
+    source: string
+    createdAt?: string
+    updatedAt?: string
+    parentObjectId?: EntityId
+  }>
 }
 
 export type StructuralDocumentSeed = {

@@ -40,6 +40,7 @@ const normalizeRecord = <T extends EntityRecord>(value: T, collection: string): 
     targetNodeIds?: readonly number[]
     entityRefs?: readonly EntityReference[]
     ownedEntityRefs?: readonly EntityReference[]
+    roleBindings?: Readonly<Record<string, EntityReference>>
   }
   const sortIds = (ids: readonly number[] | undefined) => ids ? [...new Set(ids)].sort((a, b) => a - b) : undefined
   const sortRefs = (refs: readonly EntityReference[] | undefined) => refs
@@ -50,6 +51,9 @@ const normalizeRecord = <T extends EntityRecord>(value: T, collection: string): 
   if (collection === 'boundaryConditions') record.targetNodeIds = sortIds(record.targetNodeIds)
   if (collection === 'groups') record.entityRefs = sortRefs(record.entityRefs)
   if (collection === 'parametricObjects') record.ownedEntityRefs = sortRefs(record.ownedEntityRefs)
+  if (collection === 'parametricObjects' && record.roleBindings) {
+    record.roleBindings = Object.fromEntries(Object.entries(record.roleBindings).sort(([left], [right]) => left.localeCompare(right)))
+  }
   return record
 }
 
@@ -395,6 +399,9 @@ export class StructuralDocument {
     seed.parametricObjects = seed.parametricObjects?.map(object => ({
       ...object,
       ownedEntityRefs: object.ownedEntityRefs.filter(keep),
+      ...(object.roleBindings ? {
+        roleBindings: Object.fromEntries(Object.entries(object.roleBindings).filter(([, ref]) => keep(ref))),
+      } : {}),
     }))
   }
 
@@ -459,8 +466,21 @@ export class StructuralDocument {
     for (const group of this.groups.values()) {
       for (const ref of group.entityRefs) this.validateEntityReference(ref, `Group ${group.id}`)
     }
+    const ownerByEntity = new Map<string, EntityId>()
     for (const object of this.parametricObjects.values()) {
+      const owned = new Set(object.ownedEntityRefs.map(ref => `${ref.collection}:${ref.id}`))
       for (const ref of object.ownedEntityRefs) this.validateEntityReference(ref, `Parametric object ${object.id}`)
+      for (const ref of object.ownedEntityRefs) {
+        const key = `${ref.collection}:${ref.id}`
+        const owner = ownerByEntity.get(key)
+        if (owner !== undefined && owner !== object.id) throw new Error(`${key} is owned by parametric objects ${owner} and ${object.id}`)
+        ownerByEntity.set(key, object.id)
+      }
+      for (const [role, ref] of Object.entries(object.roleBindings ?? {})) {
+        if (!role.trim()) throw new Error(`Parametric object ${object.id} has an empty semantic role`)
+        this.validateEntityReference(ref, `Parametric object ${object.id} role ${role}`)
+        if (!owned.has(`${ref.collection}:${ref.id}`)) throw new Error(`Parametric object ${object.id} role ${role} is not owned`)
+      }
     }
   }
 

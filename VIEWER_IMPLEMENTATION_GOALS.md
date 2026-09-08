@@ -32,8 +32,8 @@ bổ sung roadmap AI-native để tăng tốc dựng hình, truy vấn và cập
 | 10 | Optional WebGPU evaluation | Deferred per user, non-blocking |
 | 11 | AI foundation reset: build, schema, units và analysis validation | Implemented — UI verification pending; legacy lint waived |
 | 12 | Pure Structural Model Core + versioned document | Completed — core, analysis, export và render-mode smoke passed |
-| 13 | Command Bus + transaction + undo/redo | In progress — core/gateway and primary UI mutation path implemented |
-| 14 | Parametric object kernel + regenerate/diff | Planned |
+| 13 | Command Bus + transaction + undo/redo | Core complete — Grid UI/E2E/history-cap verification deferred per user |
+| 14 | Parametric object kernel + regenerate/diff | Implemented — automated gates passed; UI verification pending |
 | 15 | AI Tool Registry + modes + permission policy | Planned |
 | 16 | AI Copilot MVP end-to-end | Planned |
 | 17 | Fast inspect/select/edit workflows | Planned |
@@ -505,6 +505,25 @@ cho LLM khi gate chưa pass.
   tác undo/redo đúng một bước và giữ selection hợp lý.
 
 ## Goal 14 — Parametric object kernel + regenerate/diff
+
+### Implementation record — 2026-09-09
+
+- Đã thêm pure `ParametricKernel`: chạy generator hai lần để phát hiện output không
+  deterministic, validate semantic graph, cấp/reuse stable ID theo role và tạo một
+  transaction atomic cho create/update/delete.
+- `ParametricObject` đã lưu versioned parameters, ownership, role bindings, constraints,
+  generator version và provenance. Document validation ngăn dangling role, ownership kép;
+  `DetachFromParametricObject` giữ entity con nhưng bỏ ownership/binding.
+- Preview dùng chính transaction regenerate với `dryRun`; Warehouse Wizard hiển thị tổng
+  add/update/delete trước khi commit. Invalid graph/reference không đổi document, history
+  hay parametric object cũ.
+- Warehouse đã được tách thành pure domain generator; UI không còn gọi đường clear/rebuild
+  mù quáng. Tower dùng cùng contract và regenerate object hiện có theo semantic diff.
+- P0 graph generators đã có cho `Grid`, `PortalFrame`, `FrameArray`, `Warehouse`, `Tower`;
+  roles bao phủ frame line, bay, base node, column, rafter, purlin và bracing.
+- Automated gates: stable roles/IDs, dry-run, odd bay, minimum/maximum-like topology,
+  degeneracy, invalid rollback, undo parameters + graph và detach đều pass trong suite
+  `test:fixture` (103 tests); production TypeScript/Vite build pass.
 
 ### Deliverables
 

@@ -470,6 +470,65 @@ export class CommandGateway {
         draft = snapshotToSeed(candidate.getSnapshot())
         break
       }
+      case 'CreateOrUpdateGrids':
+        for (const raw of operation.payload.grids) {
+          const id = identifyUpsert('grids', raw)
+          const { alias: _alias, ...record } = raw
+          upsert('grids', { ...record, id })
+        }
+        break
+      case 'DeleteGrids': {
+        const candidate = new StructuralDocument(draft)
+        for (const ref of operation.payload.ids) candidate.deleteGrid(resolve(ref))
+        draft = snapshotToSeed(candidate.getSnapshot())
+        break
+      }
+      case 'CreateOrUpdateLevels':
+        for (const raw of operation.payload.levels) {
+          const id = identifyUpsert('levels', raw)
+          const { alias: _alias, ...record } = raw
+          upsert('levels', { ...record, id })
+        }
+        break
+      case 'DeleteLevels': {
+        const candidate = new StructuralDocument(draft)
+        for (const ref of operation.payload.ids) candidate.deleteLevel(resolve(ref))
+        draft = snapshotToSeed(candidate.getSnapshot())
+        break
+      }
+      case 'CreateOrUpdateParametricObjects':
+        for (const raw of operation.payload.parametricObjects) {
+          const id = identifyUpsert('parametricObjects', raw)
+          const { alias: _alias, ...record } = raw
+          upsert('parametricObjects', { ...record, id })
+        }
+        break
+      case 'DeleteParametricObjects': {
+        const candidate = new StructuralDocument(draft)
+        for (const ref of operation.payload.ids) candidate.deleteParametricObject(resolve(ref))
+        draft = snapshotToSeed(candidate.getSnapshot())
+        break
+      }
+      case 'DetachFromParametricObject': {
+        const objectId = resolve(operation.payload.objectId)
+        const values = collectionArray(draft, 'parametricObjects') as import('./types.ts').ParametricObjectRecord[]
+        const index = values.findIndex(value => value.id === objectId)
+        if (index < 0) throw new CommandValidationError(`Unknown parametricObjects id ${objectId}`)
+        const detached = new Set(operation.payload.entities.map(refKey))
+        const current = values[index]
+        const owned = new Set(current.ownedEntityRefs.map(refKey))
+        for (const ref of operation.payload.entities) {
+          if (!owned.has(refKey(ref))) throw new CommandValidationError(`Entity ${refKey(ref)} is not owned by parametric object ${objectId}`)
+        }
+        values[index] = {
+          ...current,
+          ownedEntityRefs: current.ownedEntityRefs.filter(ref => !detached.has(refKey(ref))),
+          ...(current.roleBindings ? {
+            roleBindings: Object.fromEntries(Object.entries(current.roleBindings).filter(([, ref]) => !detached.has(refKey(ref)))),
+          } : {}),
+        }
+        break
+      }
       case 'SetSelection':
         workspace = { ...workspace, selection: operation.payload.entities.map(clone) }
         break
