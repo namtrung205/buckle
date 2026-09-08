@@ -26,6 +26,7 @@ import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../model/Context';
 import { colors } from '../../../theme';
 import { ElasticIsotropicMaterial } from '../../../types';
+import { COMMAND_SCHEMA_VERSION } from '../../../core/structural';
 
 interface MaterialsProps {
   open: boolean;
@@ -55,14 +56,19 @@ const Materials = observer(({}: MaterialsProps) => {
       nu: 0.3,
       rho: 7850,
     };
-    model.materials.push(newMaterial);
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateMaterials',
+      schemaVersion: COMMAND_SCHEMA_VERSION, modelRevision: model.structuralDocument.revision,
+      payload: { materials: [newMaterial] }, source: 'ui',
+    });
   };
 
   const handleDelete = (id: GridRowId) => () => {
-    const index = model.materials.findIndex((m) => m.id === id);
-    if (index !== -1) {
-      model.materials.splice(index, 1);
-    }
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteMaterials',
+      schemaVersion: COMMAND_SCHEMA_VERSION, modelRevision: model.structuralDocument.revision,
+      payload: { ids: [Number(id)] }, source: 'ui',
+    });
   };
 
   const handleEditClick = (id: GridRowId) => () => {
@@ -89,10 +95,16 @@ const Materials = observer(({}: MaterialsProps) => {
   const processRowUpdate = (row: GridRowModel) => {
     const material = model.materials.find((m) => m.id === row.id);
     if (material) {
-      material.name = row.name || material.name;
-      material.E = Number(row.E);
-      material.nu = Number(row.nu);
-      material.rho = Number(row.rho) || undefined;
+      model.executeCommand({
+        commandId: crypto.randomUUID(), type: 'CreateOrUpdateMaterials',
+        schemaVersion: COMMAND_SCHEMA_VERSION, modelRevision: model.structuralDocument.revision,
+        payload: { materials: [{
+          ...material,
+          name: row.name || material.name,
+          E: Number(row.E), nu: Number(row.nu), rho: Number(row.rho) || undefined,
+        }] },
+        source: 'ui',
+      });
     }
     return row;
   };

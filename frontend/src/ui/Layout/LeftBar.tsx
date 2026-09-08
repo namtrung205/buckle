@@ -250,10 +250,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    const index = model?.materials.findIndex((m) => m.id === material.id);
-                    if (index !== undefined && index !== -1 && model) {
-                      model.materials.splice(index, 1);
-                    }
+                    model?.executeCommand({
+                      commandId: crypto.randomUUID(), type: 'DeleteMaterials', schemaVersion: '1.0',
+                      modelRevision: model.structuralDocument.revision, source: 'ui',
+                      payload: { ids: [material.id] },
+                    });
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -528,7 +529,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    node.delete()
+                    model.deleteNodesById([node.id])
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -594,8 +595,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    console.log('Delete member', member.id);
-                    member.remove()
+                    model.deleteMembersById([member.id])
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -663,7 +663,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     const support = model.boundaryConditions.find((b) => b.id === bc.id);
                     console.log('Delete support', support?.id);
                     if (support) {
-                      support.delete();
+                      model.deleteBoundaryConditionsById([support.id]);
                     }
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
@@ -723,7 +723,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                   onClick={(e) => {
                     e.stopPropagation();
                     console.log('Delete load', load.id);
-                    load.delete()
+                    model.deleteLoadsById([load.id])
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >

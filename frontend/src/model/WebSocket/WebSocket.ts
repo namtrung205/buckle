@@ -69,56 +69,56 @@ export default class WebSocketHandler {
               }
               case 'add_nodes': {
                 if (!Array.isArray(data)) throw new Error('add_nodes data must be an array');
-                for (const item of data as NodeMutation[]) {
-                  const node = new Node(jsonToThree(item.x, item.y, item.z), item.name, item.id);
-                  node.model = this.model;
-                  node.create();
-                  this.model.nodes.push(node);
-                }
+                this.model.executeCommand({
+                  commandId: id ? `${id}:add_nodes` : crypto.randomUUID(), type: 'CreateNodes', schemaVersion: '1.0',
+                  modelRevision: this.model.structuralDocument.revision, source: 'mcp',
+                  payload: { nodes: (data as NodeMutation[]).map(item => ({
+                    id: item.id, name: item.name, position: [item.x, item.y, item.z],
+                  })) },
+                });
                 answer = { message: 'The nodes have been created', id, success: true };
                 break;
               }
               case 'add_members': {
                 if (!Array.isArray(data)) throw new Error('add_members data must be an array');
-                for (const item of data as MemberMutation[]) {
-                  const nodei = this.model.nodes.find((node) => node.id === item.nodei);
-                  const nodej = this.model.nodes.find((node) => node.id === item.nodej);
-                  const section = this.model.sections.find((value) => value.id === item.section);
-                  if (!nodei || !nodej || !section) {
-                    throw new Error(`Member ${item.id} references a missing node or section`);
-                  }
-                  const member = new ElasticBeamColumn(
-                    this.model,
-                    item.label ?? `Member ${item.id}`,
-                    [nodei, nodej],
-                    section,
-                    item.id,
-                  );
-                  member.gamma = item.gamma ?? 0;
-                  member.release = item.release ?? '';
-                  if (item.vecxz) member.vecxz = jsonToThree(...item.vecxz);
-                  member.create();
-                  this.model.members.push(member);
-                }
+                this.model.executeCommand({
+                  commandId: id ? `${id}:add_members` : crypto.randomUUID(), type: 'CreateMembers', schemaVersion: '1.0',
+                  modelRevision: this.model.structuralDocument.revision, source: 'mcp',
+                  payload: { members: (data as MemberMutation[]).map(item => ({
+                    id: item.id, label: item.label ?? `Member ${item.id}`,
+                    nodeI: item.nodei, nodeJ: item.nodej, sectionId: item.section,
+                    referenceAxis: item.vecxz, gammaDegrees: item.gamma ?? 0, release: item.release ?? '',
+                  })) },
+                });
                 answer = { message: 'The members have been created', id, success: true };
                 break;
               }
               case 'add_bc': {
                 if (!Array.isArray(data)) throw new Error('add_bc data must be an array');
-                for (const item of data as BoundaryConditionDto[]) {
-                  new BoundaryCondition(this.model, item).createOrUpdate();
-                }
+                this.model.executeCommand({
+                  commandId: id ? `${id}:add_bc` : crypto.randomUUID(), type: 'CreateOrUpdateBoundaryConditions', schemaVersion: '1.0',
+                  modelRevision: this.model.structuralDocument.revision, source: 'mcp',
+                  payload: { boundaryConditions: (data as BoundaryConditionDto[]).map(item => ({
+                    id: item.id ?? Math.floor(Math.random() * 0x7fffffff), name: item.name,
+                    type: item.type, targetNodeIds: item.targets,
+                    dx: item.dx ?? 0, dy: item.dy ?? 0, dz: item.dz ?? 0,
+                    rx: item.rx ?? 0, ry: item.ry ?? 0, rz: item.rz ?? 0,
+                    rotationDegrees: item.rotation ?? 0,
+                  })) },
+                });
                 answer = { message: 'The boundary conditions have been created', id, success: true };
                 break;
               }
               case 'add_linear_load': {
                 if (!Array.isArray(data)) throw new Error('add_linear_load data must be an array');
-                for (const item of data as LoadDto[]) {
-                  new Load(this.model, {
-                    ...item,
-                    value: jsonToThree(item.value.x, item.value.y, item.value.z),
-                  }).createOrUpdate();
-                }
+                this.model.executeCommand({
+                  commandId: id ? `${id}:add_linear_load` : crypto.randomUUID(), type: 'CreateOrUpdateLoads', schemaVersion: '1.0',
+                  modelRevision: this.model.structuralDocument.revision, source: 'mcp',
+                  payload: { loads: (data as LoadDto[]).map(item => ({
+                    id: item.id, name: item.name, type: item.type, targetIds: item.targets,
+                    value: [item.value.x, item.value.y, item.value.z], magnitude: item.magnitude,
+                  })) },
+                });
                 answer = { message: 'The linear loads have been created', id, success: true };
                 break;
               }

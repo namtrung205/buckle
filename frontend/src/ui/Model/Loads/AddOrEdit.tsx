@@ -199,9 +199,7 @@ const AddOrEdit = observer(({ open, onClose, selectedLoad = null }: LoadsProps) 
       value : vec_dir.clone().multiplyScalar(magnitude)
     };
 
-    const newLoad = new Load(model, data as Load);
-    
-    newLoad.createOrUpdate();
+    model.createOrUpdateLoads([data]);
     
     reset();
     onClose();

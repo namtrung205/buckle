@@ -63,12 +63,10 @@ const MaterialSelector = observer(({ open, onClose, selectedMaterial = null }: M
     const mat = materialFromPreset(preset);
     const id = selectedMaterial?.id || (Math.floor(Math.random() * Number.MAX_SAFE_INTEGER) % 0x80000000);
     const next: ElasticIsotropicMaterial = { ...mat, id };
-    if (selectedMaterial) {
-      const cur = model.materials.find((m) => m.id === selectedMaterial.id);
-      if (cur) Object.assign(cur, next);
-    } else {
-      model.materials.push(next);
-    }
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateMaterials', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui', payload: { materials: [next] },
+    });
     onClose();
   };
 
@@ -88,12 +86,10 @@ const MaterialSelector = observer(({ open, onClose, selectedMaterial = null }: M
       ft: custom.ft,
       grade: custom.grade,
     };
-    if (selectedMaterial) {
-      const cur = model.materials.find((m) => m.id === selectedMaterial.id);
-      if (cur) Object.assign(cur, next);
-    } else {
-      model.materials.push(next);
-    }
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateMaterials', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui', payload: { materials: [next] },
+    });
     onClose();
   };
 

@@ -40,9 +40,17 @@ import {
   type SelectionMode,
 } from "./Rendering/contracts";
 import { ENTITY_SELECTED, ENTITY_VISIBLE, StructuralSceneDB } from "./Rendering/StructuralSceneDB";
-import { StructuralDocument, type AnalysisSnapshot } from "../core/structural";
+import {
+  CommandGateway,
+  StructuralDocument,
+  type AnalysisSnapshot,
+  type CommandEnvelope,
+  type CommandGatewayContext,
+  type CommandResult,
+} from "../core/structural";
 import { StructuralDocumentBridge } from "./Rendering/StructuralDocumentBridge";
 import { legacyModelToDocumentSeed } from "./Structural/legacyStructuralDocumentAdapter";
+import { applyStructuralChangeToLegacy } from "./Structural/StructuralLegacyProjection";
 import { WorkspaceContext } from "./Workspace/WorkspaceContext";
 import { SHRINK_RATIO_PER_END } from "./Utils/shrink";
 import { buildLoadInstances } from "./Load/loadInstances";
@@ -99,6 +107,8 @@ export class Model {
   performanceBenchmark: ViewerBenchmark
   /** Canonical Z-up engineering state. Legacy UI objects are migration adapters. */
   structuralDocument = new StructuralDocument()
+  /** The only supported mutation entry point for canonical engineering state. */
+  commandGateway = new CommandGateway(this.structuralDocument)
   /** Renderer-facing SoA projection of StructuralDocument. */
   structuralSceneDB = new StructuralSceneDB()
   structuralDocumentBridge = new StructuralDocumentBridge(this.structuralDocument, this.structuralSceneDB)
@@ -446,39 +456,141 @@ export class Model {
     return [...new Set(ids)]
   }
 
+  deleteNodesById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteNodes', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { ids, cascade: true },
+    })
+  }
+
+  deleteMembersById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteMembers', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { ids },
+    })
+  }
+
+  deleteShellsById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteShells', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { ids },
+    })
+  }
+
+  createOrUpdateLoads = (loads: readonly {
+    id: number; name?: string; type: 'nodal' | 'linear' | 'area' | 'pressure';
+    targets: readonly number[]; value: { x: number; y: number; z: number }; magnitude?: number;
+  }[]) => {
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateLoads', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { loads: loads.map(load => ({
+        id: load.id, name: load.name, type: load.type, targetIds: [...load.targets],
+        value: [load.value.x, load.value.z, load.value.y], magnitude: load.magnitude,
+      })) },
+    })
+  }
+
+  deleteLoadsById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteLoads', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { ids },
+    })
+  }
+
+  createOrUpdateBoundaryConditions = (items: readonly {
+    id: number; name?: string; type: BoundaryCondition['type']; targets: readonly number[];
+    dx?: number; dy?: number; dz?: number; rx?: number; ry?: number; rz?: number; rotation?: number;
+  }[]) => {
+    const normalized = items.map(item => {
+      const preset = item.type === 'fixed'
+        ? { dx: 1, dy: 1, dz: 1, rx: 1, ry: 1, rz: 1 }
+        : item.type === 'pinned'
+          ? { dx: 1, dy: 1, dz: 1, rx: 1, ry: 0, rz: 0 }
+          : item.type === 'roller'
+            ? { dx: 0, dy: 1, dz: 1, rx: 1, ry: 0, rz: 0 }
+          : { dx: item.dx ?? 0, dy: item.dy ?? 0, dz: item.dz ?? 0, rx: item.rx ?? 0, ry: item.ry ?? 0, rz: item.rz ?? 0 }
+      return {
+        id: item.id, name: item.name, type: item.type, targetNodeIds: [...item.targets],
+        ...preset, rotationDegrees: item.rotation ?? 0,
+      }
+    })
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateBoundaryConditions', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { boundaryConditions: normalized },
+    })
+  }
+
+  deleteBoundaryConditionsById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteBoundaryConditions', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { ids },
+    })
+  }
+
   /** Delete the nodes currently selected whose own mesh (or parent) carries a node type. */
   deleteSelectedNodes = () => {
-    const ids = new Set(this.selectedNodeIds);
-    const nodesToDelete = this.nodes.filter((n) => ids.has(n.id));
-    nodesToDelete.forEach((node) => node?.delete());
+    const ids = this.selectedNodeIds;
+    if (!ids.length) return;
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'DeleteNodes', payload: { ids, cascade: true } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    });
     this.selector.clear();
   };
 
   /** Delete the members currently selected whose own mesh (or parent) carries a member type. */
   deleteSelectedMembers = () => {
-    const ids = new Set(this.selectedMemberIds);
-    const membersToDelete = this.members.filter((m) => ids.has(m.id));
-    membersToDelete.forEach((member) => member?.remove());
+    const ids = this.selectedMemberIds;
+    if (!ids.length) return;
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'DeleteMembers', payload: { ids } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    });
     this.selector.clear();
   };
 
   deleteSelectedShells = () => {
-    const ids = new Set(this.selectedShellIds)
-    this.shells.filter(shell => ids.has(shell.id)).forEach(shell => shell.remove())
+    const ids = this.selectedShellIds
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'DeleteShells', payload: { ids } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    })
     this.selector.clear()
   };
 
   /** Hide selected members through the shared render flag as well as retained
    * legacy resources, so the state is stable across Render Mode switches. */
   hideSelectedMembers = () => {
-    for (const id of this.selectedMemberIds) {
-      this.setStructuralMemberState(id, { visible: false });
-      const member = this.members.find((candidate) => candidate.id === id);
-      if (member?.group) member.group.visible = false;
-      if (member?.mesh) member.mesh.visible = false;
-      if (member?.edges) member.edges.visible = false;
-      if (member?.line?.mesh) member.line.mesh.visible = false;
-    }
+    const entities = this.selectedMemberIds.map(id => ({ collection: 'members' as const, id }))
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'HideEntities', payload: { entities } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    })
     this.selector.clear();
   };
 
@@ -538,25 +650,27 @@ export class Model {
 
   addPressureLoadToShells = (shellIds: number[]) => {
     if (!shellIds.length) return
-    const load = new Load(this, {
-      id: Math.floor(Math.random() * 0x7fffffff),
+    const id = Math.floor(Math.random() * 0x7fffffff)
+    this.createOrUpdateLoads([{
+      id,
       name: `Load ${this.loads.length + 1}`,
       type: 'pressure',
       targets: shellIds,
       value: new THREE.Vector3(0, -1, 0),
       magnitude: 0,
-    })
-    load.createOrUpdate()
-    this.focusLoad(load.id)
+    }])
+    this.focusLoad(id)
   };
 
   /** Create a node at the origin and focus it. */
   addNewNode = () => {
-    const node = new Node(new THREE.Vector3(0, 0, 0), undefined);
-    node.model = this;
-    node.create();
-    this.nodes.push(node);
-    this.focusNode(node.id);
+    const id = Math.floor(Math.random() * 0x7fffffff)
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateNodes', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { nodes: [{ id, position: [0, 0, 0] }] },
+    })
+    this.focusNode(id);
   };
   // Active bottom-bar navigation tool (select / zoom / pan / orbit)
   navTool: NavTool = 'select';
@@ -710,9 +824,24 @@ export class Model {
 
       window.addEventListener("resize", this.onResize);
       window.addEventListener('pointermove', this.updatePointerCoords);
+      window.addEventListener('keydown', this.onCommandHistoryKeyDown);
     } else {
       window.removeEventListener("resize", this.onResize);
+      window.removeEventListener('pointermove', this.updatePointerCoords);
+      window.removeEventListener('keydown', this.onCommandHistoryKeyDown);
     }
+  }
+
+  private onCommandHistoryKeyDown = (event: KeyboardEvent) => {
+    if (!(event.ctrlKey || event.metaKey)) return
+    const target = event.target as HTMLElement | null
+    if (target?.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+    const key = event.key.toLowerCase()
+    const undo = key === 'z' && !event.shiftKey
+    const redo = key === 'y' || (key === 'z' && event.shiftKey)
+    if (!undo && !redo) return
+    const result = undo ? this.undoCommand() : this.redoCommand()
+    if (result) event.preventDefault()
   }
 
   private constructor() {
@@ -791,6 +920,9 @@ export class Model {
     this.loadGpuRenderer = new LoadGpuRenderer(this.scene, this.layer)
     this.camera.controls.addEventListener('end', () => this.gpuAnnotations.markDirty())
     this.structuralPicker = new StructuralGpuPicker(this.renderer)
+    // Seed the canonical authority with startup materials/sections before the
+    // first UI command is allowed to reference them.
+    this.reconcileStructuralDocument()
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
     makeAutoObservable(this, {
@@ -799,6 +931,7 @@ export class Model {
       fpsLastFrameTime: false,
       performanceBenchmark: false,
       structuralDocument: false,
+      commandGateway: false,
       structuralSceneDB: false,
       structuralDocumentBridge: false,
       workspaceContext: false,
@@ -937,6 +1070,63 @@ export class Model {
   reconcileStructuralDocument() {
     this.structuralDocument.reconcile(legacyModelToDocumentSeed(this))
     return this.structuralDocument
+  }
+
+  /** Execute one validated canonical command and refresh renderer projections. */
+  executeCommand(command: CommandEnvelope, options: { allowDestructive?: boolean } = {}): CommandResult {
+    return this.commandGateway.execute(command, this.commandContext(options.allowDestructive === true))
+  }
+
+  undoCommand(): CommandResult | null {
+    return this.commandGateway.undo(this.commandContext(false))
+  }
+
+  redoCommand(): CommandResult | null {
+    return this.commandGateway.redo(this.commandContext(false))
+  }
+
+  private commandContext(allowDestructive: boolean): CommandGatewayContext {
+    return {
+      getWorkspaceState: () => this.workspaceContext.getCommandState(),
+      applyWorkspaceState: state => {
+        this.workspaceContext.applyCommandState(state)
+        if (!this.selector) return
+        this.selector.selectedNodeIds = [...this.workspaceContext.selectedNodeIds]
+        this.selector.selectedCenterlineIds = [...this.workspaceContext.selectedMemberIds]
+      },
+      allowDestructive: () => allowDestructive,
+      onCommitted: result => {
+        if (!result.changed) return
+        if (result.changes) {
+          this.invalidateResults()
+          applyStructuralChangeToLegacy(this, this.structuralDocument, result.changes)
+        }
+        this.refreshCommandRenderProjection()
+      },
+    }
+  }
+
+  /** Upload the bridge-maintained DB without reconciling back from legacy arrays. */
+  private refreshCommandRenderProjection() {
+    if (!this.centerlineRenderer || !this.thinShellRenderer || !this.diagramRenderer || !this.structuralPicker) return
+    const selectedNodes = this.workspaceContext.selectedNodeIds
+    const selectedMembers = this.workspaceContext.selectedMemberIds
+    const hidden = this.workspaceContext.hiddenEntityRefs
+    for (let index = 0; index < this.structuralSceneDB.nodeCount; index++) {
+      const id = this.structuralSceneDB.nodeIds[index]
+      this.structuralSceneDB.setNodeFlag(id, ENTITY_SELECTED, selectedNodes.has(id))
+      this.structuralSceneDB.setNodeFlag(id, ENTITY_VISIBLE, !hidden.has(`nodes:${id}`))
+    }
+    for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
+      const id = this.structuralSceneDB.memberIds[index]
+      this.structuralSceneDB.setMemberFlag(id, ENTITY_SELECTED, selectedMembers.has(id))
+      this.structuralSceneDB.setMemberFlag(id, ENTITY_VISIBLE, !hidden.has(`members:${id}`))
+    }
+    this.centerlineRenderer.upload(this.structuralSceneDB)
+    this.thinShellRenderer.upload(this.structuralSceneDB)
+    this.diagramRenderer.upload(this.structuralSceneDB)
+    this.structuralPicker.upload(this.structuralSceneDB)
+    this.applyRenderModeVisibility()
   }
 
   createAnalysisSnapshot(): AnalysisSnapshot {

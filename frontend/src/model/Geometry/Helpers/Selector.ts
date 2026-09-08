@@ -98,18 +98,26 @@ class Selector {
   }
 
   private syncWorkspaceSelection() {
-    const workspace = this.model.workspaceContext
-    workspace.clearSelection()
-    for (const id of this.selectedCenterlineIds) workspace.selectedMemberIds.add(id)
-    for (const id of this.selectedNodeIds) workspace.selectedNodeIds.add(id)
+    const refs = new Map<string, { collection: 'nodes' | 'members' | 'shells'; id: number }>()
+    for (const id of this.selectedCenterlineIds) refs.set(`members:${id}`, { collection: 'members', id })
+    for (const id of this.selectedNodeIds) refs.set(`nodes:${id}`, { collection: 'nodes', id })
     for (const item of this.selected) {
       const parentData = item.object.parent instanceof THREE.Group ? item.object.parent.userData : undefined
       const data = item.object.userData?.type ? item.object.userData : parentData
       if (typeof data?.id !== 'number') continue
-      if (data.type === 'elasticBeamColumn') workspace.selectedMemberIds.add(data.id)
-      if (data.type === 'node') workspace.selectedNodeIds.add(data.id)
-      if (data.type === 'shell') workspace.selectedShellIds.add(data.id)
+      if (data.type === 'elasticBeamColumn') refs.set(`members:${data.id}`, { collection: 'members', id: data.id })
+      if (data.type === 'node') refs.set(`nodes:${data.id}`, { collection: 'nodes', id: data.id })
+      if (data.type === 'shell') refs.set(`shells:${data.id}`, { collection: 'shells', id: data.id })
     }
+    const entities = [...refs.values()]
+    const current = this.model.workspaceContext.getCommandState().selection
+    const keys = (values: readonly { collection: string; id: number }[]) =>
+      values.map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+    if (keys(current) === keys(entities)) return
+    this.model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
+      modelRevision: this.model.structuralDocument.revision, source: 'ui', payload: { entities },
+    })
   }
 
   private setWorkspaceHover(kind: 'node' | 'member', id: number | null) {
@@ -715,8 +723,10 @@ class Selector {
     this.syncWorkspaceSelection()
   }
   divideSelection() {
-    const members = this.model.members;
     const parts = 5
+    const memberIds = new Set<number>()
+    const nodeRecords: any[] = []
+    const memberRecords: any[] = []
     for (const item of this.selected) {
       const object = item.object
       // Check userData on object, or on parent group if object is a mesh in a group
@@ -725,7 +735,10 @@ class Selector {
         userData = object.parent.userData
       }
       const { id } = userData
-      const member = members.find(el => el.id === id)
+      if (memberIds.has(id)) continue
+      const member = this.model.members.find(el => el.id === id)
+      if (!member) continue
+      memberIds.add(id)
       const section = member!.section
       const memberNodes = member!.nodes;
       const nodei = memberNodes[0]
@@ -736,39 +749,42 @@ class Selector {
         nodej.y - nodei.y,
         nodej.z - nodei.z,
       )
-      const direction = vector.clone().normalize()
-      const length = vector.length()
-
-      const nodes: Node[] = []
-      nodes.push(nodei)
-      // Remove the group if the object is a mesh in a group, otherwise remove the object itself
-      if (object instanceof THREE.Mesh && object.parent instanceof THREE.Group && object.parent.userData?.type === 'elasticBeamColumn') {
-        this.model.scene.remove(object.parent)
-      } else {
-        this.model.scene.remove(object)
-      }
-      for (let i = 0; i < parts; i++) {
-        const ratio = (i + 1) / parts
+      const nodes: Node[] = [nodei]
+      for (let i = 1; i < parts; i++) {
+        const ratio = i / parts
         const point = new THREE.Vector3(
-          nodei.x + direction.x * ratio * length,
-          nodei.y + direction.y * ratio * length,
-          nodei.z + direction.z * ratio * length
+          nodei.x + vector.x * ratio,
+          nodei.y + vector.y * ratio,
+          nodei.z + vector.z * ratio,
         )
-
         const node = new Node(point)
-
         nodes.push(node)
+        nodeRecords.push({ id: node.id, position: [node.x, node.z, node.y] })
       }
-
-      // console.log('NODES', nodes)
+      nodes.push(nodej)
       for (let i = 0; i < nodes.length - 1; i++) {
         const iNode = nodes[i]
         const jNode = nodes[i + 1]
-        const newBeam = new ElasticBeamColumn(this.model, '', [iNode, jNode], section)
-        newBeam.create()
-        this.model.members.push(newBeam)
+        memberRecords.push({
+          id: Math.floor(Math.random() * 0x7fffffff), label: member.label,
+          nodeI: iNode.id, nodeJ: jNode.id, sectionId: section.id,
+          referenceAxis: [member.vecxz.x, member.vecxz.z, member.vecxz.y],
+          gammaDegrees: member.gamma, release: member.release,
+        })
       }
     }
+    if (!memberIds.size) return
+    this.model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.model.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'DeleteMembers', payload: { ids: [...memberIds] } },
+        { type: 'CreateNodes', payload: { nodes: nodeRecords } },
+        { type: 'CreateMembers', payload: { members: memberRecords } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    })
+    this.clear()
   }
   copyToLevel(level: Level) {
     const meshes = this.selected.map(item => item.object)

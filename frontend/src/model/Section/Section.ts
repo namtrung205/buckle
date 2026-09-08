@@ -1,5 +1,6 @@
 import Model from '../Model'
 import { Section as SectionData } from '../../types'
+import { COMMAND_SCHEMA_VERSION, type SectionRecord } from '../../core/structural'
 
 class Section {
   model: Model
@@ -14,13 +15,14 @@ class Section {
   }
 
   createOrUpdate() {
-    const index = this.model.sections.findIndex((item) => item.id === this.section.id)
-    if (index === -1) {
-      this.model.sections.push(this.section)
-    } else {
-      this.model.sections[index] = this.section
-      this.refreshDependentMembers()
-    }
+    const { material, ...section } = this.section
+    this.model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateSections',
+      schemaVersion: COMMAND_SCHEMA_VERSION,
+      modelRevision: this.model.structuralDocument.revision,
+      payload: { sections: [{ ...section, materialId: material.id } as SectionRecord] },
+      source: 'ui',
+    })
   }
 
   /**
@@ -38,10 +40,13 @@ class Section {
   }
 
   delete() {
-    const index = this.model.sections.findIndex((item) => item.id === this.section.id)
-    if (index !== -1) {
-      this.model.sections.splice(index, 1)
-    }
+    this.model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteSections',
+      schemaVersion: COMMAND_SCHEMA_VERSION,
+      modelRevision: this.model.structuralDocument.revision,
+      payload: { ids: [this.section.id] },
+      source: 'ui',
+    })
   }
 }
 

@@ -32,7 +32,7 @@ bổ sung roadmap AI-native để tăng tốc dựng hình, truy vấn và cập
 | 10 | Optional WebGPU evaluation | Deferred per user, non-blocking |
 | 11 | AI foundation reset: build, schema, units và analysis validation | Implemented — UI verification pending; legacy lint waived |
 | 12 | Pure Structural Model Core + versioned document | Completed — core, analysis, export và render-mode smoke passed |
-| 13 | Command Bus + transaction + undo/redo | Planned — next |
+| 13 | Command Bus + transaction + undo/redo | In progress — core/gateway and primary UI mutation path implemented |
 | 14 | Parametric object kernel + regenerate/diff | Planned |
 | 15 | AI Tool Registry + modes + permission policy | Planned |
 | 16 | AI Copilot MVP end-to-end | Planned |
@@ -454,6 +454,23 @@ cho LLM khi gate chưa pass.
 - Chuyển ba Render Mode trong khi selection/workspace context vẫn đúng.
 
 ## Goal 13 — Command Bus + transaction + undo/redo
+
+### Implementation record — 2026-09-08 (in progress)
+
+- Đã tạo versioned command envelope và `CommandGateway.execute()` cho P0 command,
+  transaction, local alias, dry-run, idempotent retry và optimistic concurrency.
+- Transaction dựng/validate trên một document draft và chỉ reconcile một lần; invalid
+  transaction không đổi revision, không phát render event và không ghi audit/history.
+- Undo/redo lưu before/after canonical seed với giới hạn số entry/bộ nhớ; selection và
+  visibility workspace cùng nằm trong một undo step nhưng không làm đổi model hash.
+- `Model.executeCommand()`, undo/redo keyboard và incremental legacy projection đã nối
+  canonical document với Centerline, Thin shell và Solid Extrude trong giai đoạn migration.
+- Add/Edit Node, Add/Edit Member, delete entity/selection, hide member, Material, Section
+  và Import Model đã chuyển sang command path.
+- Deterministic command tests pass; batch 10.000 node commit trong khoảng 369–442 ms trên
+  máy phát triển và tạo đúng một undo step (budget <= 1 giây).
+- Chưa đóng goal: còn migrate Copy, toàn bộ generator, Load/Boundary Condition và các
+  selection mutation còn lại; sau đó mới chạy user verification draw/edit/copy/delete.
 
 ### Deliverables
 

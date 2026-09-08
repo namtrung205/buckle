@@ -185,20 +185,24 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
   const footNodes: Node[] = [];
   const allNodes: Node[] = [];
   const memberMeta: { member: ElasticBeamColumn; part: string; len: number; section: Section }[] = [];
+  const nodeRecords: { id: number; name?: string; position: readonly [number, number, number] }[] = [];
+  const memberRecords: { id: number; label: string; nodeI: number; nodeJ: number; sectionId: number; referenceAxis: readonly [number, number, number] }[] = [];
+  const boundaryConditionRecords: any[] = [];
+  const loadRecords: any[] = [];
 
   const addNode = (x: number, y: number, z: number): Node => {
     const n = new Node(new THREE.Vector3(x, y, z), undefined);
-    n.model = model;
-    n.create();
-    model.nodes.push(n);
     allNodes.push(n);
+    nodeRecords.push({ id: n.id, name: n.name, position: [x, z, y] });
     nodeCount++;
     return n;
   };
   const addMember = (a: Node, b: Node, part: string, section: Section): ElasticBeamColumn => {
     const m = new ElasticBeamColumn(model, 'TW-' + part, [a, b], section);
-    m.create();
-    model.members = [...model.members, m];
+    memberRecords.push({
+      id: m.id, label: m.label, nodeI: a.id, nodeJ: b.id, sectionId: section.id,
+      referenceAxis: [m.vecxz.x, m.vecxz.z, m.vecxz.y],
+    });
     memberCount++;
     memberMeta.push({
       member: m,
@@ -293,13 +297,13 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
     // One support PER base node — a single BC covering all four feet only ever
     // restrains one node during the solve, so split them 1:1.
     for (const foot of footNodes) {
-      const bc = new BoundaryCondition(model, {
+      const fixed = params.supportKind === 'fixed';
+      boundaryConditionRecords.push({
         id: Math.floor(Math.random() * 0x7fffffff),
         name: 'Tower base',
-        type: params.supportKind === 'fixed' ? 'fixed' : 'pinned',
-        targets: [foot.id],
-      } as any);
-      bc.createOrUpdate();
+        type: fixed ? 'fixed' : 'pinned', targetNodeIds: [foot.id],
+        dx: 1, dy: 1, dz: 1, rx: 1, ry: fixed ? 1 : 0, rz: fixed ? 1 : 0,
+      });
       supportCount++;
     }
   }
@@ -356,14 +360,13 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
     }
 
     const makeNodalLoad = (targets: number[], value: THREE.Vector3) => {
-      const load = new Load(model, {
+      loadRecords.push({
         id: Math.floor(Math.random() * 0x7fffffff),
         name: 'Tower auto-load',
         type: 'nodal',
-        targets,
-        value,
-      } as any);
-      load.createOrUpdate();
+        targetIds: targets,
+        value: [value.x, value.z, value.y],
+      });
       loadCount++;
     };
 
@@ -381,9 +384,16 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
     for (const g of groups.values()) makeNodalLoad(g.targets, g.value);
   }
 
-  model.invalidateResults();
-  // Publish the completed generated model once for centerline/thin-shell modes.
-  model.scheduleStructuralSceneSync();
+  model.executeCommand({
+    commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+    modelRevision: model.structuralDocument.revision, source: 'ui',
+    payload: { operations: [
+      { type: 'CreateNodes', payload: { nodes: nodeRecords } },
+      { type: 'CreateMembers', payload: { members: memberRecords } },
+      ...(boundaryConditionRecords.length ? [{ type: 'CreateOrUpdateBoundaryConditions' as const, payload: { boundaryConditions: boundaryConditionRecords } }] : []),
+      ...(loadRecords.length ? [{ type: 'CreateOrUpdateLoads' as const, payload: { loads: loadRecords } }] : []),
+    ] },
+  });
   return { nodes: nodeCount, members: memberCount, supports: supportCount, loads: loadCount };
 }
 

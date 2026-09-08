@@ -239,6 +239,17 @@ const RightPanel = observer(() => {
       if (m) fn(m);
     });
   };
+  const commandEditMembers = (patch: (m: ElasticBeamColumn) => Record<string, unknown>) => {
+    const ids = editingCount > 0 ? model.editingMemberIds : (member ? [member.id] : []);
+    const members = ids.map((id) => model.members.find((candidate) => candidate.id === id))
+      .filter((item): item is ElasticBeamColumn => Boolean(item))
+      .map((item) => ({ id: item.id, patch: patch(item) }));
+    if (!members.length) return;
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'UpdateMembers', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui', payload: { members },
+    });
+  };
 
   // Results mode: the ribbon "Results" / "Reactions" buttons open this same dock.
   const isResults = model?.activeDialog === 'results' || model?.activeDialog === 'reactions';
@@ -332,51 +343,66 @@ const RightPanel = observer(() => {
     if (!member) return;
     const sec = model.sections.find((s) => s.id === Number(secId));
     if (!sec) return;
-    forEachEditingMember((m) => m.update(m.nodes, sec, m.gamma, m.label, m.release));
+    commandEditMembers(() => ({ sectionId: sec.id }));
   };
 
   const reassignMaterial = (matId: number) => {
     if (!section) return;
     const mat = model.materials.find((m) => m.id === Number(matId));
     if (!mat) return;
-    section.material = mat;
+    const { material: _material, ...record } = section;
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateSections', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui',
+      payload: { sections: [{ ...record, materialId: mat.id }] },
+    });
   };
 
   const reassignNode = (index: 0 | 1, nodeId: number) => {
     if (!member) return;
     const n = model.nodes.find((x) => x.id === Number(nodeId));
     if (!n) return;
-    const nodes = [...member.nodes];
-    nodes[index] = n;
-    member.update(nodes, member.section, member.gamma, member.label, member.release);
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'UpdateMembers', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui',
+      payload: { members: [{ id: member.id, patch: { [index === 0 ? 'nodeI' : 'nodeJ']: n.id } }] },
+    });
   };
 
   const updateMemberLabel = (label: string) => {
     if (!member) return;
-    member.update(member.nodes, member.section, member.gamma, label, member.release);
+    commandEditMembers(() => ({ label }));
   };
 
   const updateMemberGamma = (gamma: number) => {
     if (!member) return;
-    forEachEditingMember((m) => m.update(m.nodes, m.section, gamma, m.label, m.release));
+    commandEditMembers(() => ({ gammaDegrees: gamma }));
   };
 
   const updateMemberRelease = (release: string) => {
     if (!member) return;
-    forEachEditingMember((m) => m.update(m.nodes, m.section, m.gamma, m.label, release));
+    commandEditMembers(() => ({ release }));
   };
 
   /* ── node helpers ─────────────────────────────────────────────────────── */
   const updateNodeName = (name: string) => {
     if (!node) return;
-    node.update(new THREE.Vector3(node.x, node.y, node.z), name);
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'MoveNodes', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui',
+      payload: { nodes: [{ id: node.id, position: [node.x, node.z, node.y], name }] },
+    });
   };
 
   const updateNodeCoord = (axis: 'x' | 'y' | 'z', value: number) => {
     if (!node || !Number.isFinite(value)) return;
     const pos = { x: node.x, y: node.y, z: node.z };
     pos[axis] = value;
-    node.update(new THREE.Vector3(pos.x, pos.y, pos.z), node.name);
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'MoveNodes', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui',
+      payload: { nodes: [{ id: node.id, position: [pos.x, pos.z, pos.y], name: node.name }] },
+    });
   };
 
   /* ── support draft handlers (staged — committed by Apply) ─────────────── */
@@ -429,29 +455,23 @@ const RightPanel = observer(() => {
       return;
     }
     if (support) {
-      support.name = supportDraft.name;
-      support.type = supportDraft.type;
-      support.rotation = Number(supportDraft.rotation) || 0;
-      support.targets = validTargets;
-      support.dx = supportDraft.dx;
-      support.dy = supportDraft.dy;
-      support.dz = supportDraft.dz;
-      support.rx = supportDraft.rx;
-      support.ry = supportDraft.ry;
-      support.rz = supportDraft.rz;
-      support.createOrUpdate();
-      // Re-seed the draft from the model object — createOrUpdate normalises the
-      // per-DOF flags for the preset types (fixed/pinned/roller).
-      setSupportDraft(supportDraftOf(support));
+      model.createOrUpdateBoundaryConditions([{
+        id: support.id, name: supportDraft.name, type: supportDraft.type,
+        rotation: Number(supportDraft.rotation) || 0, targets: validTargets,
+        dx: supportDraft.dx, dy: supportDraft.dy, dz: supportDraft.dz,
+        rx: supportDraft.rx, ry: supportDraft.ry, rz: supportDraft.rz,
+      }]);
     } else {
       // NEW support draft: only now — after validation — is it added to the
       // model tree. Each target node becomes its OWN support (one support per
       // node): a single support with many nodes only really supported one node
       // during analysis, so we split the draft into one BC per node.
       const createdIds: number[] = [];
-      for (const target of validTargets) {
-        const bc = new BoundaryCondition(model, {
-          id: Math.floor(Math.random() * 0x7fffffff),
+      const records = validTargets.map(target => {
+        const id = Math.floor(Math.random() * 0x7fffffff);
+        createdIds.push(id);
+        return {
+          id,
           name: supportDraft.name || `Support ${model.boundaryConditions.length + 1}`,
           type: supportDraft.type,
           targets: [target],
@@ -462,10 +482,9 @@ const RightPanel = observer(() => {
           rx: supportDraft.rx,
           ry: supportDraft.ry,
           rz: supportDraft.rz,
-        });
-        bc.createOrUpdate();
-        createdIds.push(bc.id);
-      }
+        };
+      });
+      model.createOrUpdateBoundaryConditions(records);
       runInAction(() => { model.newEntityDraft = null; });
       // Focus the first created support so the dock shows its properties.
       if (createdIds.length) model.focusBoundaryCondition(createdIds[0]);
@@ -488,35 +507,32 @@ const RightPanel = observer(() => {
     const dir = base_vectors[loadDraft.direction as 'x' | 'y' | 'z'] ?? base_vectors.x;
     const value = dir.clone().multiplyScalar(Number(loadDraft.value) || 0);
     if (load) {
-      load.name = loadDraft.name;
-      load.type = loadDraft.type;
-      load.targets = validTargets;
-      load.value = value;
-      load.createOrUpdate();
-      // Re-seed the draft from the committed model object.
-      setLoadDraft(loadDraftOf(load));
+      model.createOrUpdateLoads([{
+        id: load.id, name: loadDraft.name, type: loadDraft.type,
+        targets: validTargets, value,
+      }]);
     } else {
       // NEW load draft: only now — after validation — is it added to the model
       // tree (Load.createOrUpdate pushes into model.loads and builds arrows).
-      const newLoad = new Load(model, {
-        id: Math.floor(Math.random() * 0x7fffffff),
+      const id = Math.floor(Math.random() * 0x7fffffff);
+      model.createOrUpdateLoads([{
+        id,
         name: loadDraft.name || `Load ${model.loads.length + 1}`,
         type: loadDraft.type,
         targets: validTargets,
         value,
-      });
-      newLoad.createOrUpdate();
+      }]);
       model.newEntityDraft = null;
-      model.focusLoad(newLoad.id);
+      model.focusLoad(id);
     }
   };
 
   /* ── delete helpers ───────────────────────────────────────────────────── */
   const deleteEntity = () => {
-    if (member) member.remove();
-    else if (node) node.delete();
-    else if (support) support.delete();
-    else if (load) load.delete();
+    if (member) model.deleteMembersById([member.id]);
+    else if (node) model.deleteNodesById([node.id]);
+    else if (support) model.deleteBoundaryConditionsById([support.id]);
+    else if (load) model.deleteLoadsById([load.id]);
     model.clearFocus();
   };
 
@@ -866,10 +882,7 @@ const RightPanel = observer(() => {
           // Same-id save = section edit: SectionModel.createOrUpdate already
           // re-pointed every linked member and rebuilt its geometry. A brand
           // new id (the + flow) still has to be assigned to the edited members.
-          forEachEditingMember((m) => {
-            if (m.section && m.section.id === sec.id) return;
-            m.update(m.nodes, sec, m.gamma, m.label, m.release);
-          });
+          commandEditMembers((m) => m.section?.id === sec.id ? {} : { sectionId: sec.id });
         }}
       />
       <MaterialPresetSelector

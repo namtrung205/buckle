@@ -251,45 +251,41 @@ export default class Line implements Tool {
         if(this.state === 2) {
           const nodei = this.startPoint
           const nodej = this.endPoint
-          const nodes : Node[] = [nodei, nodej]
-
           // Ignore a click on the same point (would create a zero-length member)
           if(nodei.id === nodej.id) return
-
-          if(!nodeIds.includes(nodei.id)) {
-            this.model.nodes.push(nodei)
-            nodei.model = this.model
-            nodei.create()
-          }
-          if(!nodeIds.includes(nodej.id)) {
-            this.model.nodes.push(nodej)
-            nodej.model = this.model
-            nodej.create()
-          }
-          const member = new ElasticBeamColumn(this.model, '', nodes, this.section)
-          member.create()
-          this.model.members = [
-            ...this.model.members,
-            member
-          ]
+          const createNodes = [nodei, nodej]
+            .filter(node => !nodeIds.includes(node.id))
+            .map(node => ({ id: node.id, name: node.name, position: [node.x, node.z, node.y] as const }))
+          this.model.executeCommand({
+            commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+            modelRevision: this.model.structuralDocument.revision, source: 'ui',
+            payload: { operations: [
+              ...(createNodes.length ? [{ type: 'CreateNodes' as const, payload: { nodes: createNodes } }] : []),
+              { type: 'CreateMembers', payload: { members: [{
+                nodeI: nodei.id, nodeJ: nodej.id, sectionId: this.section.id,
+              }] } },
+            ] },
+          })
 
         }
         else if(this.state === 3) {
           const nodei = this.startPoint
           const nodej =  this.endPoint
-          const nodes = [nodei, nodej]
-
           // Ignore a click on the same point (would create a zero-length member)
           if(nodei.id === nodej.id) return
-
-          if(!nodeIds.includes(nodej.id)) {
-            this.model.nodes.push(nodej)
-            nodej.model = this.model
-            nodej.create()
-          }
-          const elasticBeamColumn = new ElasticBeamColumn(this.model,  '', nodes, this.section)
-          elasticBeamColumn.create()
-          this.model.members.push(elasticBeamColumn)
+          const createNodes = !nodeIds.includes(nodej.id)
+            ? [{ id: nodej.id, name: nodej.name, position: [nodej.x, nodej.z, nodej.y] as const }]
+            : []
+          this.model.executeCommand({
+            commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+            modelRevision: this.model.structuralDocument.revision, source: 'ui',
+            payload: { operations: [
+              ...(createNodes.length ? [{ type: 'CreateNodes' as const, payload: { nodes: createNodes } }] : []),
+              { type: 'CreateMembers', payload: { members: [{
+                nodeI: nodei.id, nodeJ: nodej.id, sectionId: this.section.id,
+              }] } },
+            ] },
+          })
         }
         break;
       case 'colUp':
@@ -305,24 +301,19 @@ export default class Line implements Tool {
           )
         }
 
-        if(!nodeIds.includes(nodei.id)) {
-          this.model.nodes.push(nodei)
-          nodei.model = this.model
-          nodei.create()
-        }
-        if(!nodeIds.includes(nodej.id)) {
-          this.model.nodes.push(nodej)
-          nodej.model = this.model
-          nodej.create()
-        }
-
-        const nodes = [nodei, nodej]
-        const column = new ElasticBeamColumn(this.model,  '', nodes, this.section)
-        column.create()
-        this.model.members = [
-          ...this.model.members,
-          column
-        ]
+        const createNodes = [nodei, nodej]
+          .filter(node => !nodeIds.includes(node.id))
+          .map(node => ({ id: node.id, name: node.name, position: [node.x, node.z, node.y] as const }))
+        this.model.executeCommand({
+          commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+          modelRevision: this.model.structuralDocument.revision, source: 'ui',
+          payload: { operations: [
+            ...(createNodes.length ? [{ type: 'CreateNodes' as const, payload: { nodes: createNodes } }] : []),
+            { type: 'CreateMembers', payload: { members: [{
+              nodeI: nodei.id, nodeJ: nodej.id, sectionId: this.section.id,
+            }] } },
+          ] },
+        })
         break
       default:
         // mesh.layers.set(layer)

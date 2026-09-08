@@ -313,6 +313,11 @@ class ElasticBeamColumn {
     }
   }
 
+  /** Renderer/legacy-projection cleanup without domain cascade or DB sync. */
+  disposeProjection() {
+    this.dispose()
+  }
+
   remove() {
     this.model.invalidateResults()
     // 1. Clean up linear loads attached to this member
