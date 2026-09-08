@@ -65,7 +65,7 @@ class Node {
     if(!this.model) return 
     const members = [...this.model.members]
     members.forEach(member => {
-      let nodes = [...member.nodes]
+      const nodes = [...member.nodes]
       const index = nodes.findIndex(node => node.id === this.id )
       if(index !== -1 ){
         nodes[index] = this

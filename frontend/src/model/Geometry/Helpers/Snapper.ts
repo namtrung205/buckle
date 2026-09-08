@@ -219,7 +219,7 @@ class Snapper {
 
     let v1: number[] = [];
     let v2: number[] = [];
-    let v3: number[] = [];
+    const v3: number[] = [];
     let vertices: number[][] = [];
     switch(type){
       case '3dLine':

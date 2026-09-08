@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { observer } from 'mobx-react-lite';
 import { Box, Button, Chip, Checkbox, FormControl, FormControlLabel, FormHelperText, IconButton, MenuItem, Select as MUISelect, Typography, Tabs, Tab } from '@mui/material';
+import type { SelectChangeEvent } from '@mui/material/Select';
 import * as THREE from 'three';
 import {
   Close as CloseIcon,
@@ -413,9 +414,9 @@ const RightPanel = observer(() => {
    *  target list (empty = validation failed — the caller must NOT commit). */
   const validateTargets = (targets: number[], kind: Load['type'] | 'node'): number[] => {
     const pool: { id: number }[] =
-      kind === 'linear' ? (model.members as any as { id: number }[])
-      : (kind === 'nodal' || kind === 'node') ? (model.nodes as any as { id: number }[])
-      : (model.shells as any as { id: number }[]); // area / pressure loads target shells
+      kind === 'linear' ? model.members
+      : (kind === 'nodal' || kind === 'node') ? model.nodes
+      : model.shells; // area / pressure loads target shells
     return (targets ?? []).filter((id) => pool.some((e) => e.id === id));
   };
 
@@ -461,7 +462,7 @@ const RightPanel = observer(() => {
           rx: supportDraft.rx,
           ry: supportDraft.ry,
           rz: supportDraft.rz,
-        } as any);
+        });
         bc.createOrUpdate();
         createdIds.push(bc.id);
       }
@@ -503,7 +504,7 @@ const RightPanel = observer(() => {
         type: loadDraft.type,
         targets: validTargets,
         value,
-      } as any);
+      });
       newLoad.createOrUpdate();
       model.newEntityDraft = null;
       model.focusLoad(newLoad.id);
@@ -612,7 +613,7 @@ const RightPanel = observer(() => {
           {member && (
             <>
               <PropertyRow label="Label">
-                <TextField name="label" value={member.label} onChange={(e: any) => updateMemberLabel(e.target.value)} placeholder="Member" size="small" />
+                <TextField name="label" value={member.label} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateMemberLabel(e.target.value)} placeholder="Member" size="small" />
               </PropertyRow>
 
               <PropertyRow
@@ -629,7 +630,7 @@ const RightPanel = observer(() => {
                 }}
                 titles={{ pick: 'Choose from catalogue', edit: 'Edit section', new: 'New section' }}
               >
-                <Select label="" size="small" list={sectionOptions} value={section?.id ?? ''} onChange={(e: any) => reassignSection(e.target.value)} />
+                <Select label="" size="small" list={sectionOptions} value={section?.id ?? ''} onChange={(e: SelectChangeEvent<string>) => reassignSection(Number(e.target.value))} />
               </PropertyRow>
 
               <PropertyRow
@@ -637,14 +638,14 @@ const RightPanel = observer(() => {
                 handlers={{ onPick: () => { model.selectedMemberDialogs.material = true; }, onNew: () => { model.selectedMemberDialogs.material = true; } }}
                 titles={{ pick: 'Choose material', new: 'New material' }}
               >
-                <Select label="" size="small" list={materialOptions} value={section?.material?.id ?? ''} onChange={(e: any) => reassignMaterial(e.target.value)} />
+                <Select label="" size="small" list={materialOptions} value={section?.material?.id ?? ''} onChange={(e: SelectChangeEvent<string>) => reassignMaterial(Number(e.target.value))} />
               </PropertyRow>
 
               <PropertyRow label="Node I">
-                <Select label="" size="small" list={nodeOptions} value={member.nodes[0]?.id ?? ''} onChange={(e: any) => reassignNode(0, e.target.value)} />
+                <Select label="" size="small" list={nodeOptions} value={member.nodes[0]?.id ?? ''} onChange={(e: SelectChangeEvent<string>) => reassignNode(0, Number(e.target.value))} />
               </PropertyRow>
               <PropertyRow label="Node J">
-                <Select label="" size="small" list={nodeOptions} value={member.nodes[1]?.id ?? ''} onChange={(e: any) => reassignNode(1, e.target.value)} />
+                <Select label="" size="small" list={nodeOptions} value={member.nodes[1]?.id ?? ''} onChange={(e: SelectChangeEvent<string>) => reassignNode(1, Number(e.target.value))} />
               </PropertyRow>
 
               <PropertyRow label="Rotation">
@@ -654,7 +655,7 @@ const RightPanel = observer(() => {
               </PropertyRow>
 
               <PropertyRow label="Release">
-                <Select label="" size="small" list={RELEASES} value={member.release ?? ''} onChange={(e: any) => updateMemberRelease(e.target.value)} />
+                <Select label="" size="small" list={RELEASES} value={member.release ?? ''} onChange={(e: SelectChangeEvent<string>) => updateMemberRelease(e.target.value)} />
               </PropertyRow>
             </>
           )}
@@ -663,7 +664,7 @@ const RightPanel = observer(() => {
           {node && (
             <>
               <PropertyRow label="Name">
-                <TextField name="name" value={node.name ?? ''} onChange={(e: any) => updateNodeName(e.target.value)} placeholder="Node name" size="small" />
+                <TextField name="name" value={node.name ?? ''} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateNodeName(e.target.value)} placeholder="Node name" size="small" />
               </PropertyRow>
               {(['x', 'y', 'z'] as const).map((axis) => (
                 <PropertyRow key={axis} label={`${axis.toUpperCase()} coord`}>
@@ -679,11 +680,11 @@ const RightPanel = observer(() => {
           {(support || isNewSupport) && supportDraft && (
             <>
               <PropertyRow label="Name">
-                <TextField name="name" value={supportDraft.name} onChange={(e: any) => updateSupportDraft({ name: e.target.value })} placeholder="Support name" size="small" />
+                <TextField name="name" value={supportDraft.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateSupportDraft({ name: e.target.value })} placeholder="Support name" size="small" />
               </PropertyRow>
 
               <PropertyRow label="Type">
-                <Select label="" size="small" list={SUPPORT_TYPES} value={supportDraft.type === 'elastic' ? 'fixed' : supportDraft.type} onChange={(e: any) => applySupportDraftPreset(e.target.value)} />
+                <Select label="" size="small" list={SUPPORT_TYPES} value={supportDraft.type === 'elastic' ? 'fixed' : supportDraft.type} onChange={(e: SelectChangeEvent<string>) => applySupportDraftPreset(e.target.value)} />
               </PropertyRow>
 
               {supportDraft.type !== 'elastic' ? (
@@ -732,7 +733,7 @@ const RightPanel = observer(() => {
                   <MUISelect
                     multiple
                     value={supportDraft.targets}
-                    onChange={(e: any) => {
+                    onChange={(e) => {
                       setTargetsError(false);
                       updateSupportDraft({ targets: e.target.value as number[] });
                     }}
@@ -769,16 +770,16 @@ const RightPanel = observer(() => {
           {(load || isNewLoad) && loadDraft && (
             <>
               <PropertyRow label="Name">
-                <TextField name="name" value={loadDraft.name} onChange={(e: any) => updateLoadDraft({ name: e.target.value })} placeholder="Load name" size="small" />
+                <TextField name="name" value={loadDraft.name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateLoadDraft({ name: e.target.value })} placeholder="Load name" size="small" />
               </PropertyRow>
 
               <PropertyRow label="Type">
                 {/* Changing type invalidates the target set (nodes ⇄ members), mirroring the dialog. */}
-                <Select label="" size="small" list={LOAD_TYPES} value={loadDraft.type} onChange={(e: any) => updateLoadDraft({ type: e.target.value, targets: [] })} />
+                <Select label="" size="small" list={LOAD_TYPES} value={loadDraft.type} onChange={(e: SelectChangeEvent<string>) => updateLoadDraft({ type: e.target.value as Load['type'], targets: [] })} />
               </PropertyRow>
 
               <PropertyRow label="Direction">
-                <Select label="" size="small" list={LOAD_DIRECTIONS} value={loadDraft.direction} onChange={(e: any) => updateLoadDraft({ direction: e.target.value })} />
+                <Select label="" size="small" list={LOAD_DIRECTIONS} value={loadDraft.direction} onChange={(e: SelectChangeEvent<string>) => updateLoadDraft({ direction: e.target.value })} />
               </PropertyRow>
 
               <PropertyRow label="Value">
@@ -792,7 +793,7 @@ const RightPanel = observer(() => {
                   <MUISelect
                     multiple
                     value={loadDraft.targets}
-                    onChange={(e: any) => {
+                    onChange={(e) => {
                       setTargetsError(false);
                       updateLoadDraft({ targets: e.target.value as number[] });
                     }}

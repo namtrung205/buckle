@@ -3,10 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "npm@10.9.3",
+  "engines": {
+    "node": ">=22.12 <23",
+    "npm": ">=10 <12"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test:fixture": "node --test --experimental-strip-types src/model/Benchmark/structuralFixture.test.ts src/model/Rendering/StructuralSceneDB.test.ts src/model/Rendering/CenterlineRenderer.test.ts src/model/Rendering/memberFrame.test.ts src/model/Rendering/ThinShellRenderer.test.ts src/model/Rendering/StructuralGpuPicker.test.ts src/model/Rendering/ResultStore.test.ts src/model/Rendering/DiagramRenderer.test.ts src/model/Rendering/GpuAnnotations.test.ts src/model/Rendering/solidResourcePolicy.test.ts src/model/Rendering/LoadGpuRenderer.test.ts",
+    "test:fixture": "node --test --experimental-strip-types src/core/structural/StructuralDocument.test.ts src/model/Workspace/WorkspaceContext.test.ts src/model/Structural/legacyStructuralDocumentAdapter.test.ts src/model/Rendering/StructuralDocumentBridge.test.ts src/model/Benchmark/structuralFixture.test.ts src/model/Rendering/StructuralSceneDB.test.ts src/model/Rendering/CenterlineRenderer.test.ts src/model/Rendering/memberFrame.test.ts src/model/Rendering/ThinShellRenderer.test.ts src/model/Rendering/StructuralGpuPicker.test.ts src/model/Rendering/ResultStore.test.ts src/model/Rendering/DiagramRenderer.test.ts src/model/Rendering/GpuAnnotations.test.ts src/model/Rendering/solidResourcePolicy.test.ts src/model/Rendering/LoadGpuRenderer.test.ts",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },

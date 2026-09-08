@@ -69,7 +69,7 @@ class ToolsController {
     this.tools.set(toolId, tool);
   }
 
-  getCurrentToolName() : String {
+  getCurrentToolName() : string {
     const tool = this.currentTool
     if(!tool) return ''
     return tool.uuid

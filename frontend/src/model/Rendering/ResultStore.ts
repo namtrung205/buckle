@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { lerpStops } from '../PostProcessing/Colormap.ts'
 import type { StructuralSceneDB } from './StructuralSceneDB.ts'
+import type { AnalysisMember, AnalysisOutput, AnalysisStation } from '../../contracts/structuralModel.ts'
 
 export const DEFAULT_RESULT_STATION_COUNT = 20
 const DEFAULT_TEXTURE_WIDTH = 2048
@@ -165,8 +166,8 @@ export default class ResultStore {
     return this.cases.get(input.key)!
   }
 
-  ingestAnalysisOutput(output: any, database: StructuralSceneDB, key = 'analysis') {
-    const members: ResultMemberInput[] = (output?.members ?? []).map((member: any) => {
+  ingestAnalysisOutput(output: Pick<AnalysisOutput, 'members'>, database: StructuralSceneDB, key = 'analysis') {
+    const members: ResultMemberInput[] = output.members.map((member: AnalysisMember) => {
       const raw = member.stations?.length ? member.stations : member.node_efforts ?? []
       const first = raw[0]?.coord as number[] | undefined
       const last = raw[raw.length - 1]?.coord as number[] | undefined
@@ -174,7 +175,7 @@ export default class ResultStore {
       const dy = first && last ? last[1] - first[1] : 0
       const dz = first && last ? last[2] - first[2] : 0
       const lengthSq = dx * dx + dy * dy + dz * dz
-      const positionOf = (station: any, index: number, source: any[]) => {
+      const positionOf = (station: AnalysisStation, index: number, source: AnalysisStation[]) => {
         let position = Number(station.position ?? station.xi)
         if (!Number.isFinite(position) && lengthSq > 1e-16 && station.coord) {
           const cx = station.coord[0] - first![0]
@@ -185,15 +186,15 @@ export default class ResultStore {
         if (!Number.isFinite(position)) position = source.length > 1 ? index / (source.length - 1) : 0
         return position
       }
-      const stations: ResultStationInput[] = raw.map((station: any, index: number) => {
+      const stations: ResultStationInput[] = raw.map((station: AnalysisStation, index: number) => {
         const values: ResultValues = station.values ? { ...station.values } : {}
         for (const [component, effort] of Object.entries(station.efforts ?? {})) {
-          values[component] = Number((effort as any)?.value)
+          values[component] = Number(effort.value)
         }
         return { position: positionOf(station, index, raw), values }
       })
       const displacements = member.displacement_stations ?? []
-      displacements.forEach((station: any, index: number) => stations.push({
+      displacements.forEach((station: AnalysisStation, index: number) => stations.push({
         position: positionOf(station, index, displacements),
         values: {
           dX: Number(station.disp?.ux),

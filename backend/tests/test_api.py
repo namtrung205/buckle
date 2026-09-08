@@ -1,89 +1,144 @@
+from copy import deepcopy
+import json
+import os
+from pathlib import Path
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
-import sys
-import os
 
-# Ajouter le répertoire parent au PATH pour importer main
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Mock des variables d'environnement nécessaires pour main.py
-os.environ.setdefault("REACT_APP_PLATFORM_API_URL", "http://test")
 os.environ.setdefault("ENVIRONMENT", "test")
 
-from main import app
+from main import app  # noqa: E402
+from test_case1_simply_supported import model as simply_supported_model  # noqa: E402
 
 
-@pytest.fixture
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+EXAMPLES_DIR = REPOSITORY_ROOT / "frontend" / "public" / "examples"
+
+
+@pytest.fixture(scope="module")
 def client():
-    """Fixture pour créer le client de test"""
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 class TestAnalysisRoute:
-    """Tests pour la route /analysis"""
-    
-    def test_analysis_calculation(self, client):
-        """Test du calcul de surface et volume"""
-        test_data = {
-            "length": {"value": 10},
-            "width": {"value": 5},
-            "height": {"value": 2},
-            "surface": {"value": 0},
-            "volume": {"value": 0}
+    def test_analysis_uses_versioned_structural_contract(self, client):
+        payload = deepcopy(simply_supported_model)
+        payload["schemaVersion"] = "1.0"
+        payload["metadata"] = {
+            "modelName": "revisioned-core-snapshot",
+            "modelRevision": 7,
+            "snapshotHash": "fnv1a64:test",
         }
-        
-        response = client.post("/api/analysis", json=test_data)
-        assert response.status_code == 200
+
+        response = client.post("/analysis", json=payload)
+
+        assert response.status_code == 200, response.text
         result = response.json()
+        assert result["status"] == "Analysis completed successfully"
+        assert len(result["output"]["members"]) == 1
+        assert len(result["output"]["reactions"]) == 2
 
-        assert isinstance(result["surface"], dict)
-        assert result["surface"]["value"] == 50
-        assert result["surface"]["unit"]["label"] == "m2"
+    def test_rejects_dangling_member_reference(self, client):
+        payload = deepcopy(simply_supported_model)
+        payload["members"][0]["nodej"]["id"] = 999
 
-        assert isinstance(result["volume"], dict)
-        assert result["volume"]["value"] == 100
-        assert result["volume"]["unit"]["label"] == "m3"
-    
+        response = client.post("/analysis", json=payload)
+
+        assert response.status_code == 422
+        assert "missing node 999" in response.text
+
+    def test_rejects_endpoint_coordinate_drift(self, client):
+        payload = deepcopy(simply_supported_model)
+        payload["members"][0]["nodej"]["x"] += 0.1
+
+        response = client.post("/analysis", json=payload)
+
+        assert response.status_code == 422
+        assert "coordinates do not match" in response.text
+
+    @pytest.mark.parametrize(
+        "example_name",
+        [
+            "simply-supported-beam.json",
+            "steel-frame-nodal-load.json",
+            "concrete-frame-linear-load.json",
+        ],
+    )
+    def test_frontend_example_runs_end_to_end(self, client, example_name):
+        payload = json.loads((EXAMPLES_DIR / example_name).read_text(encoding="utf-8"))
+
+        response = client.post("/analysis", json=payload)
+
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["status"] == "Analysis completed successfully"
+        assert len(result["output"]["members"]) == len(payload["members"])
 
 
 class TestHealthRoutes:
-    """Tests pour les routes de santé"""
-    
     def test_health_endpoint(self, client):
-        """Test du endpoint de santé"""
         response = client.get("/health")
-        
         assert response.status_code == 200
         result = response.json()
         assert result["status"] == "healthy"
         assert "timestamp" in result
         assert "version" in result
-    
+
     def test_ready_endpoint(self, client):
-        """Test du endpoint de disponibilité"""
         response = client.get("/ready")
-        
         assert response.status_code == 200
-        result = response.json()
-        assert result["status"] == "ready"
-        assert "timestamp" in result
+        assert response.json()["status"] == "ready"
 
 
 class TestErrorHandling:
-    """Tests pour la gestion d'erreurs"""
-    
     def test_invalid_json(self, client):
-        """Test avec JSON invalide"""
         response = client.post(
-            "/api/analysis", 
-            data="invalid json",
-            headers={"Content-Type": "application/json"}
+            "/analysis",
+            content="invalid json",
+            headers={"Content-Type": "application/json"},
         )
-        
-        assert response.status_code == 422  # FastAPI validation error
-    
+        assert response.status_code == 422
+
     def test_missing_body(self, client):
-        """Test sans body"""
-        response = client.post("/api/analysis")
-        
-        assert response.status_code == 422  # FastAPI validation error
+        response = client.post("/analysis")
+        assert response.status_code == 422
+
+    def test_unknown_schema_version(self, client):
+        payload = deepcopy(simply_supported_model)
+        payload["schemaVersion"] = "999"
+        response = client.post("/analysis", json=payload)
+        assert response.status_code == 422
+        error = response.json()["detail"][0]
+        assert error["path"] == "schemaVersion"
+        assert set(error) == {"path", "code", "expected", "received"}
+        assert error["received"] == "999"
+
+    def test_missing_schema_version(self, client):
+        payload = deepcopy(simply_supported_model)
+        payload.pop("schemaVersion")
+        response = client.post("/analysis", json=payload)
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["path"] == "schemaVersion"
+
+
+class TestOpenApiContract:
+    def test_analysis_request_references_structural_model(self, client):
+        schema = client.get("/openapi.json").json()
+        request_schema = schema["paths"]["/analysis"]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]
+        assert request_schema["$ref"].endswith("/Model")
+
+        model_schema = schema["components"]["schemas"]["Model"]
+        assert model_schema["properties"]["schemaVersion"]["const"] == "1.0"
+        assert set(model_schema["required"]) >= {
+            "schemaVersion",
+            "nodes",
+            "members",
+            "sections",
+        }

@@ -24,7 +24,7 @@ const SummaryTable = observer(() => {
   const output = model.output;
   if (!output?.members?.length) return null;
 
-  const members: any[] = output.members;
+  const members = output.members;
   const rows: { label: string; max: string; min: string }[] = [];
 
   for (const type of DIAGRAM_TYPES) {

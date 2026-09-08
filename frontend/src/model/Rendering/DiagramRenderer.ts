@@ -305,7 +305,7 @@ export default class DiagramRenderer {
       this.diagramVisible[index] = selected?.has(this.database.memberIds[index]) === false ? 0 : 1
     }
     for (const geometry of [this.ribbonGeometry, this.lineGeometry]) {
-      ;(geometry.getAttribute('instanceDiagramVisible') as THREE.InstancedBufferAttribute).needsUpdate = true
+      (geometry.getAttribute('instanceDiagramVisible') as THREE.InstancedBufferAttribute).needsUpdate = true
     }
     for (const material of [this.ribbonMaterial, this.lineMaterial]) {
       material.uniforms.diagramScale.value = options.scale
@@ -336,7 +336,7 @@ export default class DiagramRenderer {
     if (index === undefined || !this.database) return
     this.flags[index] = this.database.memberFlags[index]
     for (const geometry of [this.ribbonGeometry, this.lineGeometry]) {
-      ;(geometry.getAttribute('instanceFlags') as THREE.InstancedBufferAttribute).needsUpdate = true
+      (geometry.getAttribute('instanceFlags') as THREE.InstancedBufferAttribute).needsUpdate = true
     }
   }
 

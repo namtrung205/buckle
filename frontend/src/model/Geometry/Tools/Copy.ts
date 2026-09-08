@@ -18,7 +18,7 @@ interface MeshData {
 class CopyTool implements Tool {
   private static instance: CopyTool | null = null;
 
-  uuid: String = 'Copy'
+  uuid: string = 'Copy'
 
   enabled = false
   model : Model
@@ -122,9 +122,9 @@ class CopyTool implements Tool {
             mesh.applyMatrix4(matrixWorld)
             mesh.userData = {...userData}
 
-            let offset = new THREE.Vector3()
-            let inverseMatrix = matrixWorld.clone().invert()
-            let elPosition = new THREE.Vector3().setFromMatrixPosition(matrixWorld)
+            const offset = new THREE.Vector3()
+            const inverseMatrix = matrixWorld.clone().invert()
+            const elPosition = new THREE.Vector3().setFromMatrixPosition(matrixWorld)
             offset.copy(elPosition).sub(this.copyStart)
             
             return {

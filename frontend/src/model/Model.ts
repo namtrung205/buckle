@@ -9,8 +9,6 @@ import {
   Light, 
   PostProcessing,
   Snapper,
-  Line,
-  ElasticBeamColumn,
   Console,
   Visibility,
   WebSocketHandler,
@@ -24,10 +22,10 @@ import ReactionViz from "./PostProcessing/ReactionViz";
 import { makeAutoObservable, runInAction } from "mobx";
 import { Material, mockMaterials, mockSections, Section, NavTool } from "../types";
 import { GUI } from "lil-gui";
-import { Line3D, Member, Level, mockLevels } from "../types";
+import { Member, Level, mockLevels } from "../types";
 import BoundaryCondition from "./BoundaryCondition/BoundaryCondition";
 import Load from "./Load/Load";
-import { buildModelFromJson, buildModelOnjson } from "../helpers";
+import { buildModelFromJson } from "../helpers";
 import ToolsController from "./Geometry/Tools/Controller";
 import ZoomTool from "./Geometry/Tools/Zoom";
 import { preloadToolCursors, toolCursor } from "./Utils/CursorIcons";
@@ -42,7 +40,10 @@ import {
   type SelectionMode,
 } from "./Rendering/contracts";
 import { ENTITY_SELECTED, ENTITY_VISIBLE, StructuralSceneDB } from "./Rendering/StructuralSceneDB";
-import { legacyModelToStructuralSource } from "./Rendering/structuralSceneAdapters";
+import { StructuralDocument, type AnalysisSnapshot } from "../core/structural";
+import { StructuralDocumentBridge } from "./Rendering/StructuralDocumentBridge";
+import { legacyModelToDocumentSeed } from "./Structural/legacyStructuralDocumentAdapter";
+import { WorkspaceContext } from "./Workspace/WorkspaceContext";
 import { SHRINK_RATIO_PER_END } from "./Utils/shrink";
 import { buildLoadInstances } from "./Load/loadInstances";
 import LoadGpuRenderer from "./Rendering/LoadGpuRenderer";
@@ -54,6 +55,7 @@ import DiagramRenderer from "./Rendering/DiagramRenderer";
 import GpuAnnotations from "./Rendering/GpuAnnotations";
 import { estimateSolidTriangles, shouldEvictSolidResources } from "./Rendering/solidResourcePolicy";
 import { computeMemberFrame } from "./Rendering/memberFrame";
+import type { AnalysisOutput } from '../contracts/structuralModel';
 export type PointerCoords = {
   x: number;
   y: number;
@@ -95,8 +97,14 @@ export class Model {
   qualityProfile: QualityProfile = storedQualityProfile()
   selectionMode: SelectionMode = storedSelectionMode()
   performanceBenchmark: ViewerBenchmark
-  /** Goal-1 render database; the legacy Object3D renderer remains authoritative for now. */
+  /** Canonical Z-up engineering state. Legacy UI objects are migration adapters. */
+  structuralDocument = new StructuralDocument()
+  /** Renderer-facing SoA projection of StructuralDocument. */
   structuralSceneDB = new StructuralSceneDB()
+  structuralDocumentBridge = new StructuralDocumentBridge(this.structuralDocument, this.structuralSceneDB)
+  workspaceContext = new WorkspaceContext()
+  analysisRevision: number | null = null
+  analysisSnapshotHash: string | null = null
   resultStore = new ResultStore()
   structuralSceneDBBuildMs = 0
   structuralSceneSyncScheduled = false
@@ -157,7 +165,7 @@ export class Model {
   reactionViz : ReactionViz
   labeler : Labeler
   loads : Load[] = []
-  output : any
+  output: AnalysisOutput | null = null
   sections : Section[] = mockSections
   materials : Material[] = mockMaterials
   // SAP2000/ETABS style structural axis grids
@@ -408,7 +416,7 @@ export class Model {
   get selectedNodeIds(): number[] {
     if (this.renderMode !== 'solid-extrude') return [...this.selector.selectedNodeIds];
     return this.selector.selected
-      .map((item: any) => {
+      .map((item) => {
         const ud = item.object.userData;
         if (ud?.type === 'node') return ud.id;
         if (item.object.parent?.userData?.type === 'node') return item.object.parent.userData.id;
@@ -421,7 +429,7 @@ export class Model {
   get selectedMemberIds(): number[] {
     if (this.renderMode !== 'solid-extrude') return [...this.selector.selectedCenterlineIds];
     const ids = this.selector.selected
-      .map((item: any) => {
+      .map((item) => {
         const ud = item.object.userData;
         if (ud?.type === 'elasticBeamColumn') return ud.id;
         if (item.object.parent?.userData?.type === 'elasticBeamColumn') return item.object.parent.userData.id;
@@ -433,7 +441,7 @@ export class Model {
 
   get selectedShellIds(): number[] {
     const ids = this.selector.selected
-      .map((item: any) => item.object.userData?.type === 'shell' ? item.object.userData.id : null)
+      .map((item) => item.object.userData?.type === 'shell' ? item.object.userData.id : null)
       .filter((id: number | null): id is number => id != null)
     return [...new Set(ids)]
   }
@@ -485,7 +493,7 @@ export class Model {
       this.selector.selected = [...this.selector.selected, {
         object: node.mesh,
         originalColor: ((node.mesh.material as THREE.MeshStandardMaterial)?.color?.getHex?.() ?? 0x0000ff),
-      } as any];
+      }];
     }
   };
 
@@ -509,7 +517,7 @@ export class Model {
       type: 'nodal',
       targets: nodeIds,
       value: new THREE.Vector3(0, 0, 0),
-    } as any);
+    });
     load.createOrUpdate();
     this.focusLoad(load.id);
   };
@@ -523,7 +531,7 @@ export class Model {
       type: 'linear',
       targets: memberIds,
       value: new THREE.Vector3(0, 0, 0),
-    } as any);
+    });
     load.createOrUpdate();
     this.focusLoad(load.id);
   };
@@ -537,7 +545,7 @@ export class Model {
       targets: shellIds,
       value: new THREE.Vector3(0, -1, 0),
       magnitude: 0,
-    } as any)
+    })
     load.createOrUpdate()
     this.focusLoad(load.id)
   };
@@ -580,6 +588,7 @@ export class Model {
 
   /** Lock the model after a successful analysis: results become active, editing is disabled. */
   lockResults = () => {
+    if (!this.output) return
     this.resultStore.ingestAnalysisOutput(this.output, this.structuralSceneDB)
     this.isLocked = true;
     // Remember the model-mode visibility BEFORE any result view hides the
@@ -617,6 +626,7 @@ export class Model {
   setNavTool = (tool: NavTool) => {
     if (this.navTool === tool) return;
     this.navTool = tool;
+    this.workspaceContext.activeTool = tool
     this.applyNavTool();
   }
 
@@ -706,6 +716,7 @@ export class Model {
   }
 
   private constructor() {
+    this.workspaceContext.activeTool = this.navTool
     this.camera = new Camera(this)
     this.gridHelper = new GridHelper(this.scene)
     this.light = new Light(this.scene)
@@ -787,7 +798,10 @@ export class Model {
       fpsAccumMs: false,
       fpsLastFrameTime: false,
       performanceBenchmark: false,
+      structuralDocument: false,
       structuralSceneDB: false,
+      structuralDocumentBridge: false,
+      workspaceContext: false,
       resultStore: false,
       structuralSceneDBBuildMs: false,
       structuralSceneSyncScheduled: false,
@@ -875,7 +889,7 @@ export class Model {
     }
   }
 
-  /** Snapshot the current legacy domain model into render-ready SoA buffers. */
+  /** Reconcile legacy editor objects into the canonical document, then upload dirty render buffers. */
   syncStructuralSceneDB() {
     const startedAt = performance.now()
     const previousFlags = new Map<number, number>()
@@ -886,7 +900,7 @@ export class Model {
     for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
       previousFlags.set(this.structuralSceneDB.memberIds[index], this.structuralSceneDB.memberFlags[index])
     }
-    this.structuralSceneDB.replace(legacyModelToStructuralSource(this))
+    this.structuralDocument.reconcile(legacyModelToDocumentSeed(this))
     this.selector.selectedCenterlineIds = this.selector.selectedCenterlineIds.filter(id =>
       this.structuralSceneDB.memberIndexById.has(id),
     )
@@ -918,6 +932,16 @@ export class Model {
     this.structuralPicker.upload(this.structuralSceneDB)
     this.structuralPicker.warmup(this.camera.cam)
     return this.structuralSceneDB
+  }
+
+  reconcileStructuralDocument() {
+    this.structuralDocument.reconcile(legacyModelToDocumentSeed(this))
+    return this.structuralDocument
+  }
+
+  createAnalysisSnapshot(): AnalysisSnapshot {
+    this.reconcileStructuralDocument()
+    return this.structuralDocument.createAnalysisSnapshot()
   }
 
   /** Coalesce property edits/deletes made in one UI action into one render-DB rebuild. */
@@ -1195,7 +1219,7 @@ export class Model {
     this.reactionViz?.onFrame();
     if (this.renderMode === 'thin-shell') this.thinShellRenderer?.syncDirty()
     if (this.renderMode !== 'solid-extrude') this.centerlineRenderer?.syncDirty()
-    this.nodes?.forEach((node: any) => node.updateScreenScale?.());
+    this.nodes?.forEach((node) => node.updateScreenScale?.());
     this.gpuAnnotations?.update(
       this.structuralSceneDB,
       this.camera.cam,
@@ -1222,13 +1246,13 @@ export class Model {
   }
 
   public dispose = () => {
-    function removeObjWithChildren(obj : any) {
+    function removeObjWithChildren(obj: THREE.Object3D) {
       if (obj.children.length > 0) {
-        for (var x = obj.children.length - 1; x >= 0; x--) {
+        for (let x = obj.children.length - 1; x >= 0; x--) {
           removeObjWithChildren(obj.children[x])
         }
       }
-      if (obj.isMesh) {
+      if (obj instanceof THREE.Mesh) {
         obj.geometry.dispose();
         if( Array.isArray(obj.material)){
           for(let i = 0; i < obj.material.length; i++){
@@ -1261,6 +1285,7 @@ export class Model {
     this.loadGpuRenderer?.dispose()
     this.resultStore?.dispose()
     this.structuralPicker?.dispose()
+    this.structuralDocumentBridge.dispose()
     this.legacyStructuralRoot.clear()
     this.gizmo.dispose()
     // Tear down the dedicated nav-cube canvas + its WebGL context. (The canvas
@@ -1285,7 +1310,7 @@ export class Model {
     // Clear all existing model data
     console.log('Clearing existing this...')
     this.selector?.clear()
-    this.structuralSceneDB.clear()
+    this.structuralDocument.clear()
     this.resultStore.clear()
     this.clearStructuralResult()
     this.centerlineRenderer?.upload(this.structuralSceneDB)
@@ -1340,6 +1365,8 @@ export class Model {
     this.resultStore.clear()
     this.clearStructuralResult()
     this.output = null
+    this.analysisRevision = null
+    this.analysisSnapshotHash = null
   }
 
   private onContextLost = (event: Event) => {

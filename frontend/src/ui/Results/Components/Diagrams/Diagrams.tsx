@@ -139,7 +139,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
           multiple
           value={selectedMembers}
           onChange={(e) => setSelectedMembers(e.target.value as number[])}
-          renderValue={(selected) => (selected as number[]).map(id => model.members.find((m: any) => m.id === id)?.label || id).join(', ')}
+          renderValue={(selected) => (selected as number[]).map(id => model.members.find((member) => member.id === id)?.label || id).join(', ')}
           sx={{
             backgroundColor: UI.panel,
             fontSize: '0.8rem',
@@ -150,7 +150,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
             '& .MuiSelect-select': { py: 0.9, color: UI.text },
           }}
         >
-          {model.members?.map((member: any) => (
+          {model.members?.map((member) => (
             <MenuItem key={member.id} value={member.id}>
               <Checkbox checked={selectedMembers.indexOf(member.id) > -1} size="small" sx={{ color: UI.dim, '&.Mui-checked': { color: UI.accent } }} />
               {member.label || `Member ${member.id}`}

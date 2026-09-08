@@ -1,7 +1,6 @@
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, Field
 from typing import Any, Optional, List
-from schemas import Model, Node, Member, BoundaryCondition, ClientResponse, LinearLoad
+from schemas import Model, Node, MemberCreate, BoundaryCondition, ClientResponse, LinearLoad
 import asyncio
 import time
 import uuid
@@ -46,6 +45,10 @@ async def get_scene_info() -> Model:
                 # Wait a bit before checking again (non-blocking)
                 await asyncio.sleep(0.1)
         
+        if answer is None:
+            raise TimeoutError(f"Timeout waiting for response (ID: {msg_id})")
+
+        messages.remove(answer)
         data = answer.get("data", {})
 
         return Model(**data)
@@ -70,7 +73,7 @@ async def add_nodes(nodes: List[Node]) -> ClientResponse:
         raise Exception(f"Failed to add nodes: {error}")
 
 @mcp_server.tool(description=TOOL_DESCRIPTIONS["add_members"])
-async def add_members(members: List[Member]) -> ClientResponse:
+async def add_members(members: List[MemberCreate]) -> ClientResponse:
     try:
         # Generate a unique ID for the message
         msg_id = str(uuid.uuid4())

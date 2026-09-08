@@ -10,6 +10,7 @@ backend/coverage.xml
 backend/.coverage
 backend/.pytest_cache/
 backend/junit.xml
+backend/artifacts/
 backend/.venv
 backend/venv/
 

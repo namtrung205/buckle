@@ -1,6 +1,15 @@
 import * as THREE from "three";
 import { Model } from "../Model";
 
+export type LoadInput = {
+  id?: number
+  targets: number[]
+  value: THREE.Vector3 | { x: number; y: number; z: number }
+  type: Load['type']
+  name?: string
+  magnitude?: number
+}
+
 /**
  * Semantic load record. Rendering is delegated to the instanced GPU batch
  * (Rendering/LoadGpuRenderer — 3 constant draw calls for the whole model):
@@ -19,7 +28,7 @@ class Load {
   /** Kept for API compatibility; the GPU batch owns all load geometry. */
   mesh : THREE.Object3D[] = []
 
-  constructor(model : Model, load : Load) {
+  constructor(model : Model, load : LoadInput) {
     this.model = model
     this.targets = load.targets
     this.value = load.value ? new THREE.Vector3(load.value.x, load.value.y, load.value.z) : new THREE.Vector3(0, 0, 0)
@@ -27,7 +36,7 @@ class Load {
     this.id = load.id || Math.floor(Math.random() * 0x7FFFFFFF)
     this.name = load.name || `Load ${this.model.loads.length + 1}`
     this.type = load.type
-    this.magnitude = (load as any).magnitude
+    this.magnitude = load.magnitude
   }
 
   createOrUpdate(){
@@ -52,7 +61,7 @@ class Load {
     this.type = load.type
     this.id = load.id
     this.name = load.name
-    this.magnitude = (load as any).magnitude
+    this.magnitude = load.magnitude
     this.model.loads = this.model.loads.map(l => l.id === this.id ? this : l)
     this.create()
   }

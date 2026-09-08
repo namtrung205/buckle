@@ -341,7 +341,7 @@ class ElasticBeamColumn {
     const nodei = this.nodes[0]
     const nodej = this.nodes[1]
 
-    let up = new THREE.Vector3(0, 1, 0)
+    const up = new THREE.Vector3(0, 1, 0)
     const local_vecx = new THREE.Vector3(nodej.x - nodei.x, nodej.y - nodei.y, nodej.z - nodei.z).normalize()
     const cross_vec = new THREE.Vector3().crossVectors(up, local_vecx)
 

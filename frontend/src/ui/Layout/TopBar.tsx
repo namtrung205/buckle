@@ -246,11 +246,18 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       // model (nodes, member vecxz, boundary conditions, load values, shells)
       // is converted from the three.js (Y-up) scene frame to the shared
       // JSON/OpenSees (Z-up) schema HERE, at this boundary only.
-      const data = exportModelJson(model);
+      const analysisSnapshot = model.createAnalysisSnapshot();
+      const data = structuredClone(analysisSnapshot.model);
 
       const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);
+      model.reconcileStructuralDocument();
+      if (model.structuralDocument.revision !== analysisSnapshot.revision) {
+        throw new Error('Model changed while analysis was running; discard the stale result and run again.');
+      }
       console.log('RES', res);
       model.output = res.data.output;
+      model.analysisRevision = analysisSnapshot.revision;
+      model.analysisSnapshotHash = analysisSnapshot.hash;
       model.reactionViz.apply();
       model.lockResults();
       // Jump straight to the results ribbon now that the model is locked.
@@ -280,8 +287,15 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       
       
       // Show error toast
-      const errorMessage = axios.isAxiosError(error) && error.response?.data?.message 
-        ? error.response.data.message 
+      const responseError = axios.isAxiosError(error)
+        ? error.response?.data?.detail ?? error.response?.data?.message
+        : error instanceof Error
+        ? error.message
+        : undefined;
+      const errorMessage = typeof responseError === 'string'
+        ? responseError
+        : responseError
+        ? JSON.stringify(responseError)
         : 'Analysis failed. Please check your model and try again.';
       
       toast.error(errorMessage, {

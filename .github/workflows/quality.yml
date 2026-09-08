@@ -1,0 +1,48 @@
+name: Quality
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      # Existing UI lint debt is tracked separately and is non-blocking for the
+      # Goal 11 engineering-contract baseline.
+      - name: Legacy lint audit (non-blocking)
+        continue-on-error: true
+        run: npm run lint
+      - run: npm run test:fixture
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: backend/.python-version
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python scripts/export_schema.py --check
+      - run: python -m pytest -q --junitxml=artifacts/pytest.xml
+      - run: python scripts/run_benchmarks.py --output artifacts/benchmark-${{ github.sha }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-quality-${{ github.sha }}
+          path: backend/artifacts

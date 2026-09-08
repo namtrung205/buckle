@@ -51,7 +51,9 @@ SECTION = {
     "id": 1,
     "name": "IPE 300",
     "type": "I",
-    "depth": 300, "width": 150, "tw": 7.1, "tf": 10.7, "r": 15,
+    # r=0 keeps this an isolated Euler-Bernoulli solver benchmark. Fillet-aware
+    # section properties are validated independently against catalogue values.
+    "depth": 300, "width": 150, "tw": 7.1, "tf": 10.7, "r": 0,
     "material": {"id": 2, "name": "Steel", "E": 210000000000, "nu": 0.3},
 }
 
@@ -88,6 +90,7 @@ loads = [
 ]
 
 model = {
+    "schemaVersion": "1.0",
     "nodes": nodes, "members": members,
     "materials": [SECTION["material"]], "sections": [SECTION],
     "loads": loads, "boundary_conditions": [bc_left, bc_right],

@@ -11,6 +11,7 @@ import DiagramHover, { HoverMember } from './DiagramHover'
 import { jsonArrayToThree, jsonToThree } from '../../utils/axis'
 import { canonicalResultComponent } from '../Rendering/ResultStore'
 import type { WorldLabelCandidate } from '../Rendering/GpuAnnotations'
+import type { AnalysisMember } from '../../contracts/structuralModel'
 
 export const DIAGRAM_TYPES = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz'] as const
 export type DiagramType = (typeof DIAGRAM_TYPES)[number]
@@ -44,7 +45,7 @@ type SolidSave = {
   color: number
   hadVertexColors: boolean
   hadOriginalColor: boolean
-  originalColor: any
+  originalColor: unknown
 }
 
 export type MemberDiagramData = {
@@ -67,7 +68,7 @@ const fmt = (v: number) => {
 
 class PostProcessing {
   model: Model
-  meshes: any[] = []
+  meshes: Array<THREE.Mesh | THREE.Line | Line2> = []
   hover: DiagramHover
 
   // Observable state consumed by the Results UI (legend, sliders, toggles)
@@ -111,7 +112,7 @@ class PostProcessing {
       membersData: false,
       hoverMeshes: false,
       labels: false
-    } as any)
+    } as never)
   }
 
   /**
@@ -128,7 +129,7 @@ class PostProcessing {
    * Uses the intermediate `stations` provided by the backend when available and falls back
    * to the legacy end-node `node_efforts` (2 points) for older payloads.
    */
-  private buildMemberData(member: any): MemberDiagramData | null {
+  private buildMemberData(member: AnalysisMember): MemberDiagramData | null {
     let points: {
       coord: number[]
       plotPoints: Record<string, number[]>
@@ -136,16 +137,20 @@ class PostProcessing {
     }[] = []
     if (member.stations?.length) {
       points = member.stations
-        .filter((s: any) => s.values && Object.keys(s.values).length > 0)
-        .map((s: any) => ({ coord: s.coord, plotPoints: s.plot_points ?? {}, values: { ...s.values } }))
+        .filter((station) => station.values && Object.keys(station.values).length > 0)
+        .map((station) => ({
+          coord: station.coord,
+          plotPoints: station.plot_points ?? {},
+          values: { ...station.values },
+        }))
     } else if (member.node_efforts?.length) {
-      points = member.node_efforts.map((node: any) => {
+      points = member.node_efforts.map((node) => {
         const values: Record<string, number> = {}
         const plotPoints: Record<string, number[]> = {}
         for (const [key, effort] of Object.entries(node.efforts ?? {})) {
-          values[key] = (effort as any).value
+          values[key] = effort.value
           // displaced_positions = coord + value * SFAC * localAxis (the backend plot point)
-          if ((effort as any).displaced_positions) plotPoints[key] = (effort as any).displaced_positions
+          if (effort.displaced_positions) plotPoints[key] = effort.displaced_positions
         }
         return { coord: node.coord, plotPoints, values }
       })
@@ -165,7 +170,7 @@ class PostProcessing {
     // Section local axes in three.js coords, following the OpenSees element orientation:
     // ylocal = vecxz orthogonalised against the member axis, zlocal = ylocal x xlocal.
     // Used when the backend payload has no per-force plot points (older runs).
-    const element = (this.model.members as any[]).find((m: any) => String(m?.id) === String(member.id))
+    const element = this.model.members.find((candidate) => String(candidate.id) === String(member.id))
     const vecxz = element?.vecxz as THREE.Vector3 | undefined
     let vPerp: THREE.Vector3 | null = null
     if (vecxz) {
@@ -263,14 +268,14 @@ class PostProcessing {
   }
 
   /** Real end-node displacements (three.js axes) of the member, for the deflected-shape mode. */
-  private getMemberEndDisplacements(member: any): [THREE.Vector3, THREE.Vector3] | null {
-    const element = (this.model.members as any[]).find((m: any) => String(m?.id) === String(member.id))
+  private getMemberEndDisplacements(member: AnalysisMember): [THREE.Vector3, THREE.Vector3] | null {
+    const element = this.model.members.find((candidate) => String(candidate.id) === String(member.id))
     const nodes = element?.nodes
     if (!nodes || nodes.length < 2) return null
     const outputNodes = this.model.output?.nodes ?? []
     const result: (THREE.Vector3 | null)[] = []
     for (const node of nodes.slice(0, 2)) {
-      const outputNode = outputNodes.find((n: any) => n.id === node.id)
+      const outputNode = outputNodes.find((candidate) => candidate.id === node.id)
       const d = outputNode?.displacements
       if (!d) {
         result.push(null)
@@ -292,15 +297,17 @@ class PostProcessing {
    * three.js frame and report its arc position along the member axis, giving a
    * cubic-accurate deflected shape instead of a straight end-to-end lerp.
    */
-  private getMemberDisplacementStations(member: any, axis: THREE.Vector3, p0: THREE.Vector3): { s: number, vec: THREE.Vector3 }[] {
+  private getMemberDisplacementStations(member: AnalysisMember, axis: THREE.Vector3, p0: THREE.Vector3): { s: number, vec: THREE.Vector3 }[] {
     const raw = member?.displacement_stations
     if (!Array.isArray(raw) || raw.length < 2) return []
     const out: { s: number, vec: THREE.Vector3 }[] = []
     for (const st of raw) {
       const coord = this.toThreeCoord(st.coord)
-      const d = st.disp ?? {}
       const s = coord.sub(p0).dot(axis)
-      out.push({ s, vec: jsonToThree(d.ux ?? 0, d.uy ?? 0, d.uz ?? 0) })
+      out.push({
+        s,
+        vec: jsonToThree(st.disp?.ux ?? 0, st.disp?.uy ?? 0, st.disp?.uz ?? 0),
+      })
     }
     out.sort((a, b) => a.s - b.s)
     return out
@@ -313,8 +320,8 @@ class PostProcessing {
     const members = this.model.output?.members ?? []
     for (const member of members) {
       const coords = member.stations?.length
-        ? member.stations.map((s: any) => s.coord)
-        : (member.node_efforts ?? []).map((n: any) => n.coord)
+        ? member.stations.map((station) => station.coord)
+        : (member.node_efforts ?? []).map((node) => node.coord)
       for (const c of coords) box.expandByPoint(v.set(c[0], c[1], c[2]))
     }
     if (box.isEmpty()) return 10
@@ -376,7 +383,7 @@ class PostProcessing {
     }
 
     const selected = output.members.filter(
-      (member: any) => selectedMemberIds.length === 0 || selectedMemberIds.includes(member.id)
+      (member) => selectedMemberIds.length === 0 || selectedMemberIds.includes(member.id)
     )
     const membersData: MemberDiagramData[] = []
     for (const member of selected) {
@@ -471,7 +478,7 @@ class PostProcessing {
     this.currentMax = max
     const labelFor = (entityId: number | null) => {
       if (entityId === null) return ''
-      const member = (this.model.members as any[]).find(item => item.id === entityId)
+      const member = this.model.members.find(item => item.id === entityId)
       return member?.label || `Member ${entityId}`
     }
     this.extremeMin = extrema.minMemberId === null ? null : { label: labelFor(extrema.minMemberId), value: extrema.min }
@@ -712,17 +719,17 @@ class PostProcessing {
 
   /** Colour the member solid meshes with the per-station colormap (replaces the contour tube). */
   private colorMemberSolids(data: MemberDiagramData) {
-    const element = (this.model.members as any[]).find(
-      (m: any) => String(m?.id) === String(data.memberId)
+    const element = this.model.members.find(
+      (member) => String(member.id) === String(data.memberId)
     )
     const group = element?.mesh
     if (!group?.traverse) return
     const key = String(data.memberId)
     const saves: SolidSave[] = this.coloredSolids.get(key) ?? []
 
-    group.traverse((child: any) => {
-      if (!child.isMesh || !child.geometry?.attributes?.position) return
-      const solid = child as THREE.Mesh
+    group.traverse((child) => {
+      if (!(child instanceof THREE.Mesh) || !child.geometry?.attributes?.position) return
+      const solid = child
       const material = solid.material as THREE.MeshLambertMaterial
       if (!material) return
 
@@ -926,14 +933,14 @@ class PostProcessing {
   private updateHoverTargets() {
     // Solid meshes currently coloured by the contour mode are hoverable too
     const solidTargets: THREE.Mesh[] = []
-    for (const element of this.model.members as any[]) {
+    for (const element of this.model.members) {
       if (!this.coloredSolids.has(String(element?.id))) continue
-      element.mesh?.traverse?.((child: any) => {
-        if (child.isMesh) solidTargets.push(child as THREE.Mesh)
+      element.mesh?.traverse?.((child) => {
+        if (child instanceof THREE.Mesh) solidTargets.push(child)
       })
     }
     this.hoverMeshes = [
-      ...this.meshes.filter((mesh: any) => mesh.isMesh && mesh.userData?.hoverable),
+      ...this.meshes.filter((mesh): mesh is THREE.Mesh => mesh instanceof THREE.Mesh && mesh.userData?.hoverable),
       ...solidTargets
     ] as THREE.Mesh[]
     const hoverMembers: HoverMember[] = this.membersData.map(data => ({

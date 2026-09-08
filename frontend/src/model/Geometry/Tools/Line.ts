@@ -25,7 +25,7 @@ export default class Line implements Tool {
   state : number = 0;
   inputMode: "point" | "lengthAndAngle" = 'point'
   inputState: 'length' | 'angle' = 'length';
-  uuid : String = 'Line3D'
+  uuid : string = 'Line3D'
   mesh : Line2 | THREE.Mesh | null = null;
   model : Model = Model.getInstance()
   currentPointerCoord : THREE.Vector3;
@@ -334,7 +334,7 @@ export default class Line implements Tool {
   {
     if (!this.mesh) this.start()
     const type = this.type
-    let positions = [startPoint.x, startPoint.y, startPoint.z, endPoint.x, endPoint.y, endPoint.z]
+    const positions = [startPoint.x, startPoint.y, startPoint.z, endPoint.x, endPoint.y, endPoint.z]
     
     if (this.onOrthoMode && this.state >= 2) {
       const orthoEndPoint = this.getOrthogonalProjection(startPoint, endPoint)

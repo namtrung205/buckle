@@ -10,7 +10,7 @@ export type ToolsTitle =
   | 'Line'
 
 export interface Tool {
-  uuid : String;
+  uuid : string;
   state : number;
   start: () => void;
   stop: () => void;

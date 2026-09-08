@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 import { useModel } from '../../../../model/Context';
 import { UI, fmtValue, SecTitle } from '../ui';
+import type { AnalysisStation } from '../../../../contracts/structuralModel';
 
 interface StationTableProps {
   memberIds: number[];
@@ -24,7 +25,7 @@ const StationTable = ({ memberIds }: StationTableProps) => {
   const model = useModel();
   const [open, setOpen] = useState(false);
   const [memberId, setMemberId] = useState<number | null>(null);
-  const members: any[] = model.output?.members ?? [];
+  const members = model.output?.members ?? [];
 
   const availableIds = members.map(m => m.id);
   const effectiveId =
@@ -38,17 +39,19 @@ const StationTable = ({ memberIds }: StationTableProps) => {
   const hasStations = !!member?.stations?.length;
 
   // Project each station onto the member axis to get the arc position s, thin long lists
-  const stations: any[] = member?.stations ?? [];
+  const stations = member?.stations ?? [];
   const step = Math.max(1, Math.ceil(stations.length / 50));
-  let rows: any[] = hasStations ? stations.filter((_: any, i: number) => i % step === 0 || i === stations.length - 1) : [];
+  let rows: Array<AnalysisStation & { s?: number }> = hasStations
+    ? stations.filter((_, index) => index % step === 0 || index === stations.length - 1)
+    : [];
   if (rows.length > 0) {
     const p0 = stations[0].coord;
     const p1 = stations[stations.length - 1].coord;
     const axis = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
     const axisLength = Math.sqrt(axis[0] ** 2 + axis[1] ** 2 + axis[2] ** 2) || 1;
-    rows = rows.map((s: any) => ({
-      ...s,
-      s: ((s.coord[0] - p0[0]) * axis[0] + (s.coord[1] - p0[1]) * axis[1] + (s.coord[2] - p0[2]) * axis[2]) / axisLength,
+    rows = rows.map((station) => ({
+      ...station,
+      s: ((station.coord[0] - p0[0]) * axis[0] + (station.coord[1] - p0[1]) * axis[1] + (station.coord[2] - p0[2]) * axis[2]) / axisLength,
     }));
   }
 
@@ -79,7 +82,7 @@ const StationTable = ({ memberIds }: StationTableProps) => {
               '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: UI.accent },
             }}
           >
-            {members.map((m: any) => (
+            {members.map((m) => (
               <MenuItem key={m.id} value={m.id} sx={{ fontFamily: UI.mono, fontSize: '0.78rem' }}>
                 {m.label || `Member ${m.id}`}
               </MenuItem>
@@ -103,7 +106,7 @@ const StationTable = ({ memberIds }: StationTableProps) => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {rows.map((s: any, index: number) => (
+                {rows.map((s, index) => (
                   <TableRow key={index} sx={{ '&:nth-of-type(even)': { backgroundColor: UI.panel2 } }}>
                     <TableCell sx={{ ...cellSx, color: UI.dim }}>{fmtValue(s.s)}</TableCell>
                     {['N', 'Vy', 'Vz', 'T', 'My', 'Mz'].map(k => (

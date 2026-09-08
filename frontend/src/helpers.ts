@@ -10,6 +10,8 @@ import Shell from './model/Elements/Shell/Shell';
 import Model from './model/Model';
 import { threeToJson, jsonToThree } from './utils/axis';
 import { runInAction } from 'mobx';
+import type { StructuralModelDto } from './contracts/structuralModel';
+import { analysisTransportToDocumentSeed, type AnalysisTransportInput } from './core/structural';
 
 /**
  * Export the model to the shared JSON schema.
@@ -26,93 +28,9 @@ import { runInAction } from 'mobx';
  * knowing about the Y<->Z permutation.
  */
 export const exportModelJson = (model: Model) => {
-  // Node coordinates, member vecxz and load values live in the Three.js scene
-  // (Y-up), while the JSON/backend uses the Z-up engineering frame. Convert
-  // at this boundary only.
-  const jsonData = {
-    nodes: model.nodes.map(node => {
-      const p = threeToJson(new THREE.Vector3(node.x, node.y, node.z));
-      return {
-        id: node.id,
-        name: node.name,
-        x: p[0],
-        y: p[1],
-        z: p[2]
-      };
-    }),
-    materials: model.materials,
-    sections: model.sections,
-    members: model.members.map(member => {
-      const vecxz = threeToJson(member.vecxz);
-      const pi = threeToJson(new THREE.Vector3(member.nodes[0].x, member.nodes[0].y, member.nodes[0].z));
-      const pj = threeToJson(new THREE.Vector3(member.nodes[1].x, member.nodes[1].y, member.nodes[1].z));
-      return {
-        id: member.id,
-        label: member.label,
-        nodei: {
-          id: member.nodes[0].id,
-          x: pi[0],
-          y: pi[1],
-          z: pi[2]
-        },
-        nodej: {
-          id: member.nodes[1].id,
-          x: pj[0],
-          y: pj[1],
-          z: pj[2]
-        },
-        section: member.section.id,
-        vecxz: [vecxz[0], vecxz[1], vecxz[2]],
-        release: member.release || ""
-      };
-    }),
-    // DOF restraint flags (dx, dy, dz, rx, ry, rz) are semantic labels, not
-    // spatial vectors — they keep their meaning (Dx = restrain translation
-    // along X, ...) regardless of the render frame. They must NOT be swapped
-    // Y<->Z like node coordinates / vecxz / load values are. OpenSees applies
-    // them directly via ops.fix(target, dx, dy, dz, rx, ry, rz) with DOFs
-    // 1..6 = Dx,Dy,Dz,Rx,Ry,Rz, so pass them through unchanged.
-    boundary_conditions: model.boundaryConditions.map(bc => ({
-      id: bc.id,
-      type: bc.type,
-      targets: bc.targets,
-      name: bc.name,
-      dx: bc.dx,
-      dy: bc.dy,
-      dz: bc.dz,
-      rx: bc.rx,
-      ry: bc.ry,
-      rz: bc.rz
-    })),
-    loads: model.loads.map(load => {
-      const v = threeToJson(load.value);
-      return {
-        id: load.id,
-        type: load.type,
-        targets: load.targets,
-        name: load.name,
-        value: {
-          x: v[0],
-          y: v[1],
-          z: v[2]
-        },
-        magnitude: load.magnitude,
-      };
-    }),
-    shells: model.shells.map(shell => ({
-      id: shell.id,
-      nodes: shell.nodes.map(node => node.id),
-      thickness: shell.thickness,
-      material: shell.material
-    })),
-    metadata: {
-      exportDate: new Date().toISOString(),
-      modelName: 'FEM Model',
-      version: '1.0'
-    }
-  };
-
-  return jsonData;
+  // Return a mutable transport clone for Axios/download consumers; the source
+  // AnalysisSnapshot remains deeply frozen and tied to its model revision.
+  return structuredClone(model.createAnalysisSnapshot().model) as unknown as StructuralModelDto;
 };
 
 /**
@@ -121,15 +39,24 @@ export const exportModelJson = (model: Model) => {
  * Z-up engineering frame into the three.js Y-up scene frame. Created shells
  * too when the payload provides them.
  */
-export const buildModelFromJson = (model: Model, jsonData: any) => {
+export const buildModelFromJson = (model: Model, input: StructuralModelDto) => {
   model.clear()
+
+  // Validate and normalize topology in the pure core before creating any
+  // Three.js/MobX legacy entity. This prevents partially imported scenes.
+  model.structuralDocument.reconcile(
+    analysisTransportToDocumentSeed(input as unknown as AnalysisTransportInput),
+  )
+  const jsonData = structuredClone(
+    model.structuralDocument.createAnalysisSnapshot().model,
+  ) as unknown as StructuralModelDto
 
   // Create a map to store node references by ID for member creation
   const nodeMap = new Map<number, Node>()
 
   // 1. Create nodes first — convert (x, y, z) from Z-up to three.js (Y-up)
   if (jsonData.nodes) {
-    jsonData.nodes.forEach((nodeData: any) => {
+    jsonData.nodes.forEach((nodeData) => {
       const p = jsonToThree(nodeData.x, nodeData.y, nodeData.z)
       const node = new Node(
         p,
@@ -155,7 +82,7 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
 
   // 3. Create members/elements — convert vecxz from Z-up to three.js (Y-up)
   if (jsonData.members) {
-    jsonData.members.forEach((memberData: any) => {
+    jsonData.members.forEach((memberData) => {
       const nodei = nodeMap.get(memberData.nodei.id)
       const nodej = nodeMap.get(memberData.nodej.id)
 
@@ -171,11 +98,9 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
         return
       }
 
-      const vecxz = jsonToThree(
-        memberData.vecxz[0],
-        memberData.vecxz[1],
-        memberData.vecxz[2]
-      )
+      const vecxz = Array.isArray(memberData.vecxz)
+        ? jsonToThree(memberData.vecxz[0], memberData.vecxz[1], memberData.vecxz[2])
+        : undefined
 
       const member = new ElasticBeamColumnClass(
         model,
@@ -184,9 +109,10 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
         section,
       )
       member.id = memberData.id
-      member.create()
       member.release = memberData.release || ""
-      member.vecxz = vecxz
+      member.gamma = memberData.gamma || 0
+      if (vecxz) member.vecxz = vecxz
+      member.create()
       model.members.push(member)
     })
     console.log(`Created ${jsonData.members.length} members`)
@@ -194,8 +120,10 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
 
   // 4. Create shell elements if provided (nodes already in three.js frame)
   if (jsonData.shells) {
-    jsonData.shells.forEach((shellData: any) => {
-      const shellNodes = (shellData.nodes ?? []).map((nodeId: number) => nodeMap.get(nodeId)).filter(Boolean)
+    jsonData.shells.forEach((shellData) => {
+      const shellNodes = shellData.nodes
+        .map((nodeId) => nodeMap.get(nodeId))
+        .filter((node): node is Node => node !== undefined)
       if (shellNodes.length < 3) {
         console.warn(`Could not find all nodes for shell ${shellData.id}`)
         return
@@ -220,8 +148,8 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
   // Supports without targets are invalid and never enter the model.
   if (jsonData.boundary_conditions) {
     jsonData.boundary_conditions
-      .filter((bcData: any) => Array.isArray(bcData.targets) && bcData.targets.length > 0)
-      .forEach((bcData: any) => {
+      .filter((bcData) => bcData.targets.length > 0)
+      .forEach((bcData) => {
       const boundaryCondition = new BoundaryCondition(model, {
         id: bcData.id,
         type: bcData.type,
@@ -232,8 +160,9 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
         dz: bcData.dz,
         rx: bcData.rx,
         ry: bcData.ry,
-        rz: bcData.rz
-      } as any)
+        rz: bcData.rz,
+        rotation: bcData.rotation,
+      })
       boundaryCondition.createOrUpdate()
       })
     console.log(`Created ${jsonData.boundary_conditions.length} boundary conditions`)
@@ -243,8 +172,8 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
   // Loads without targets are invalid and never enter the model.
   if (jsonData.loads) {
     jsonData.loads
-      .filter((loadData: any) => Array.isArray(loadData.targets) && loadData.targets.length > 0)
-      .forEach((loadData: any) => {
+      .filter((loadData) => loadData.targets.length > 0)
+      .forEach((loadData) => {
       const load = new Load(model, {
         id: loadData.id,
         type: loadData.type,
@@ -252,7 +181,7 @@ export const buildModelFromJson = (model: Model, jsonData: any) => {
         name: loadData.name,
         value: jsonToThree(loadData.value.x, loadData.value.y, loadData.value.z),
         magnitude: loadData.magnitude,
-      } as any)
+      })
       load.createOrUpdate()
       })
     console.log(`Created ${jsonData.loads.length} loads`)

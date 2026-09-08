@@ -24,9 +24,10 @@ export type StructuralFixtureMember = {
 }
 
 export type StructuralBenchmarkFixture = {
+  schemaVersion: '1.0'
   nodes: StructuralFixtureNode[]
-  materials: Array<Record<string, unknown>>
-  sections: Array<Record<string, unknown>>
+  materials: Material[]
+  sections: Section[]
   members: StructuralFixtureMember[]
   shells: never[]
   boundary_conditions: never[]
@@ -85,8 +86,8 @@ export const generateStructuralBenchmarkFixture = (
     }
   }
 
-  const steel = { id: 1, name: 'Benchmark Steel', E: 210e9, nu: 0.3, density: 7850 }
-  const sections = [
+  const steel: Material = { id: 1, name: 'Benchmark Steel', E: 210e9, nu: 0.3, rho: 7850 }
+  const sections: Section[] = [
     { id: 1, name: 'H300', type: 'I', depth: 300, width: 300, tw: 10, tf: 15, r: 18, material: steel },
     { id: 2, name: 'H400', type: 'I', depth: 400, width: 400, tw: 13, tf: 21, r: 22, material: steel },
     { id: 3, name: 'I300', type: 'I', depth: 300, width: 150, tw: 7.1, tf: 10.7, r: 15, material: steel },
@@ -141,6 +142,7 @@ export const generateStructuralBenchmarkFixture = (
   const usedNodes = nodes.filter(node => usedNodeIds.has(node.id))
 
   return {
+    schemaVersion: '1.0',
     nodes: usedNodes,
     materials: [steel],
     sections,
@@ -158,3 +160,4 @@ export const generateStructuralBenchmarkFixture = (
     },
   }
 }
+import type { Material, Section } from '../../types'
