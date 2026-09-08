@@ -1497,56 +1497,16 @@ export class Model {
   }
 
   public clear = () => {
-    // Clear all existing model data
-    console.log('Clearing existing this...')
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'ClearModel', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { confirmed: true },
+    }, { allowDestructive: true })
     this.selector?.clear()
-    this.structuralDocument.clear()
-    this.resultStore.clear()
-    this.clearStructuralResult()
-    this.centerlineRenderer?.upload(this.structuralSceneDB)
-    this.thinShellRenderer?.upload(this.structuralSceneDB)
-    this.diagramRenderer?.upload(this.structuralSceneDB)
-    this.structuralPicker?.upload(this.structuralSceneDB)
-    
-    // Dispose of all loads
-    this.loads.forEach(load => load.dispose())
-    this.loads = []
-    
-    // Dispose of all boundary conditions
-    this.boundaryConditions.forEach(bc => bc.delete())
-    this.boundaryConditions = []
-    
-    // Dispose of all members
-    const members = [...this.members]
-    members.forEach(member => {
-      member.remove()
-    })
-    this.members = []
-    
-    // Dispose of all shells
-    const shells = [...this.shells]
-    shells.forEach(shell => shell.remove())
-    this.shells = []
-    
-    // Dispose of grid systems
+    // GridSystem remains a legacy editor datum until its own command lands.
     const grids = [...this.grids]
     grids.forEach(grid => grid.delete())
     this.grids = []
-    
-    // Dispose of all nodes
-    // Create a copy of the array to avoid issues when dispose() modifies the original array
-    const nodes = [...this.nodes]
-    nodes.forEach(node => node.dispose())
-    this.nodes = []
-    
-    // Clear post processing
-    this.postProcessing.dispose()
-    this.reactionViz.dispose()
-    
-    // Clear labeler
     this.labeler.deleteAll('effort')
-    
-    console.log('Model cleared successfully')
   }
 
   public invalidateResults = () => {

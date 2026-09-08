@@ -98,7 +98,8 @@ const Move = ({
   }
 
   const handleSave = () => {
-    
+    const moves = [];
+    const copies = [];
     selectedNodes.forEach((nodeId) => {
       const node = model.nodes.find((el) => el.id === nodeId);
       if (!node) return;
@@ -112,7 +113,7 @@ const Move = ({
             y + Number(vector.y) * repetitions, 
             z + Number(vector.z) * repetitions
           );
-          node.update(position);
+          moves.push({ id: node.id, position: [position.x, position.z, position.y], name: node.name });
           break;
         case 'copy':
           for(let i = 0 ; i < repetitions; i ++){
@@ -123,15 +124,22 @@ const Move = ({
               z + Number(vector.z) * (i + 1 )
             );
 
-            const newNode  = new Node(position)
-            newNode.model = model
-            newNode.create()
-            model.nodes.push(newNode)
+            copies.push({
+              id: Math.floor(Math.random() * 0x7fffffff),
+              position: [position.x, position.z, position.y],
+            });
           }
           break;
         default:
           break;
       }
+    });
+    const operations = [];
+    if (moves.length) operations.push({ type: 'MoveNodes', payload: { nodes: moves } });
+    if (copies.length) operations.push({ type: 'CreateNodes', payload: { nodes: copies } });
+    if (operations.length) model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui', payload: { operations },
     });
   }
 
