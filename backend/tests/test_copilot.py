@@ -108,6 +108,22 @@ def test_gemini_preset_needs_only_an_api_key(client, monkeypatch):
     assert response.json()["models"] == ["gemini-model"]
 
 
+def test_nvidia_preset_needs_only_an_api_key(client, monkeypatch):
+    async def fake_models(provider, base_url, api_key):
+        assert provider == "nvidia"
+        assert base_url == "https://integrate.api.nvidia.com/v1"
+        assert api_key == "nvapi-user-key"
+        return ["meta/llama-3.3-70b-instruct"]
+
+    monkeypatch.setattr(copilot, "discover_models", fake_models)
+    response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+        "provider": "nvidia", "apiKey": "nvapi-user-key",
+    })
+    assert response.status_code == 201
+    assert response.json()["label"] == "NVIDIA NIM"
+    assert response.json()["models"] == ["meta/llama-3.3-70b-instruct"]
+
+
 def _turn_request(mode="Inspect", tools=None):
     return {
         "requestId": "request-00000001",

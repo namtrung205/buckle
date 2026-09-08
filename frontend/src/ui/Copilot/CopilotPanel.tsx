@@ -14,7 +14,7 @@ import { generateFrameArrayGraph, generateGridGraph, generatePortalFrameGraph } 
 import { generateWarehouseGraph } from '../../model/Generators/WarehouseGenerator'
 
 type Message = { id: string; role: 'user' | 'assistant' | 'error' | 'activity'; text: string; affected?: EntityReference[] }
-type ProviderKind = 'openai' | 'deepseek' | 'anthropic' | 'gemini' | 'openrouter' | 'compatible'
+type ProviderKind = 'openai' | 'deepseek' | 'anthropic' | 'gemini' | 'openrouter' | 'nvidia' | 'compatible'
 type ProviderConnection = { id: string; provider: ProviderKind; label: string; baseUrl: string; models: string[]; keyHint: string }
 type TurnResult = { message: string; toolCalls: AiToolCall[]; contextRevision: number; finishReason: 'tool_calls' | 'stop' | 'cancelled' }
 type PendingApproval = { tool: string; args: Record<string, unknown>; preview: NonNullable<AiToolResponse['preview']> }
@@ -28,6 +28,21 @@ const copilotSessionId = sessionStorage.getItem(sessionKey) ?? crypto.randomUUID
 sessionStorage.setItem(sessionKey, copilotSessionId)
 const apiHeaders = { 'Content-Type': 'application/json', 'X-Copilot-Session': copilotSessionId }
 const newMessage = (role: Message['role'], text: string): Message => ({ id: crypto.randomUUID(), role, text })
+const httpDetailMessage = (body: unknown, fallback: string): string => {
+  const detail = (body as { detail?: unknown } | null)?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail)) {
+    const messages = detail.map(item => {
+      const record = (item ?? {}) as { msg?: unknown; loc?: unknown }
+      const field = Array.isArray(record.loc) ? record.loc.filter(part => part !== 'body').join('.') : ''
+      const text = typeof record.msg === 'string' ? record.msg : JSON.stringify(record)
+      return field ? `${field}: ${text}` : text
+    }).filter(Boolean)
+    if (messages.length) return messages.join('; ')
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail)
+  return fallback
+}
 const initialMessages = (): Message[] => {
   try {
     const stored = JSON.parse(sessionStorage.getItem(messagesKey) ?? 'null')
@@ -54,7 +69,7 @@ async function streamTurn(payload: Record<string, unknown>, signal: AbortSignal,
   const response = await fetch(`${apiRoot}/api/copilot/turn/stream`, { method: 'POST', headers: apiHeaders, body: JSON.stringify(payload), signal })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    throw new Error(body?.detail || `Copilot request failed (${response.status})`)
+    throw new Error(httpDetailMessage(body, `Copilot request failed (${response.status})`))
   }
   if (!response.body) throw new Error('Provider stream is unavailable')
   const reader = response.body.getReader(); const decoder = new TextDecoder()
@@ -70,7 +85,7 @@ async function streamTurn(payload: Record<string, unknown>, signal: AbortSignal,
     if (event === 'text') onText(value.text ?? '')
     if (event === 'result') result = value as TurnResult
     if (event === 'cancelled') result = { message: '', toolCalls: [], contextRevision: 0, finishReason: 'cancelled' }
-    if (event === 'error') throw new Error(value.message ?? 'Provider stream failed')
+    if (event === 'error') throw new Error(typeof value.message === 'string' ? value.message : httpDetailMessage(value, 'Provider stream failed'))
   }
   while (true) {
     const { done, value } = await reader.read(); buffer += decoder.decode(value, { stream: !done })
@@ -137,7 +152,7 @@ const CopilotPanel = observer(() => {
         provider: connectionDraft.provider, apiKey: connectionDraft.apiKey,
         ...(connectionDraft.label.trim() ? { label: connectionDraft.label.trim() } : {}), ...(connectionDraft.baseUrl.trim() ? { baseUrl: connectionDraft.baseUrl.trim() } : {}),
         modelIds: connectionDraft.modelIds.split(',').map(value => value.trim()).filter(Boolean),
-      }) }); const body = await response.json(); if (!response.ok) throw new Error(body?.detail || `Connection failed (${response.status})`)
+      }) }); const body = await response.json(); if (!response.ok) throw new Error(httpDetailMessage(body, `Connection failed (${response.status})`))
       const created = body as ProviderConnection; setConnections(current => [...current.filter(value => value.id !== created.id), created])
       setSelectedConnectionId(created.id); setSelectedModel(created.models[0] ?? ''); setConnectionDraft(current => ({ ...current, apiKey: '' })); setSettingsOpen(false)
     } catch (error) { setConnectionError(error instanceof Error ? error.message : String(error)) }
@@ -213,7 +228,7 @@ const CopilotPanel = observer(() => {
       {busy && <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={16} /><Typography fontSize={11}>Planning and running tools…</Typography></Stack>}
     </Box>
     <Box component="form" onSubmit={submit} sx={{ p: 1, borderTop: `1px solid ${colors.border}` }}><Stack direction="row" spacing={1}><TextField value={prompt} onChange={event => setPrompt(event.target.value)} disabled={busy} size="small" fullWidth multiline maxRows={3} placeholder={mode === 'Inspect' ? 'Tìm các member thép dài dưới 5 m…' : 'Nhập yêu cầu mô hình…'} inputProps={{ 'aria-label': 'Copilot prompt' }} />{busy ? <IconButton onClick={stop} color="error"><Stop /></IconButton> : <IconButton type="submit" disabled={!prompt.trim()} color="primary"><Send /></IconButton>}</Stack><Stack direction="row" justifyContent="space-between" alignItems="center" mt={.5}><Typography fontSize={10} color={colors.textFaint}>{mode} · Z-up · m · kN</Typography><Button size="small" onClick={clearContext}>Clear context</Button></Stack></Box>
-    <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="xs" fullWidth><DialogTitle>AI provider connections</DialogTitle><DialogContent><Stack spacing={1.5} sx={{ pt: 1 }}>{connections.map(connection => <Box key={connection.id} sx={{ display: 'flex', alignItems: 'center', p: 1, bgcolor: colors.surfaceAlt, borderRadius: 1 }}><Box sx={{ flex: 1, minWidth: 0 }}><Typography fontSize={13} fontWeight={700}>{connection.label}</Typography><Typography fontSize={11} color={colors.textDim}>{connection.models.length} models · {connection.keyHint}</Typography></Box><IconButton size="small" onClick={() => void removeConnection(connection.id)}><DeleteOutline fontSize="small" /></IconButton></Box>)}<FormControl size="small" fullWidth><InputLabel>Provider</InputLabel><Select label="Provider" value={connectionDraft.provider} onChange={event => setConnectionDraft(current => ({ ...current, provider: event.target.value as ProviderKind }))}>{(['openai', 'deepseek', 'anthropic', 'gemini', 'openrouter', 'compatible'] as ProviderKind[]).map(value => <MenuItem key={value} value={value}>{value === 'gemini' ? 'Google Gemini' : value}</MenuItem>)}</Select></FormControl><TextField size="small" label="Connection name (optional)" value={connectionDraft.label} onChange={event => setConnectionDraft(current => ({ ...current, label: event.target.value }))} /><TextField size="small" label="API key" type="password" autoComplete="new-password" value={connectionDraft.apiKey} onChange={event => setConnectionDraft(current => ({ ...current, apiKey: event.target.value }))} />{connectionDraft.provider === 'compatible' && <TextField size="small" label="HTTPS base URL" value={connectionDraft.baseUrl} onChange={event => setConnectionDraft(current => ({ ...current, baseUrl: event.target.value }))} />}<TextField size="small" label="Model IDs (optional, comma-separated)" value={connectionDraft.modelIds} onChange={event => setConnectionDraft(current => ({ ...current, modelIds: event.target.value }))} />{connectionError && <Typography color="error" fontSize={12}>{connectionError}</Typography>}<Typography color={colors.textFaint} fontSize={11}>Keys stay only in backend memory and are isolated by browser session.</Typography></Stack></DialogContent><DialogActions><Button onClick={() => setSettingsOpen(false)}>Cancel</Button><Button variant="contained" disabled={!connectionDraft.apiKey.trim()} onClick={() => void saveConnection()}>Connect</Button></DialogActions></Dialog>
+    <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="xs" fullWidth><DialogTitle>AI provider connections</DialogTitle><DialogContent><Stack spacing={1.5} sx={{ pt: 1 }}>{connections.map(connection => <Box key={connection.id} sx={{ display: 'flex', alignItems: 'center', p: 1, bgcolor: colors.surfaceAlt, borderRadius: 1 }}><Box sx={{ flex: 1, minWidth: 0 }}><Typography fontSize={13} fontWeight={700}>{connection.label}</Typography><Typography fontSize={11} color={colors.textDim}>{connection.models.length} models · {connection.keyHint}</Typography></Box><IconButton size="small" onClick={() => void removeConnection(connection.id)}><DeleteOutline fontSize="small" /></IconButton></Box>)}<FormControl size="small" fullWidth><InputLabel>Provider</InputLabel><Select label="Provider" value={connectionDraft.provider} onChange={event => setConnectionDraft(current => ({ ...current, provider: event.target.value as ProviderKind }))}>{(['openai', 'deepseek', 'anthropic', 'gemini', 'openrouter', 'nvidia', 'compatible'] as ProviderKind[]).map(value => <MenuItem key={value} value={value}>{value === 'gemini' ? 'Google Gemini' : value === 'nvidia' ? 'NVIDIA NIM (build.nvidia.com)' : value}</MenuItem>)}</Select></FormControl><TextField size="small" label="Connection name (optional)" value={connectionDraft.label} onChange={event => setConnectionDraft(current => ({ ...current, label: event.target.value }))} /><TextField size="small" label="API key" type="password" autoComplete="new-password" value={connectionDraft.apiKey} onChange={event => setConnectionDraft(current => ({ ...current, apiKey: event.target.value }))} />{connectionDraft.provider === 'compatible' && <TextField size="small" label="HTTPS base URL" value={connectionDraft.baseUrl} onChange={event => setConnectionDraft(current => ({ ...current, baseUrl: event.target.value }))} />}<TextField size="small" label="Model IDs (optional, comma-separated)" value={connectionDraft.modelIds} onChange={event => setConnectionDraft(current => ({ ...current, modelIds: event.target.value }))} />{connectionError && <Typography color="error" fontSize={12}>{connectionError}</Typography>}<Typography color={colors.textFaint} fontSize={11}>Keys stay only in backend memory and are isolated by browser session.</Typography></Stack></DialogContent><DialogActions><Button onClick={() => setSettingsOpen(false)}>Cancel</Button><Button variant="contained" disabled={!connectionDraft.apiKey.trim()} onClick={() => void saveConnection()}>Connect</Button></DialogActions></Dialog>
   </Paper>
 })
 

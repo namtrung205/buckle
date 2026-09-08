@@ -85,7 +85,7 @@ class CopilotTurnRequest(BaseModel):
 class ConnectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["openai", "deepseek", "anthropic", "gemini", "openrouter", "compatible"]
+    provider: Literal["openai", "deepseek", "anthropic", "gemini", "openrouter", "nvidia", "compatible"]
     api_key: str = Field(min_length=1, max_length=1000, alias="apiKey")
     label: str | None = Field(default=None, max_length=100)
     base_url: str | None = Field(default=None, alias="baseUrl", max_length=500)
@@ -107,6 +107,7 @@ PROVIDER_DEFAULTS = {
     "anthropic": ("Anthropic", "https://api.anthropic.com/v1"),
     "gemini": ("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
     "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1"),
+    "nvidia": ("NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
 }
 connections: dict[tuple[str, str], ProviderConnection] = {}
 
