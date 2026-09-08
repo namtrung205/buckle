@@ -106,3 +106,88 @@ def test_gemini_preset_needs_only_an_api_key(client, monkeypatch):
     assert response.status_code == 201
     assert response.json()["label"] == "Google Gemini"
     assert response.json()["models"] == ["gemini-model"]
+
+
+def _turn_request(mode="Inspect", tools=None):
+    return {
+        "requestId": "request-00000001",
+        "conversationId": "conversation-00000001",
+        "prompt": "Find short steel members",
+        "mode": mode,
+        "context": {"revision": 7, "counts": {"members": 2}},
+        "history": [{"role": "user", "content": "Inspect the model"}],
+        "tools": tools or [{
+            "name": "query_entities",
+            "description": "Query entities",
+            "inputSchema": {"type": "object", "properties": {}},
+        }],
+        "toolResults": [],
+        "connectionId": "connection-for-turn",
+        "model": "test-model",
+    }
+
+
+def test_generic_turn_returns_provider_neutral_tool_calls(client, monkeypatch):
+    async def fake_turn(request, session_id):
+        assert request.mode == "Inspect"
+        assert request.context["revision"] == 7
+        assert session_id == SESSION_HEADERS["X-Copilot-Session"]
+        return {
+            "message": "Looking up exact members",
+            "toolCalls": [{"id": "tool-1", "name": "query_entities", "arguments": {"collection": "members"}}],
+            "contextRevision": 7,
+            "finishReason": "tool_calls",
+        }
+
+    monkeypatch.setattr(copilot, "run_copilot_turn", fake_turn)
+    response = client.post("/api/copilot/turn", json=_turn_request(), headers=SESSION_HEADERS)
+    assert response.status_code == 200
+    assert response.json()["toolCalls"][0]["name"] == "query_entities"
+
+
+def test_turn_stream_emits_text_and_final_revision(client, monkeypatch):
+    async def fake_turn(_request, _session_id):
+        return {"message": "Found two members", "toolCalls": [], "contextRevision": 7, "finishReason": "stop"}
+
+    monkeypatch.setattr(copilot, "run_copilot_turn", fake_turn)
+    response = client.post("/api/copilot/turn/stream", json=_turn_request(), headers=SESSION_HEADERS)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: text" in response.text
+    assert "Found two members" in response.text
+    assert '"contextRevision": 7' in response.text
+
+
+def test_inspect_mode_rejects_exposed_mutation_tools(client):
+    payload = _turn_request(tools=[{
+        "name": "create_nodes",
+        "description": "Create nodes",
+        "inputSchema": {"type": "object", "properties": {}},
+    }])
+    response = client.post("/api/copilot/turn", json=payload, headers=SESSION_HEADERS)
+    assert response.status_code == 502
+    assert "Inspect mode" in response.json()["detail"]
+
+
+def test_cancelled_turn_does_not_call_provider(client, monkeypatch):
+    called = False
+
+    async def fake_turn(_request, _session_id):
+        nonlocal called
+        called = True
+        return {"message": "unexpected", "toolCalls": [], "contextRevision": 7, "finishReason": "stop"}
+
+    monkeypatch.setattr(copilot, "run_copilot_turn", fake_turn)
+    client.post("/api/copilot/cancel/request-00000001", headers=SESSION_HEADERS)
+    response = client.post("/api/copilot/turn", json=_turn_request(), headers=SESSION_HEADERS)
+    assert response.status_code == 200
+    assert response.json()["finishReason"] == "cancelled"
+    assert called is False
+
+
+def test_provider_connections_are_isolated_by_browser_session(client):
+    other_headers = {"X-Copilot-Session": "other-session-0000000000000002"}
+    own = client.get("/api/copilot/connections", headers=SESSION_HEADERS).json()
+    other = client.get("/api/copilot/connections", headers=other_headers).json()
+    assert any(connection["provider"] == "deepseek" for connection in own)
+    assert other == []

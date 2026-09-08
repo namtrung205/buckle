@@ -10,12 +10,14 @@ from __future__ import annotations
 import os
 import json
 import ipaddress
+import asyncio
 from urllib.parse import urlparse
 from uuid import uuid4
 from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -37,6 +39,45 @@ class PlanRequest(BaseModel):
 
     prompt: str = Field(min_length=1, max_length=4000)
     context: ModelContext
+    connection_id: str | None = Field(default=None, alias="connectionId")
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class ConversationMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=4000)
+
+
+class ClientToolDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    description: str = Field(max_length=500)
+    input_schema: dict[str, Any] = Field(alias="inputSchema")
+
+
+class ClientToolResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool_call_id: str = Field(alias="toolCallId", min_length=1, max_length=200)
+    tool: str = Field(min_length=1, max_length=64)
+    ok: bool
+    content: dict[str, Any]
+
+
+class CopilotTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(alias="requestId", min_length=8, max_length=200)
+    conversation_id: str = Field(alias="conversationId", min_length=8, max_length=200)
+    prompt: str = Field(min_length=1, max_length=4000)
+    mode: Literal["Inspect", "Edit", "Modeling", "Generate", "Agent"]
+    context: dict[str, Any]
+    history: list[ConversationMessage] = Field(default_factory=list, max_length=20)
+    tools: list[ClientToolDefinition] = Field(default_factory=list, max_length=40)
+    tool_results: list[ClientToolResult] = Field(default_factory=list, alias="toolResults", max_length=40)
     connection_id: str | None = Field(default=None, alias="connectionId")
     model: str | None = Field(default=None, min_length=1, max_length=200)
 
@@ -351,3 +392,203 @@ async def create_plan(
         raise HTTPException(status_code=status, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=502, detail=f"Copilot provider failed: {error}") from error
+
+
+QUERY_TOOL_NAMES = {
+    "get_model_summary", "get_selection", "get_entities", "query_entities",
+    "get_connected_entities", "get_nearby_nodes", "get_sections", "get_materials",
+    "validate_model",
+}
+MUTATION_TOOL_NAMES = {
+    "create_nodes", "create_members", "move_nodes", "update_members", "change_section",
+    "delete_entities", "set_selection", "hide_entities", "show_entities",
+    "execute_transaction", "preview_transaction", "undo_last_ai_change",
+    "generate_parametric",
+}
+ALLOWED_TOOL_NAMES = QUERY_TOOL_NAMES | MUTATION_TOOL_NAMES
+cancelled_requests: set[tuple[str, str]] = set()
+
+TOOL_SYSTEM_PROMPT = """You are Buckle AI, a structural-model assistant.
+Use only the supplied tools. Tool outputs are authoritative; never invent IDs, counts,
+sections, materials or mutation success. Coordinates and lengths are metres in canonical
+Z-up coordinates, forces are kN. Ask one concise clarification question when targets,
+coordinates, units or section are ambiguous.
+
+Mode rules are security boundaries:
+- Inspect: query only.
+- Edit: mutate only selected entities.
+- Modeling: low-level create/update tools.
+- Generate: use generate_parametric, not low-level geometry tools.
+- Agent: multi-step tools within the supplied budget.
+
+Prefer batch calls. Query before using unknown IDs. For a user request such as finding
+members by length/material, call query_entities and then set_selection if requested.
+Destructive tools may return a preview and approval token: explain the preview and stop;
+never fabricate approval. Do not expose chain-of-thought. Keep final answers concise and
+state exact affected counts/IDs from tool results."""
+
+
+def _turn_connection(request: CopilotTurnRequest, session_id: str) -> tuple[ProviderConnection, str]:
+    if request.connection_id:
+        connection = connections.get((session_id, request.connection_id))
+        if not connection:
+            raise RuntimeError("Selected provider connection no longer exists")
+        if not request.model or request.model not in connection.models:
+            raise RuntimeError("Selected model is not allowed for this connection")
+        return connection, request.model
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("Configure a provider connection before chatting")
+    model = os.getenv("COPILOT_MODEL", "claude-sonnet-4-5")
+    return ProviderConnection(
+        id="environment", provider="anthropic", label="Anthropic (environment)",
+        api_key=api_key, base_url="https://api.anthropic.com/v1", models=[model],
+    ), model
+
+
+def _validate_turn_tools(request: CopilotTurnRequest) -> None:
+    names = [tool.name for tool in request.tools]
+    if len(names) != len(set(names)):
+        raise RuntimeError("Duplicate tool definitions")
+    unknown = set(names) - ALLOWED_TOOL_NAMES
+    if unknown:
+        raise RuntimeError(f"Unsupported tool definitions: {', '.join(sorted(unknown))}")
+    if request.mode == "Inspect" and set(names) - QUERY_TOOL_NAMES:
+        raise RuntimeError("Inspect mode cannot expose mutation tools")
+    serialized_size = len(json.dumps(request.model_dump(by_alias=True), separators=(",", ":")))
+    if serialized_size > 250_000:
+        raise RuntimeError("Copilot turn context exceeds 250 KB")
+
+
+def _turn_user_content(request: CopilotTurnRequest) -> str:
+    payload = {
+        "conversationId": request.conversation_id,
+        "mode": request.mode,
+        "modelContext": request.context,
+        "recentConversation": [message.model_dump() for message in request.history[-12:]],
+        "userRequest": request.prompt,
+        "toolResults": [result.model_dump(by_alias=True) for result in request.tool_results],
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict[str, Any]:
+    _validate_turn_tools(request)
+    connection, model = _turn_connection(request, session_id)
+    user_content = _turn_user_content(request)
+    async with httpx.AsyncClient(timeout=60) as client:
+        if connection.provider == "anthropic":
+            response = await client.post(
+                f"{connection.base_url}/messages",
+                headers={**_headers(connection.provider, connection.api_key), "content-type": "application/json"},
+                json={
+                    "model": model, "max_tokens": 2200, "temperature": 0,
+                    "system": TOOL_SYSTEM_PROMPT,
+                    "messages": [{"role": "user", "content": user_content}],
+                    "tools": [{"name": tool.name, "description": tool.description, "input_schema": tool.input_schema} for tool in request.tools],
+                },
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"Provider request failed ({response.status_code})")
+            content = response.json().get("content", [])
+            text = "\n".join(str(block.get("text", "")) for block in content if block.get("type") == "text").strip()
+            tool_calls = [{
+                "id": str(block.get("id") or uuid4()), "name": block.get("name"),
+                "arguments": block.get("input") or {},
+            } for block in content if block.get("type") == "tool_use"]
+        else:
+            response = await client.post(
+                f"{connection.base_url}/chat/completions",
+                headers={**_headers(connection.provider, connection.api_key), "content-type": "application/json"},
+                json={
+                    "model": model, "temperature": 0,
+                    "messages": [
+                        {"role": "system", "content": TOOL_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_content},
+                    ],
+                    "tools": [{"type": "function", "function": {
+                        "name": tool.name, "description": tool.description,
+                        "parameters": tool.input_schema,
+                    }} for tool in request.tools],
+                    "tool_choice": "auto",
+                },
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(f"Provider request failed ({response.status_code})")
+            message = response.json().get("choices", [{}])[0].get("message", {})
+            text = str(message.get("content") or "").strip()
+            tool_calls = []
+            for call in message.get("tool_calls") or []:
+                function = call.get("function") or {}
+                try:
+                    arguments = json.loads(function.get("arguments") or "{}")
+                except json.JSONDecodeError as error:
+                    raise RuntimeError("Provider returned invalid tool arguments") from error
+                tool_calls.append({
+                    "id": str(call.get("id") or uuid4()), "name": function.get("name"),
+                    "arguments": arguments,
+                })
+    if len(tool_calls) > 10:
+        raise RuntimeError("Provider exceeded the 10 tool-call turn budget")
+    allowed = {tool.name for tool in request.tools}
+    if any(call["name"] not in allowed for call in tool_calls):
+        raise RuntimeError("Provider returned a tool that is not available in this mode")
+    return {
+        "message": text,
+        "toolCalls": tool_calls,
+        "contextRevision": request.context.get("revision"),
+        "finishReason": "tool_calls" if tool_calls else "stop",
+    }
+
+
+@router.post("/turn")
+async def copilot_turn(
+    request: CopilotTurnRequest,
+    x_copilot_session: str = Header(min_length=20, max_length=200),
+):
+    try:
+        key = (x_copilot_session, request.request_id)
+        if key in cancelled_requests:
+            cancelled_requests.discard(key)
+            return {"message": "", "toolCalls": [], "finishReason": "cancelled", "contextRevision": request.context.get("revision")}
+        return await run_copilot_turn(request, x_copilot_session)
+    except RuntimeError as error:
+        status = 503 if "connection" in str(error).lower() else 502
+        raise HTTPException(status_code=status, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=502, detail=f"Copilot provider failed: {error}") from error
+
+
+@router.post("/turn/stream")
+async def copilot_turn_stream(
+    request: CopilotTurnRequest,
+    x_copilot_session: str = Header(min_length=20, max_length=200),
+):
+    async def events():
+        key = (x_copilot_session, request.request_id)
+        yield "event: status\ndata: {\"status\":\"planning\"}\n\n"
+        try:
+            result = await run_copilot_turn(request, x_copilot_session)
+            if key in cancelled_requests:
+                yield "event: cancelled\ndata: {}\n\n"
+                return
+            message = result.get("message") or ""
+            for start in range(0, len(message), 80):
+                yield f"event: text\ndata: {json.dumps({'text': message[start:start + 80]}, ensure_ascii=False)}\n\n"
+            yield f"event: result\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
+        except Exception as error:
+            yield f"event: error\ndata: {json.dumps({'message': str(error)})}\n\n"
+        finally:
+            cancelled_requests.discard(key)
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+
+@router.post("/cancel/{request_id}", status_code=202)
+async def cancel_copilot_turn(
+    request_id: str,
+    x_copilot_session: str = Header(min_length=20, max_length=200),
+):
+    cancelled_requests.add((x_copilot_session, request_id))
+    asyncio.get_running_loop().call_later(60, cancelled_requests.discard, (x_copilot_session, request_id))
+    return {"cancelled": True, "requestId": request_id}

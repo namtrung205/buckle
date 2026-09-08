@@ -554,6 +554,8 @@ export class CommandGateway {
         draft = {}
         workspace = emptyWorkspace()
         break
+      default:
+        throw new CommandValidationError(`Unsupported command operation ${(operation as { type: string }).type}`)
     }
     return { draft, workspace }
   }

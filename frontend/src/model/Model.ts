@@ -64,6 +64,7 @@ import GpuAnnotations from "./Rendering/GpuAnnotations";
 import { estimateSolidTriangles, shouldEvictSolidResources } from "./Rendering/solidResourcePolicy";
 import { computeMemberFrame } from "./Rendering/memberFrame";
 import type { AnalysisOutput } from '../contracts/structuralModel';
+import { AiToolExecutor, type AgentBudget, type ParametricGeneratorBinding } from '../core/ai';
 export type PointerCoords = {
   x: number;
   y: number;
@@ -1075,6 +1076,20 @@ export class Model {
   /** Execute one validated canonical command and refresh renderer projections. */
   executeCommand(command: CommandEnvelope, options: { allowDestructive?: boolean } = {}): CommandResult {
     return this.commandGateway.execute(command, this.commandContext(options.allowDestructive === true))
+  }
+
+  /** Create a provider-neutral AI tool session wired to the live viewport projection. */
+  createAiToolExecutor(
+    parametricGenerators: Readonly<Record<string, ParametricGeneratorBinding>> = {},
+    agentBudget: AgentBudget = {},
+  ) {
+    return new AiToolExecutor(this.structuralDocument, this.commandGateway, {
+      getWorkspaceState: () => this.workspaceContext.getCommandState(),
+      applyWorkspaceState: state => this.workspaceContext.applyCommandState(state),
+      executeCommand: command => this.executeCommand(command),
+      undoCommand: () => this.undoCommand(),
+      parametricGenerators,
+    }, agentBudget)
   }
 
   undoCommand(): CommandResult | null {

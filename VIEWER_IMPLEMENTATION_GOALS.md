@@ -34,7 +34,7 @@ bổ sung roadmap AI-native để tăng tốc dựng hình, truy vấn và cập
 | 12 | Pure Structural Model Core + versioned document | Completed — core, analysis, export và render-mode smoke passed |
 | 13 | Command Bus + transaction + undo/redo | Core complete — Grid UI/E2E/history-cap verification deferred per user |
 | 14 | Parametric object kernel + regenerate/diff | Implemented — automated gates passed; UI verification pending |
-| 15 | AI Tool Registry + modes + permission policy | Planned |
+| 15 | AI Tool Registry + modes + permission policy | Implemented — automated gates passed; viewport harness verification pending |
 | 16 | AI Copilot MVP end-to-end | Planned |
 | 17 | Fast inspect/select/edit workflows | Planned |
 | 18 | Fast parametric generation workflows | Planned |
@@ -553,6 +553,27 @@ cho LLM khi gate chưa pass.
   section/load đã gán và các edit ngoài vùng thay đổi không bị mất.
 
 ## Goal 15 — AI Tool Registry + modes + permission policy
+
+### Implementation record — 2026-09-09
+
+- Đã thêm provider-neutral Tool Registry xuất cùng contract sang OpenAI-compatible và
+  Anthropic tool schema. Registry có đủ query/mutation P0 và thêm `generate_parametric`
+  qua generator injection từ Goal 14.
+- `StructuralQueryService` đọc trực tiếp pure document: summary, selection, entity lookup,
+  filter, connectivity, nearby nodes, catalogue và validation. `member.length` được tính từ
+  hai node; material đi qua member -> section -> material; semantic role ưu tiên role binding
+  rồi mới fallback theo hình học.
+- `AiToolExecutor` là authority duy nhất cho schema validation, mode authorization,
+  selection scope, idempotency, transaction rollback, risk classification, destructive
+  preview/one-time approval token và undo token chỉ áp dụng cho AI mutation gần nhất.
+- Mode đã khóa theo contract: Inspect query-only; Edit chỉ sửa selection; Modeling low-level;
+  Generate chỉ high-level generator được inject; Agent có step/command/time budget.
+- `Model.createAiToolExecutor()` nối executor vào live Command Gateway/workspace/render
+  projection nhưng core AI không import Three.js, renderer hoặc WebSocket.
+- Provider-neutral async harness và mock provider đã chạy chuỗi create nodes -> create member
+  -> selection -> change section; tests bao phủ toàn bộ mutation schema bị chặn trong Inspect,
+  computed query, preview/apply delete, idempotency, rollback, undo, Generate và Agent budget.
+- Automated gate: `test:fixture` 115 tests pass; production TypeScript/Vite build pass.
 
 ### POC implementation record — 2026-09-08
 
