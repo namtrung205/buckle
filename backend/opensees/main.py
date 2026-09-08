@@ -148,6 +148,10 @@ def run_analysis(model: dict, log_callback=None):
     _log(f"[ANALYSIS] [OK] Total analysis time: {time.time() - start_total_time:.3f}s")
     return output
 
+  except HTTPException:
+      # Preserve the original status code (e.g. the 400s raised for invalid
+      # sections/members) instead of masking them as generic 500 failures.
+      raise
   except Exception as e:
       error_msg = str(e)
       # Check if this is a DPBSV error
@@ -239,7 +243,16 @@ def create_geometric_transformation(members):
 def create_sections(sections):
     """Creates a section for the beam-column elements."""
     for section in sections:
-        properties = compute_section_properties(section)
+        try:
+            properties = compute_section_properties(section)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid section {section.get('id')} "
+                    f"(name='{section.get('name')}', type='{section.get('type')}'): {exc}"
+                ),
+            ) from exc
         E = properties['E']
         A = properties['A']
         Iz = properties['Iz']

@@ -144,3 +144,47 @@ def test_shell_pressure_reactions_balance_applied_load():
     reactions = run_analysis(model)["reactions"]
 
     assert sum(reaction["Fz"] for reaction in reactions) == pytest.approx(-10.0, abs=2e-3)
+
+
+# --------------------------------------------------------------------------- #
+# Optional section dimensions arriving as explicit JSON nulls.                #
+# Pydantic's model_dump() serialises unset optional fields (r / ri / ...) as  #
+# None, so compute_section_properties must tolerate key-present-null-value.   #
+# Regression for: TypeError: unsupported operand type(s) for *:               #
+#                 'NoneType' and 'float'                                      #
+# --------------------------------------------------------------------------- #
+
+NULLABLE_SECTION_OVERRIDES = {
+    "i-without-radius-key": {"type": "I", "depth": 300, "width": 150, "tw": 7.1, "tf": 10.7},
+    "i-null-radius": {"type": "I", "depth": 300, "width": 150, "tw": 7.1, "tf": 10.7, "r": None},
+    "tee-null-radius": {"type": "Tee", "depth": 200, "width": 100, "tw": 6.5, "tf": 10, "r": None},
+    "rhs-null-radii": {
+        "type": "RectangularHollow",
+        "width": 200,
+        "height": 200,
+        "thickness": 8,
+        "ri": None,
+        "r": None,
+    },
+    "channel-null-radius": {"type": "Channel", "depth": 200, "width": 80, "tw": 5.5, "tf": 9, "r": None},
+}
+
+
+@pytest.mark.parametrize(("case_name", "section_override"), NULLABLE_SECTION_OVERRIDES.items())
+def test_nullable_optional_section_dimensions(case_name, section_override):
+    """Sections with JSON-null optional dims must analyse without crashing."""
+    section = {"id": 1, "name": case_name, "material": MATERIAL, **section_override}
+    n1, n2 = node(1, 0, 0, 0), node(2, 6, 0, 0)
+    model = base([n1, n2], [member(1, n1, n2)])
+    model["sections"] = [section]
+    model["boundary_conditions"] = [
+        {"id": 1, "type": "fixed", "targets": [1], "dx": 1, "dy": 1, "dz": 1, "rx": 1, "ry": 1, "rz": 1}
+    ]
+    model["loads"] = [{"id": 1, "type": "nodal", "targets": [2], "value": {"x": 0, "y": 0, "z": -10}}]
+
+    # Mirror the /analysis route: validate then dump (injects the nulls).
+    validated = Model.model_validate(model).model_dump(mode="json", by_alias=True)
+    output = run_analysis(deepcopy(validated))
+
+    assert output["members"], case_name
+    assert output["reactions"], case_name

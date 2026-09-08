@@ -188,11 +188,18 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         const eaveR = createNode(width, height, z, `Eave-R-${i}`);
         const ridge = createNode(width / 2, ridgeHeight, z, `Ridge-${i}`);
 
-        // Rafter nodes - Left side (from Eave to Ridge)
+        // Rafter nodes - Left side (from Eave to Ridge).
+        // NOTE: interpolate from node coordinates (x/y/z), NOT node.mesh.position —
+        // Node meshes only exist in the 'solid-extrude' render mode and are
+        // undefined otherwise (crash: "can't access property position").
         const raftNodesL: Node[] = [eaveL];
         for (let p = 1; p < numPurlins; p++) {
             const ratio = p / numPurlins;
-            const pos = new THREE.Vector3().lerpVectors(eaveL.mesh.position, ridge.mesh.position, ratio);
+            const pos = {
+                x: eaveL.x + (ridge.x - eaveL.x) * ratio,
+                y: eaveL.y + (ridge.y - eaveL.y) * ratio,
+                z: eaveL.z + (ridge.z - eaveL.z) * ratio,
+            };
             raftNodesL.push(createNode(pos.x, pos.y, pos.z, `Raft-L-Node-${i}-${p}`));
         }
         raftNodesL.push(ridge);
@@ -201,7 +208,11 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         const raftNodesR: Node[] = [eaveR];
         for (let p = 1; p < numPurlins; p++) {
             const ratio = p / numPurlins;
-            const pos = new THREE.Vector3().lerpVectors(eaveR.mesh.position, ridge.mesh.position, ratio);
+            const pos = {
+                x: eaveR.x + (ridge.x - eaveR.x) * ratio,
+                y: eaveR.y + (ridge.y - eaveR.y) * ratio,
+                z: eaveR.z + (ridge.z - eaveR.z) * ratio,
+            };
             raftNodesR.push(createNode(pos.x, pos.y, pos.z, `Raft-R-Node-${i}-${p}`));
         }
         raftNodesR.push(ridge);
@@ -403,6 +414,10 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             value: new THREE.Vector3(0, -s, 0) // Downward in global -Y (Three.js Y-up = gravity)
         } as any).createOrUpdate();
     }
+
+    // Data-driven render modes do not create legacy meshes while entities are
+    // generated, so publish the completed model to the structural scene once.
+    model.scheduleStructuralSceneSync();
 
     // Frame the generated warehouse so long spans are fully visible
     model.camera.fitModelToView();

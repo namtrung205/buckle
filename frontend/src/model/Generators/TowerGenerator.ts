@@ -382,6 +382,8 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
   }
 
   model.invalidateResults();
+  // Publish the completed generated model once for centerline/thin-shell modes.
+  model.scheduleStructuralSceneSync();
   return { nodes: nodeCount, members: memberCount, supports: supportCount, loads: loadCount };
 }
 
