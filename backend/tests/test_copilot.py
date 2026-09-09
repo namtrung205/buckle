@@ -261,6 +261,15 @@ def test_goal17_provider_neutral_tools_are_accepted_by_backend_contract():
     copilot._validate_turn_tools(request)
 
 
+def test_catalogue_creation_tools_are_accepted_by_backend_contract():
+    tools = [{
+        "name": name, "description": f"Catalogue {name}",
+        "inputSchema": {"type": "object", "properties": {}},
+    } for name in ["create_material", "create_section"]]
+    request = copilot.CopilotTurnRequest.model_validate(_turn_request(mode="Generate", tools=tools))
+    copilot._validate_turn_tools(request)
+
+
 def test_exhausted_provider_rate_limit_is_preserved_as_429(client, monkeypatch):
     async def rate_limited(_request, _session_id):
         raise copilot.ProviderQueueTimeout("Provider rate limit exceeded; retry after 2s")

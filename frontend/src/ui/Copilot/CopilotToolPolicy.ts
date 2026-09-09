@@ -1,4 +1,5 @@
 const providerPreviewTools = new Set([
+  'create_material', 'create_section',
   'move_nodes', 'update_members', 'change_section', 'change_material',
   'transform_entities', 'update_entity_properties',
   'create_grid', 'create_portal_frame', 'create_frame_array', 'create_truss',

@@ -3,12 +3,13 @@ import type { AiMode, AiToolDefinition, ToolPreview } from './types.ts'
 
 const workspaceTools = new Set(['set_selection', 'hide_entities', 'show_entities'])
 const editTools = new Set(['move_nodes', 'update_members', 'change_section', 'change_material', 'transform_entities', 'update_entity_properties', 'delete_entities'])
-const modelingTools = new Set(['create_nodes', 'create_members', ...editTools, ...workspaceTools, 'execute_transaction', 'preview_transaction', 'undo_last_ai_change'])
+const catalogueTools = new Set(['create_material', 'create_section'])
+const modelingTools = new Set([...catalogueTools, 'create_nodes', 'create_members', ...editTools, ...workspaceTools, 'execute_transaction', 'preview_transaction', 'undo_last_ai_change'])
 export const PARAMETRIC_MUTATION_TOOLS = [
   'create_grid', 'create_portal_frame', 'create_frame_array', 'create_truss',
   'create_warehouse', 'create_tower', 'update_parametric_object', 'generate_parametric',
 ] as const
-const generateTools = new Set([...workspaceTools, 'preview_transaction', 'undo_last_ai_change', ...PARAMETRIC_MUTATION_TOOLS])
+const generateTools = new Set([...catalogueTools, ...workspaceTools, 'preview_transaction', 'undo_last_ai_change', ...PARAMETRIC_MUTATION_TOOLS])
 
 export const isToolAllowed = (mode: AiMode, tool: AiToolDefinition) => {
   if (tool.kind === 'query') return true

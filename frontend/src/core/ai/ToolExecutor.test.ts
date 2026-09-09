@@ -57,7 +57,7 @@ test('registry exposes provider-neutral schemas for every P0 tool', () => {
   for (const name of [
     'get_model_summary', 'get_selection', 'resolve_targets', 'remember_targets', 'get_entities', 'query_entities', 'get_connected_entities',
     'get_nearby_nodes', 'get_sections', 'get_materials', 'get_parametric_templates', 'validate_model', 'create_nodes',
-    'create_members', 'move_nodes', 'update_members', 'change_section', 'delete_entities',
+    'create_material', 'create_section', 'create_members', 'move_nodes', 'update_members', 'change_section', 'delete_entities',
     'change_material', 'transform_entities', 'update_entity_properties',
     'set_selection', 'hide_entities', 'show_entities', 'execute_transaction', 'preview_transaction',
     'undo_last_ai_change', 'create_grid', 'create_portal_frame', 'create_frame_array',
@@ -146,6 +146,8 @@ test('Inspect rejects mutation even when a provider emits a valid mutation call'
 test('Inspect denies every registered mutation schema before handler execution', () => {
   const state = harness()
   const args: Record<string, Record<string, unknown>> = {
+    create_material: { name: 'S355', E: '210 GPa', nu: 0.3, preview: true },
+    create_section: { name: 'I500', type: 'I', materialId: 1, height: '500 mm', width: '200 mm', tw: '10 mm', tf: '16 mm', preview: true },
     create_nodes: { nodes: [{ position: [0, 0, 0] }] },
     create_members: { members: [{ nodeI: 1, nodeJ: 2, sectionId: 1 }] },
     move_nodes: { nodes: [{ id: 1, position: [0, 0, 0] }] },
@@ -169,6 +171,49 @@ test('Inspect denies every registered mutation schema before handler execution',
     assert.equal(response.error?.code, 'MODE_DENIED', tool.name)
   }
   assert.equal(state.document.revision, 0)
+})
+
+test('catalogue tools preview then create SI materials and sections with undo', () => {
+  const state = harness()
+  const materialPreview = invoke(state.executor, 'material-preview', 'create_material', {
+    name: 'Steel S355', category: 'steel', E: '210 GPa', nu: 0.3, rho: '7.85 t/m3', fy: '355 MPa', preview: true,
+  }, 'Generate')
+  assert.equal(materialPreview.ok, true)
+  assert.equal(materialPreview.preview?.created, 1)
+  assert.equal(state.document.materials.size, 2)
+
+  const material = invoke(state.executor, 'material-apply', 'create_material', {
+    name: 'Steel S355', category: 'steel', E: '210 GPa', nu: 0.3, rho: '7.85 t/m3', fy: '355 MPa', preview: false,
+  }, 'Generate')
+  assert.equal(material.ok, true)
+  const materialId = material.ids?.materials?.[0] as number
+  assert.equal(state.document.materials.get(materialId)?.E, 210e9)
+  assert.equal(state.document.materials.get(materialId)?.rho, 7850)
+  assert.equal(state.document.materials.get(materialId)?.fy, 355e6)
+
+  const section = invoke(state.executor, 'section-apply', 'create_section', {
+    name: 'I500', type: 'I', materialId, height: '500 mm', width: '200 mm', tw: '10 mm', tf: '16 mm', preview: false,
+  }, 'Generate')
+  assert.equal(section.ok, true)
+  const sectionId = section.ids?.sections?.[0] as number
+  assert.equal(state.document.sections.get(sectionId)?.height, 0.5)
+  assert.equal(state.document.sections.get(sectionId)?.tf, 0.016)
+  assert.ok(section.undoToken)
+  assert.equal(invoke(state.executor, 'undo-section', 'undo_last_ai_change', { undoToken: section.undoToken }, 'Generate').ok, true)
+  assert.equal(state.document.sections.has(sectionId), false)
+})
+
+test('create_section rejects unknown material, incomplete geometry and invalid hollow thickness', () => {
+  const state = harness()
+  assert.match(invoke(state.executor, 'unknown-material', 'create_section', {
+    name: 'I500', type: 'I', materialId: 999, height: 0.5, width: 0.2, tw: 0.01, tf: 0.016,
+  }).error!.message, /Unknown materials id 999/)
+  assert.match(invoke(state.executor, 'missing-web', 'create_section', {
+    name: 'I500', type: 'I', materialId: 1, height: 0.5, width: 0.2, tf: 0.016,
+  }).error!.message, /requires tw/)
+  assert.match(invoke(state.executor, 'bad-pipe', 'create_section', {
+    name: 'Pipe', type: 'HollowCircular', materialId: 1, diameter: '100 mm', thickness: '60 mm',
+  }).error!.message, /less than half/)
 })
 
 test('Edit mutations are selection-scoped while selection tools remain available', () => {

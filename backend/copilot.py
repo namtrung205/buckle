@@ -560,7 +560,7 @@ QUERY_TOOL_NAMES = {
     "validate_model",
 }
 MUTATION_TOOL_NAMES = {
-    "create_nodes", "create_members", "move_nodes", "update_members", "change_section",
+    "create_material", "create_section", "create_nodes", "create_members", "move_nodes", "update_members", "change_section",
     "change_material", "transform_entities", "update_entity_properties",
     "delete_entities", "set_selection", "hide_entities", "show_entities",
     "execute_transaction", "preview_transaction", "undo_last_ai_change",
@@ -583,6 +583,8 @@ Mode rules are security boundaries:
 - Generate: prefer the matching high-level create_grid/create_portal_frame/create_frame_array/
   create_truss/create_warehouse/create_tower tool. Use update_parametric_object for changes to an
   existing generated object. Never use low-level geometry tools when a semantic generator exists.
+- Use create_material before create_section when the requested material does not exist. Use
+  create_section before member/generator creation when the requested section does not exist.
 - Agent: multi-step tools within the supplied budget.
 
 Prefer batch calls. Query before using unknown IDs. For a user request such as finding

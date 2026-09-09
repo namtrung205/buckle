@@ -40,6 +40,39 @@ const asRefs = (value: unknown, label: string) => asArray<EntityReference>(value
   return clone(ref)
 })
 
+const parseUnitValue = (value: unknown, label: string, units: Readonly<Record<string, number>>) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value !== 'string') throw new Error(`${label} must be a finite number or an explicit engineering value`)
+  const normalized = value.trim().toLowerCase().replace(/³/g, '3').replace(/²/g, '2').replace(/\s+/g, ' ')
+  const match = normalized.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)\s*(.*)$/)
+  if (!match) throw new Error(`${label} must be a finite number or an explicit engineering value`)
+  const numeric = Number(match[1]); const unit = match[2].replace(/\s/g, '')
+  const scale = units[unit]
+  if (!Number.isFinite(numeric) || scale === undefined) throw new Error(`${label} uses an unsupported unit`)
+  return numeric * scale
+}
+
+const parseLength = (value: unknown, label: string) => parseUnitValue(value, label, {
+  '': 1, m: 1, metre: 1, meter: 1, 'mét': 1, mm: 1e-3, cm: 1e-2, ft: 0.3048, foot: 0.3048, feet: 0.3048, in: 0.0254, inch: 0.0254,
+})
+const parseStress = (value: unknown, label: string) => parseUnitValue(value, label, {
+  '': 1, pa: 1, kpa: 1e3, mpa: 1e6, gpa: 1e9, 'n/mm2': 1e6, 'n/mm^2': 1e6,
+})
+const parseDensity = (value: unknown, label: string) => parseUnitValue(value, label, {
+  '': 1, 'kg/m3': 1, 'kg/m^3': 1, 't/m3': 1e3, 't/m^3': 1e3,
+})
+const parseThermalExpansion = (value: unknown, label: string) => parseUnitValue(value, label, {
+  '': 1, '/k': 1, '1/k': 1, '/c': 1, '1/c': 1, '/°c': 1, '1/°c': 1,
+})
+const nonEmptyText = (value: unknown, label: string) => {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} must be a non-empty string`)
+  return value.trim()
+}
+const positive = (value: number, label: string) => {
+  if (!(value > 0)) throw new Error(`${label} must be greater than zero`)
+  return value
+}
+
 const PARAMETRIC_KIND_BY_TOOL: Readonly<Record<string, string>> = {
   create_grid: 'Grid', create_portal_frame: 'PortalFrame', create_frame_array: 'FrameArray',
   create_truss: 'Truss', create_warehouse: 'Warehouse', create_tower: 'Tower',
@@ -190,6 +223,8 @@ export class AiToolExecutor {
 
   private operationsFor(name: string, args: Record<string, unknown>): CommandTransactionOperation[] {
     switch (name) {
+      case 'create_material': return [{ type: 'CreateOrUpdateMaterials', payload: { materials: [this.materialRecord(args)] } }]
+      case 'create_section': return [{ type: 'CreateOrUpdateSections', payload: { sections: [this.sectionRecord(args)] } }]
       case 'create_nodes': return [{ type: 'CreateNodes', payload: { nodes: args.nodes as never[] } }]
       case 'create_members': return [{ type: 'CreateMembers', payload: { members: args.members as never[] } }]
       case 'move_nodes': return [{ type: 'MoveNodes', payload: { nodes: args.nodes as never[] } }]
@@ -206,6 +241,59 @@ export class AiToolExecutor {
       case 'preview_transaction': return clone(asArray<CommandTransactionOperation>(args.operations, 'operations'))
       default: throw new Error(`No mutation handler for ${name}`)
     }
+  }
+
+  private materialRecord(args: Record<string, unknown>) {
+    const record: Record<string, unknown> = {
+      name: nonEmptyText(args.name, 'name'), E: positive(parseStress(args.E, 'E'), 'E'), nu: args.nu,
+    }
+    const nu = Number(record.nu)
+    if (!Number.isFinite(nu) || nu <= -1 || nu >= 0.5) throw new Error('nu must be greater than -1 and less than 0.5')
+    for (const key of ['category', 'code', 'grade', 'preset']) if (args[key] !== undefined) record[key] = nonEmptyText(args[key], key)
+    if (args.rho !== undefined) record.rho = positive(parseDensity(args.rho, 'rho'), 'rho')
+    if (args.alpha !== undefined) record.alpha = parseThermalExpansion(args.alpha, 'alpha')
+    for (const key of ['fy', 'fc', 'fu', 'ft']) if (args[key] !== undefined) record[key] = positive(parseStress(args[key], key), key)
+    if (args.metadata !== undefined) record.metadata = clone(asRecord(args.metadata, 'metadata'))
+    return record as never
+  }
+
+  private sectionRecord(args: Record<string, unknown>) {
+    const materialId = Number(args.materialId)
+    if (!this.document.materials.has(materialId)) throw new Error(`Unknown materials id ${materialId}`)
+    const record: Record<string, unknown> = {
+      name: nonEmptyText(args.name, 'name'), type: args.type, materialId,
+    }
+    for (const key of ['depth', 'height', 'width', 'tw', 'tf', 'diameter', 'thickness', 'r', 'ri']) {
+      if (args[key] !== undefined) record[key] = positive(parseLength(args[key], key), key)
+    }
+    const height = Number(record.height ?? record.depth)
+    const requireDimensions = (...keys: string[]) => {
+      for (const key of keys) if (record[key] === undefined && !(key === 'height' && Number.isFinite(height))) throw new Error(`${String(record.type)} section requires ${key}`)
+    }
+    switch (record.type) {
+      case 'I': case 'IPN': case 'Channel': case 'UPN': case 'Tee': requireDimensions('height', 'width', 'tw', 'tf'); break
+      case 'Rectangular': requireDimensions('height', 'width'); break
+      case 'Circular': requireDimensions('diameter'); break
+      case 'HollowCircular': requireDimensions('diameter', 'thickness'); break
+      case 'RectangularHollow': requireDimensions('height', 'width', 'thickness'); break
+      case 'Angle': requireDimensions('width', 'thickness'); break
+      default: throw new Error(`Unsupported section type ${String(record.type)}`)
+    }
+    if (Number.isFinite(height) && record.height === undefined) record.height = height
+    const thickness = Number(record.thickness)
+    if (record.type === 'HollowCircular' && thickness * 2 >= Number(record.diameter)) throw new Error('HollowCircular thickness must be less than half the diameter')
+    if (record.type === 'RectangularHollow' && (thickness * 2 >= height || thickness * 2 >= Number(record.width))) throw new Error('RectangularHollow thickness must fit inside height and width')
+    if (['I', 'IPN', 'Channel', 'UPN', 'Tee'].includes(String(record.type))) {
+      if (Number(record.tw) >= Number(record.width)) throw new Error('tw must be less than width')
+      if (Number(record.tf) >= height || (record.type !== 'Tee' && Number(record.tf) * 2 >= height)) throw new Error('tf must fit inside section height')
+    }
+    if (args.properties !== undefined) {
+      const properties = clone(asRecord(args.properties, 'properties'))
+      for (const [key, value] of Object.entries(properties)) if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`properties.${key} must be a finite number`)
+      record.properties = properties
+    }
+    if (args.metadata !== undefined) record.metadata = clone(asRecord(args.metadata, 'metadata'))
+    return record as never
   }
 
   private changeMaterialOperations(memberIds: readonly number[], materialId: number): CommandTransactionOperation[] {

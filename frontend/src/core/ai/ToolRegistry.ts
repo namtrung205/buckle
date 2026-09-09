@@ -11,6 +11,8 @@ const ref = object({ collection: { type: 'string', enum: collections }, id: { ty
 const vector = { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }
 const engineeringLength = { oneOf: [{ type: 'number' }, { type: 'string' }], description: 'Length as canonical metres or an explicit value such as 6000 mm, 6 m, 20 ft.' }
 const engineeringAngle = { oneOf: [{ type: 'number' }, { type: 'string' }], description: 'Angle in degrees or an explicit value such as 15 deg or 0.26 rad.' }
+const engineeringStress = { oneOf: [{ type: 'number' }, { type: 'string' }], description: 'Stress/modulus as canonical Pa or an explicit value such as 210 GPa or 355 MPa.' }
+const engineeringDensity = { oneOf: [{ type: 'number' }, { type: 'string' }], description: 'Density as canonical kg/m3 or an explicit value such as 7850 kg/m3 or 7.85 t/m3.' }
 const engineeringVector = { type: 'array', items: engineeringLength, minItems: 3, maxItems: 3 }
 const generationControl = { preview: { type: 'boolean' }, approvalToken: { type: 'string' } }
 
@@ -48,6 +50,19 @@ const definitions: AiToolDefinition[] = [
   { name: 'get_materials', kind: 'query', description: 'Return all material catalogue records.', inputSchema: object({ ids }) },
   { name: 'get_parametric_templates', kind: 'query', description: 'Return the versioned parametric template catalogue, published defaults and Vietnamese/English engineering vocabulary.', inputSchema: object({ kind: { type: 'string' } }) },
   { name: 'validate_model', kind: 'query', description: 'Validate topology and return deterministic warnings.', inputSchema: object({}) },
+  { name: 'create_material', kind: 'mutation', description: 'Create one structural material. E and strengths accept Pa/MPa/GPa; density accepts kg/m3 or t/m3. Provider calls are previewed before apply.', inputSchema: object({
+    name: { type: 'string' }, category: { type: 'string' }, code: { type: 'string' }, grade: { type: 'string' }, preset: { type: 'string' },
+    E: engineeringStress, nu: { type: 'number', minimum: -0.999, maximum: 0.499 }, rho: engineeringDensity,
+    alpha: { oneOf: [{ type: 'number' }, { type: 'string' }], description: 'Thermal expansion coefficient as canonical 1/K or a value such as 12e-6 /K.' },
+    fy: engineeringStress, fc: engineeringStress, fu: engineeringStress, ft: engineeringStress,
+    metadata: { type: 'object' }, ...generationControl,
+  }, ['name', 'E', 'nu']) },
+  { name: 'create_section', kind: 'mutation', description: 'Create one structural section using SI dimensions or explicit units such as 500 mm. The referenced material must already exist. Provider calls are previewed before apply.', inputSchema: object({
+    name: { type: 'string' }, type: { type: 'string', enum: ['I', 'Rectangular', 'Circular', 'HollowCircular', 'RectangularHollow', 'Channel', 'Angle', 'Tee', 'IPN', 'UPN'] },
+    materialId: { type: 'integer', minimum: 1 }, depth: engineeringLength, height: engineeringLength, width: engineeringLength,
+    tw: engineeringLength, tf: engineeringLength, diameter: engineeringLength, thickness: engineeringLength, r: engineeringLength, ri: engineeringLength,
+    properties: { type: 'object', description: 'Optional canonical section properties such as A, Iy, Iz and Jxx.' }, metadata: { type: 'object' }, ...generationControl,
+  }, ['name', 'type', 'materialId']) },
   { name: 'create_nodes', kind: 'mutation', description: 'Create a batch of nodes.', inputSchema: object({ nodes: batch(object({ id: { type: 'integer', minimum: 1 }, alias: { type: 'string' }, name: { type: 'string' }, position: vector }, ['position'])) }, ['nodes']) },
   { name: 'create_members', kind: 'mutation', description: 'Create a batch of straight members.', inputSchema: object({ members: batch(object({ id: { type: 'integer', minimum: 1 }, alias: { type: 'string' }, label: { type: 'string' }, nodeI: {}, nodeJ: {}, sectionId: {} }, ['nodeI', 'nodeJ', 'sectionId'])) }, ['members']) },
   { name: 'move_nodes', kind: 'mutation', description: 'Move existing nodes in one batch. Provider calls are previewed before apply.', inputSchema: object({ nodes: batch(object({ id: { type: 'integer', minimum: 1 }, position: vector, name: { type: 'string' } }, ['id', 'position'])), preview: { type: 'boolean' } }, ['nodes']) },

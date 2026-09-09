@@ -4,6 +4,7 @@ import { safeProviderToolArguments } from './CopilotToolPolicy.ts'
 
 test('provider structural edits are forced to preview until the user applies them', () => {
   for (const tool of [
+    'create_material', 'create_section',
     'move_nodes', 'update_members', 'change_section', 'change_material', 'transform_entities', 'update_entity_properties',
     'create_grid', 'create_portal_frame', 'create_frame_array', 'create_truss', 'create_warehouse', 'create_tower',
     'update_parametric_object', 'generate_parametric',

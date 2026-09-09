@@ -1,5 +1,22 @@
 # Processing handoff
 
+## AI material and section catalogue tools — 2026-09-09
+
+- Added provider-neutral `create_material` and `create_section` tools. They are exposed in
+  Modeling, Generate and Agent modes, while Inspect remains query-only and Edit remains scoped to
+  existing selected entities.
+- Provider-authored catalogue creation is always previewed before the Apply UI commits it. Apply
+  uses the existing Command Gateway transaction, revision, audit, idempotency and undo behavior.
+- `create_material` accepts explicit Pa/kPa/MPa/GPa modulus/strength values, kg/m3 or t/m3 density,
+  optional thermal expansion and metadata, and validates physical ranges.
+- `create_section` supports every current `SectionType`, explicit m/mm/cm/ft/in dimensions,
+  validates the referenced material and required family dimensions, and rejects invalid wall/web/
+  flange thicknesses before preview or commit.
+- Backend tool allowlists and the provider system prompt now expose the two tools and instruct the
+  provider to create a missing material before a dependent section.
+- Verification: frontend fixture **161/161 passed**, focused catalogue/Copilot ESLint passed,
+  backend Copilot **26/26 passed**, production build passed; the existing large-chunk warning remains.
+
 ## Session handoff — 2026-09-09
 
 ### Repository state
