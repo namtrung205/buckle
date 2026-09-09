@@ -317,3 +317,97 @@ def test_provider_connections_are_isolated_by_browser_session(client):
     other = client.get("/api/copilot/connections", headers=other_headers).json()
     assert any(connection["provider"] == "deepseek" for connection in own)
     assert other == []
+
+
+def test_local_provider_connection_works_without_api_key(client):
+    response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+        "provider": "ollama", "modelIds": ["llama3.2:3b"],
+    })
+    assert response.status_code == 201
+    connection = response.json()
+    assert connection["provider"] == "ollama"
+    assert connection["baseUrl"] == "http://localhost:11434/v1"
+    assert connection["keyHint"] == "local"
+
+
+def test_local_provider_auto_discovers_models(client, monkeypatch):
+    async def fake_models(provider, base_url, api_key):
+        assert provider == "ollama"
+        assert base_url == "http://localhost:11434/v1"
+        assert api_key == ""
+        return ["llama3.2:3b", "llama3.2:3b", "qwen2.5:7b-instruct"]
+
+    monkeypatch.setattr(copilot, "discover_models", fake_models)
+    response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={"provider": "ollama"})
+    assert response.status_code == 201
+    assert response.json()["models"] == ["llama3.2:3b", "qwen2.5:7b-instruct"]
+
+
+def test_local_provider_requires_opt_in_in_production(client, monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("COPILOT_ALLOW_LOCAL_PROVIDERS", raising=False)
+    response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+        "provider": "lmstudio", "modelIds": ["qwen2.5-7b-instruct"],
+    })
+    assert response.status_code == 422
+    assert "COPILOT_ALLOW_LOCAL_PROVIDERS" in response.json()["detail"]
+    monkeypatch.setenv("COPILOT_ALLOW_LOCAL_PROVIDERS", "1")
+    response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+        "provider": "lmstudio", "modelIds": ["qwen2.5-7b-instruct"],
+    })
+    assert response.status_code == 201
+    assert response.json()["baseUrl"] == "http://localhost:1234/v1"
+
+
+def test_local_provider_rejects_public_or_metadata_base_urls(client):
+    for base_url in ("http://8.8.8.8/v1", "http://169.254.169.254/v1", "http://user:pass@localhost:11434/v1"):
+        response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+            "provider": "local", "baseUrl": base_url, "modelIds": ["llama3.2:3b"],
+        })
+        assert response.status_code == 422
+
+
+def test_local_provider_accepts_loopback_and_private_base_urls(client):
+    for base_url in ("http://127.0.0.1:8000/v1", "http://192.168.1.10:1234/v1", "http://host.docker.internal:11434/v1"):
+        response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+            "provider": "local", "baseUrl": base_url, "modelIds": ["llama3.2:3b"],
+        })
+        assert response.status_code == 201
+
+
+def test_local_provider_requires_base_url_for_custom_local(client):
+    response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+        "provider": "local", "modelIds": ["llama3.2:3b"],
+    })
+    assert response.status_code == 422
+    assert "baseUrl" in response.json()["detail"]
+
+
+def test_cloud_provider_still_requires_an_api_key(client):
+    response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+        "provider": "openai", "modelIds": ["test-model"],
+    })
+    assert response.status_code == 422
+
+
+def test_local_headers_omit_authorization():
+    assert copilot._headers("ollama", "") == {}
+    assert copilot._headers("openai", "key")["Authorization"] == "Bearer key"
+    assert copilot._headers("anthropic", "key")["x-api-key"] == "key"
+
+
+def test_parse_tool_calls_accepts_string_and_object_arguments():
+    parsed = copilot._parse_tool_calls({"tool_calls": [{
+        "id": "call-1", "type": "function",
+        "function": {"name": "query_entities", "arguments": "{\"collection\": \"members\"}"},
+    }]})
+    assert parsed[0]["arguments"] == {"collection": "members"}
+    parsed = copilot._parse_tool_calls({"tool_calls": [{
+        "id": "call-2", "type": "function",
+        "function": {"name": "query_entities", "arguments": {"collection": "nodes"}},
+    }]})
+    assert parsed[0]["arguments"] == {"collection": "nodes"}
+    parsed = copilot._parse_tool_calls({"tool_calls": [{"id": "call-3", "function": {"name": "x"}}]})
+    assert parsed[0]["arguments"] == {}
+    with pytest.raises(RuntimeError):
+        copilot._parse_tool_calls({"tool_calls": [{"id": "call-4", "function": {"name": "x", "arguments": "{bad"}}]})

@@ -18,7 +18,7 @@ from typing import Any, Literal
 import httpx
 from fastapi import APIRouter, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from provider_rate_limit import ProviderQueueTimeout, ProviderRateGovernor, estimate_request_tokens
 
 
@@ -86,12 +86,21 @@ class CopilotTurnRequest(BaseModel):
 class ConnectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["openai", "deepseek", "anthropic", "gemini", "openrouter", "nvidia", "groq", "compatible"]
-    api_key: str = Field(min_length=1, max_length=1000, alias="apiKey")
+    provider: Literal[
+        "openai", "deepseek", "anthropic", "gemini", "openrouter", "nvidia", "groq",
+        "compatible", "ollama", "lmstudio", "local",
+    ]
+    api_key: str = Field(default="", max_length=1000, alias="apiKey")
     label: str | None = Field(default=None, max_length=100)
     base_url: str | None = Field(default=None, alias="baseUrl", max_length=500)
     model_ids: list[str] = Field(default_factory=list, alias="modelIds", max_length=100)
     rate_limit: "RateLimitSettings | None" = Field(default=None, alias="rateLimit")
+
+    @model_validator(mode="after")
+    def _require_cloud_api_key(self) -> "ConnectionRequest":
+        if self.provider not in LOCAL_PROVIDERS and not self.api_key.strip():
+            raise ValueError("apiKey is required for cloud providers")
+        return self
 
 
 class RateLimitSettings(BaseModel):
@@ -124,6 +133,20 @@ PROVIDER_DEFAULTS = {
     "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1"),
     "nvidia": ("NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
     "groq": ("GroqCloud", "https://api.groq.com/openai/v1"),
+}
+# Local runtimes (Ollama, LM Studio, vLLM, llama.cpp server, ...) speak the
+# OpenAI-compatible chat API but are reached over plain http loopback/private
+# addresses, so they follow a separate allow-list and validation branch.
+LOCAL_PROVIDERS = {"ollama", "lmstudio", "local"}
+LOCAL_PROVIDER_LABELS = {
+    "ollama": "Ollama (local)",
+    "lmstudio": "LM Studio (local)",
+    "local": "Local runtime",
+}
+LOCAL_PRESET_BASE_URLS = {
+    "ollama": "http://localhost:11434/v1",
+    "lmstudio": "http://localhost:1234/v1",
+    "local": "",
 }
 connections: dict[tuple[str, str], ProviderConnection] = {}
 rate_governors: dict[tuple[str, str], ProviderRateGovernor] = {}
@@ -216,7 +239,46 @@ with one concise clarification question and do not call the tool.
 Do not create loads, supports, grids, shells, or parametric objects."""
 
 
+def _local_providers_allowed() -> bool:
+    if os.getenv("COPILOT_ALLOW_LOCAL_PROVIDERS", "").strip().lower() in {"1", "true", "yes"}:
+        return True
+    return os.environ.get("ENVIRONMENT", "development").strip().lower() != "production"
+
+
+def _safe_local_base_url(request: ConnectionRequest) -> tuple[str, str]:
+    if not _local_providers_allowed():
+        raise HTTPException(
+            status_code=422,
+            detail="Local provider URLs are disabled in production; set COPILOT_ALLOW_LOCAL_PROVIDERS=1 to enable them",
+        )
+    label = request.label or LOCAL_PROVIDER_LABELS[request.provider]
+    if not request.base_url:
+        preset = LOCAL_PRESET_BASE_URLS[request.provider]
+        if not preset:
+            raise HTTPException(status_code=422, detail="baseUrl is required for the custom local provider")
+        return label, preset
+    parsed = urlparse(request.base_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(status_code=422, detail="Local provider baseUrl must be an http(s) URL without credentials")
+    hostname = parsed.hostname.lower()
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip = None
+    if hostname == "host.docker.internal":
+        return label, request.base_url.rstrip("/")
+    if ip is None:
+        if hostname != "localhost":
+            raise HTTPException(status_code=422, detail="Local provider baseUrl must point at localhost or a private network address")
+    elif ip.is_link_local or not (ip.is_loopback or ip.is_private):
+        # Link-local also blocks the cloud metadata endpoint (169.254.169.254).
+        raise HTTPException(status_code=422, detail="Local provider baseUrl must point at localhost or a private network address")
+    return label, request.base_url.rstrip("/")
+
+
 def _safe_base_url(request: ConnectionRequest) -> tuple[str, str]:
+    if request.provider in LOCAL_PROVIDERS:
+        return _safe_local_base_url(request)
     if request.provider in PROVIDER_DEFAULTS:
         label, base_url = PROVIDER_DEFAULTS[request.provider]
         return request.label or label, base_url
@@ -236,6 +298,8 @@ def _safe_base_url(request: ConnectionRequest) -> tuple[str, str]:
 
 
 def _headers(provider: str, api_key: str) -> dict[str, str]:
+    if not api_key:
+        return {}
     if provider == "anthropic":
         return {"x-api-key": api_key, "anthropic-version": "2023-06-01"}
     return {"Authorization": f"Bearer {api_key}"}
@@ -272,6 +336,33 @@ async def _provider_post(
     )
 
 
+def _parse_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """Parse OpenAI-compatible tool calls, accepting string or object arguments.
+
+    Local runtimes (Ollama, LM Studio, vLLM) sometimes return already-parsed
+    argument objects instead of the documented JSON string, so both shapes are
+    normalized here.
+    """
+    tool_calls: list[dict[str, Any]] = []
+    for call in message.get("tool_calls") or []:
+        function = call.get("function") or {}
+        raw_arguments = function.get("arguments")
+        if isinstance(raw_arguments, str):
+            try:
+                arguments = json.loads(raw_arguments or "{}")
+            except json.JSONDecodeError as error:
+                raise RuntimeError("Provider returned invalid tool arguments") from error
+        elif isinstance(raw_arguments, dict):
+            arguments = raw_arguments
+        else:
+            arguments = {}
+        tool_calls.append({
+            "id": str(call.get("id") or uuid4()), "name": function.get("name"),
+            "arguments": arguments,
+        })
+    return tool_calls
+
+
 def _raise_provider_error(response: httpx.Response) -> None:
     if response.status_code == 429:
         retry_after = response.headers.get("retry-after")
@@ -288,7 +379,7 @@ def _public_connection(connection: ProviderConnection) -> dict[str, Any]:
         "label": connection.label,
         "baseUrl": connection.base_url,
         "models": connection.models,
-        "keyHint": f"••••{connection.api_key[-4:]}",
+        "keyHint": f"••••{connection.api_key[-4:]}" if connection.api_key else "local",
         "rateLimit": connection.rate_limit.model_dump(by_alias=True),
     }
 
@@ -599,17 +690,7 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
             _raise_provider_error(response)
             message = response.json().get("choices", [{}])[0].get("message", {})
             text = str(message.get("content") or "").strip()
-            tool_calls = []
-            for call in message.get("tool_calls") or []:
-                function = call.get("function") or {}
-                try:
-                    arguments = json.loads(function.get("arguments") or "{}")
-                except json.JSONDecodeError as error:
-                    raise RuntimeError("Provider returned invalid tool arguments") from error
-                tool_calls.append({
-                    "id": str(call.get("id") or uuid4()), "name": function.get("name"),
-                    "arguments": arguments,
-                })
+            tool_calls = _parse_tool_calls(message)
     if len(tool_calls) > 10:
         raise RuntimeError("Provider exceeded the 10 tool-call turn budget")
     allowed = {tool.name for tool in request.tools}

@@ -179,3 +179,47 @@ waiver for the deferred Goal 16 gates.
 - Manually verify in the live viewport: select columns by level, change them to I500, move selected
   nodes 250 mm in X, and hide edge-frame bracing; verify summaries and undo.
 - Attach benchmark/eval/manual evidence to the final Goal 17 commit SHA.
+
+## Local model providers — 2026-09-09
+
+### Added
+
+- Copilot BYOK now supports local OpenAI-compatible runtimes: `ollama`
+  (`http://localhost:11434/v1`), `lmstudio` (`http://localhost:1234/v1`) and a generic
+  `local` provider (vLLM, llama.cpp server, Jan, ...) with a user-supplied base URL.
+  Connections need no API key; model IDs auto-discover from `/models` (e.g. `llama3.2:3b`)
+  or can be typed manually. Everything is configured from the existing Copilot settings UI
+  (provider dropdown, editable Base URL, optional API key).
+- Gate: local providers are allowed automatically while the backend runs outside production
+  (`ENVIRONMENT != production`, the same variable `backend/main.py` reads; the Docker image
+  sets `production`). Deployed instances must set `COPILOT_ALLOW_LOCAL_PROVIDERS=1`.
+- Security posture preserved: production still rejects local/private URLs by default; local
+  base URLs must be http(s) without credentials and point at loopback, RFC1918 private
+  ranges or `host.docker.internal`; link-local/metadata addresses (`169.254.169.254`) and
+  public hosts are rejected.
+- OpenAI-compatible tool-call parsing now accepts `arguments` as a JSON string or an
+  already-parsed object, tolerating local runtime variations.
+- `_headers()` omits `Authorization` when a connection has no API key; `_public_connection()`
+  reports `keyHint: "local"` for keyless connections.
+
+### Verification
+
+- Backend `tests/test_copilot.py`: **25/25 passed** (16 existing + 9 new: local connection
+  without key, auto-discovery, production opt-in flag, public/metadata/credential URL
+  rejection, loopback/private allow-list, custom-local base URL requirement, cloud key still
+  required, keyless headers, string/object tool arguments). Running the whole `tests/` folder
+  in one process hits the pre-existing MCP `StreamableHTTPSessionManager` single-run conflict
+  between test modules; unrelated to this change.
+- Frontend: `tsc` passed and `vite build` transformed all 11,887 modules successfully
+  (verified against `--outDir dist_verify`); focused ESLint for `CopilotPanel.tsx` passed.
+  The default `npm run build` currently fails at Vite's out-dir cleanup with
+  `EPERM ...\frontend\dist\assets` because the pre-existing `dist` folder is locked by the
+  environment (reproduces without this change); clear the `dist` lock and rebuild.
+
+### Notes / limitations
+
+- Edit/Agent modes rely on provider tool calling; small local models (e.g. `llama3.2:3b`)
+  support tools but may emit malformed arguments more often than larger models. Malformed
+  arguments fail closed with `Provider returned invalid tool arguments`.
+- Copilot streaming remains simulated (chunked after the full response), so local time-to-
+  first-token gains are not visible in the UI yet (existing Goal 16 issue #2).

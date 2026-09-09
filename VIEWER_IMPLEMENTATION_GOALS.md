@@ -636,6 +636,14 @@ cho LLM khi gate chưa pass.
 - NVIDIA NIM và GroqCloud preset, provider error display, Enter để gửi và Shift+Enter xuống dòng đã có.
   Groq dùng OpenAI-compatible base URL `https://api.groq.com/openai/v1`, BYOK phía server và
   tự động lấy model từ `/models`.
+- Provider local (Ollama, LM Studio và generic OpenAI-compatible runtime qua `local`) đã được
+  thêm: connection không cần API key, base URL loopback/private cấu hình trực tiếp trên Copilot
+  settings, auto-discover model từ `/models` (ví dụ `llama3.2:3b`). Chỉ bật khi backend chạy ngoài
+  production hoặc khi đặt `COPILOT_ALLOW_LOCAL_PROVIDERS=1`; production vẫn chặn URL local/private
+  mặc định (SSRF guard): host phải là loopback/RFC1918/`host.docker.internal`, chặn link-local
+  metadata và host public, cấm credentials trong URL.
+- Tool-call parsing OpenAI-compatible chấp nhận cả `arguments` dạng JSON string lẫn object để
+  tương thích các local runtime trả lệch chuẩn.
 - Provider settings cho phép cấu hình rate limit riêng từng connection: Auto/Manual/Disabled,
   concurrency, RPM, TPM, safety factor, queue wait và retry. Auto chỉ theo quota headers thật của
   provider, không dùng local token reservation; Manual mới áp rolling RPM/TPM. Backend governor
