@@ -13,6 +13,7 @@ import {
   VisibilityOff as HiddenIcon,
   Straighten as LevelsIcon,
   Add as AddIcon,
+  ZoomIn as ZoomInIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
@@ -492,10 +493,19 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
             model.addNewNode();
           }}
         >
-          {model?.nodes?.slice(0, 50).map((node: Node) => (
+          {model?.nodes?.slice(0, 50).map((node: Node) => {
+            // Row state is answered from the canonical selection / hidden Sets;
+            // the revision reads inside the helpers keep this observer in sync.
+            const isSelected = model.isEntitySelected('nodes', node.id);
+            const isHidden = model.isEntityHidden('nodes', node.id);
+            return (
             <Box
               key={node.id}
-              onClick={() => model.focusNode(node.id)}
+              onClick={() => {
+                model.focusNode(node.id);
+                // Light the element up in the viewport as well.
+                model.selectInViewport('nodes', node.id);
+              }}
               sx={{
                 px: 2,
                 pl: 6,
@@ -504,12 +514,13 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                backgroundColor: isSelected ? 'rgba(74, 144, 226, 0.15)' : undefined,
                 '&:hover': {
                   backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
+              <Typography sx={{ fontSize: '0.75rem', color: isHidden ? colors.textFaint : isSelected ? colors.text : colors.textDim, fontStyle: isHidden ? 'italic' : undefined }}>
                 {node.name || `Node ${node.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -526,6 +537,28 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 </IconButton>
                 <IconButton
                   size="small"
+                  title="Zoom to node"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    model.zoomToEntity('nodes', node.id);
+                  }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                >
+                  <ZoomInIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  title={isHidden ? 'Show node' : 'Hide node'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    model.setEntitiesHidden('nodes', [node.id], !isHidden);
+                  }}
+                  sx={{ padding: '2px', color: isHidden ? colors.textFaint : colors.textDim, '&:hover': { color: colors.text } }}
+                >
+                  {isHidden ? <HiddenIcon sx={{ fontSize: 14 }} /> : <VisibleIcon sx={{ fontSize: 14 }} />}
+                </IconButton>
+                <IconButton
+                  size="small"
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -537,7 +570,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 </IconButton>
               </Box>
             </Box>
-          ))}
+            );
+          })}
           {(model?.nodes?.length || 0) > 50 && (
             <Box sx={{ px: 2, pl: 6, py: 0.8 }}>
               <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint, fontStyle: 'italic' }}>
@@ -558,10 +592,19 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
             setAddOrEditMember(true);
           }}
         >
-          {model?.members?.slice(0, 50).map((member: ElasticBeamColumn) => (
+          {model?.members?.slice(0, 50).map((member: ElasticBeamColumn) => {
+            // Row state is answered from the canonical selection / hidden Sets;
+            // the revision reads inside the helpers keep this observer in sync.
+            const isSelected = model.isEntitySelected('members', member.id);
+            const isHidden = model.isEntityHidden('members', member.id);
+            return (
             <Box
               key={member.id}
-              onClick={() => model.focusMember(member.id)}
+              onClick={() => {
+                model.focusMember(member.id);
+                // Light the element up in the viewport as well.
+                model.selectInViewport('members', member.id);
+              }}
               sx={{
                 px: 2,
                 pl: 6,
@@ -570,12 +613,13 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                backgroundColor: isSelected ? 'rgba(74, 144, 226, 0.15)' : undefined,
                 '&:hover': {
                   backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
+              <Typography sx={{ fontSize: '0.75rem', color: isHidden ? colors.textFaint : isSelected ? colors.text : colors.textDim, fontStyle: isHidden ? 'italic' : undefined }}>
                 {member.label || `Member ${member.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -592,6 +636,28 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 </IconButton>
                 <IconButton
                   size="small"
+                  title="Zoom to member"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    model.zoomToEntity('members', member.id);
+                  }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                >
+                  <ZoomInIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  title={isHidden ? 'Show member' : 'Hide member'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    model.setEntitiesHidden('members', [member.id], !isHidden);
+                  }}
+                  sx={{ padding: '2px', color: isHidden ? colors.textFaint : colors.textDim, '&:hover': { color: colors.text } }}
+                >
+                  {isHidden ? <HiddenIcon sx={{ fontSize: 14 }} /> : <VisibleIcon sx={{ fontSize: 14 }} />}
+                </IconButton>
+                <IconButton
+                  size="small"
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -603,7 +669,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 </IconButton>
               </Box>
             </Box>
-          ))}
+            );
+          })}
           {(model?.members?.length || 0) > 50 && (
             <Box sx={{ px: 2, pl: 6, py: 0.8 }}>
               <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint, fontStyle: 'italic' }}>

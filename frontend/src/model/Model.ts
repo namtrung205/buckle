@@ -209,6 +209,10 @@ export class Model {
   /** Incremented only when the canonical viewport selection changes. Panels
    *  use this to refresh selection-linked targets without re-seeding drafts. */
   workspaceSelectionRevision = 0;
+  /** Incremented when the hidden-entity set changes (show/hide commands and
+   *  their undo). Tree rows read it to refresh show/hide icons without
+   *  observable Sets. */
+  workspaceHiddenRevision = 0;
   /** True while the right dock is bound to the live viewport selection: every
    *  entity dock and draft follows later selection changes (node/member docks
    *  rebind, support/load targets restage). clearFocus resets it. */
@@ -629,6 +633,69 @@ export class Model {
       ] },
     })
     this.selector.clear();
+  };
+
+  /** Replace the viewport selection with a single node / member (model tree
+   *  click): the element lights up through the shared selection flag. */
+  selectInViewport = (collection: 'nodes' | 'members', id: number) => {
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { entities: [{ collection, id }] },
+    })
+  };
+
+  /** Hide / show specific nodes or members (model tree show-hide toggle)
+   *  through the shared render flag, so the state is stable across Render
+   *  Mode switches. */
+  setEntitiesHidden = (collection: 'nodes' | 'members', ids: number[], hidden: boolean) => {
+    const entities = ids.map(id => ({ collection, id }))
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [hidden
+        ? { type: 'HideEntities', payload: { entities } }
+        : { type: 'ShowEntities', payload: { entities } },
+      ] },
+    })
+  };
+
+  /** Zoom the camera to a node / member (model tree quick-zoom): frames the
+   *  element's world-space bounds while keeping the current view direction. */
+  zoomToEntity = (collection: 'nodes' | 'members', id: number) => {
+    const box = new THREE.Box3()
+    if (collection === 'nodes') {
+      const node = this.nodes.find((n) => n.id === id)
+      if (!node) return
+      box.expandByPoint(new THREE.Vector3(node.x, node.y, node.z))
+    } else {
+      const member = this.members.find((m) => m.id === id)
+      if (!member) return
+      for (const endpoint of member.nodes) {
+        box.expandByPoint(new THREE.Vector3(endpoint.x, endpoint.y, endpoint.z))
+      }
+    }
+    this.camera.fitBoxToView(box)
+  };
+
+  /** Whether the node / member id is in the canonical viewport selection.
+   *  Reads the selection revision so MobX observers calling this re-render
+   *  when the (plain, non-observable) selection Sets change. */
+  isEntitySelected = (collection: 'nodes' | 'members', id: number) => {
+    const revision = this.workspaceSelectionRevision
+    const selected = collection === 'nodes'
+      ? this.workspaceContext.selectedNodeIds
+      : this.workspaceContext.selectedMemberIds
+    return revision >= 0 && selected.has(id)
+  };
+
+  /** Whether the node / member id is hidden (model tree show-hide toggle).
+   *  Reads the hidden revision so MobX observers calling this re-render when
+   *  the (plain, non-observable) hidden Set changes. */
+  isEntityHidden = (collection: 'nodes' | 'members', id: number) => {
+    const revision = this.workspaceHiddenRevision
+    return revision >= 0 && this.workspaceContext.hiddenEntityRefs.has(`${collection}:${id}`)
   };
 
   /** Add the currently selected nodes to the selection (used by hover quick-actions). */
@@ -1144,6 +1211,10 @@ export class Model {
           .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
         const afterSelection = state.selection
           .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+        const beforeHidden = this.workspaceContext.getCommandState().hidden
+          .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+        const afterHidden = state.hidden
+          .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
         this.workspaceContext.applyCommandState(state)
         if (!this.selector) return
         this.selector.selectedNodeIds = [...this.workspaceContext.selectedNodeIds]
@@ -1152,6 +1223,7 @@ export class Model {
           this.workspaceSelectionRevision++
           this.syncSelectionLinkedPanel()
         }
+        if (beforeHidden !== afterHidden) this.workspaceHiddenRevision++
       },
       allowDestructive: () => allowDestructive,
       onCommitted: result => {

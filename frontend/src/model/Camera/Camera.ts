@@ -221,8 +221,9 @@ export class Camera {
     this.fitBoxToView(new THREE.Box3().setFromObject(object));
   }
 
-  /** Fit the frustum + camera to a world-space box (see fitObjectToView). */
-  private fitBoxToView(box: THREE.Box3) {
+  /** Fit the frustum + camera to a world-space box (see fitObjectToView).
+   *  Public: the model tree quick-zoom frames a node / member bounds box. */
+  fitBoxToView(box: THREE.Box3) {
     if (box.isEmpty()) return;
 
     const size = box.getSize(new THREE.Vector3());
