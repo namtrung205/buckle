@@ -313,6 +313,38 @@ const RightPanel = observer(() => {
     setTargetsError(false);
   }, [load?.id, model?.newEntityDraft, model?.newEntityDraftNonce, model?.rightPanelOpen]);
 
+  // Targets opened from a viewport selection stay bound to that live
+  // selection. Only the target ids change here: partially entered names,
+  // magnitudes, directions and restraint values remain untouched.
+  React.useEffect(() => {
+    if (!model?.rightPanelOpen || !model.rightPanelTargetsFollowSelection) return;
+
+    if (support || isNewSupport) {
+      const targets = [...model.workspaceContext.selectedNodeIds];
+      // An empty sweep (nothing hit) is a no-op: keep the staged targets so an
+      // accidental miss can never wipe the dock's selection.
+      if (targets.length) setSupportDraft((previous) => previous ? { ...previous, targets } : previous);
+    }
+
+    if (load || isNewLoad) {
+      setLoadDraft((previous) => {
+        if (!previous) return previous;
+        const picked = previous.type === 'nodal'
+          ? model.workspaceContext.selectedNodeIds
+          : previous.type === 'linear'
+            ? model.workspaceContext.selectedMemberIds
+            : model.workspaceContext.selectedShellIds;
+        if (!picked.size) return previous; // empty sweep keeps previous targets
+        return { ...previous, targets: [...picked] };
+      });
+    }
+
+    setTargetsError(false);
+    // workspaceSelectionRevision is the single transaction-level signal; the
+    // selected-id Sets themselves are intentionally non-observable render data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model?.workspaceSelectionRevision]);
+
 
   if (!model?.rightPanelOpen) return null;
   if (!isResults && !isDraw && !model?.hasFocus()) return null;

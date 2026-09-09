@@ -206,6 +206,12 @@ export class Model {
   // Members being batch-edited in the right dock (context menu "Edit element(s)").
   // Empty = single-edit mode (only the focused member is touched).
   editingMemberIds: number[] = [];
+  /** Incremented only when the canonical viewport selection changes. Panels
+   *  use this to refresh selection-linked targets without re-seeding drafts. */
+  workspaceSelectionRevision = 0;
+  /** True only for panels/drafts opened from the current viewport selection.
+   *  Opening an existing entity from the model tree must keep its saved targets. */
+  rightPanelTargetsFollowSelection = false;
   selectedNodeId: number | null = null;
   selectedBoundaryConditionId: number | null = null;
   selectedLoadId: number | null = null;
@@ -303,6 +309,7 @@ export class Model {
   focusMember = (id: number | null) => {
     this.selectedMemberId = id;
     this.editingMemberIds = [];
+    this.rightPanelTargetsFollowSelection = false;
     if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -318,8 +325,22 @@ export class Model {
     this.editingMemberIds = [...ids];
   };
 
+  /** Keep a context-menu member edit bound to the live viewport selection.
+   *  Direct tree/property focus remains single-entity and is intentionally not
+   *  rebound, because focusMember() clears editingMemberIds. */
+  private syncSelectionLinkedMemberPanel = () => {
+    if (!this.rightPanelOpen || this.editingMemberIds.length === 0) return;
+    const ids = [...this.workspaceContext.selectedMemberIds];
+    // An empty sweep (nothing hit) must not close the dock: keep the current
+    // batch untouched and let the user sweep again.
+    if (!ids.length) return;
+    this.editingMemberIds = ids;
+    this.selectedMemberId = ids[0];
+  };
+
   focusNode = (id: number | null) => {
     this.selectedNodeId = id;
+    this.rightPanelTargetsFollowSelection = false;
     if (id != null) { this.selectedMemberId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -329,6 +350,7 @@ export class Model {
   /** Focus a support / boundary condition in the right dock, by id. */
   focusBoundaryCondition = (id: number | null) => {
     this.selectedBoundaryConditionId = id;
+    this.rightPanelTargetsFollowSelection = false;
     if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -336,8 +358,9 @@ export class Model {
   };
 
   /** Focus a load in the right dock, by id. */
-  focusLoad = (id: number | null) => {
+  focusLoad = (id: number | null, followSelection = false) => {
     this.selectedLoadId = id;
+    this.rightPanelTargetsFollowSelection = followSelection;
     if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -370,6 +393,7 @@ export class Model {
     this.selectedBoundaryConditionId = null;
     this.selectedLoadId = null;
     this.newEntityDraft = null;
+    this.rightPanelTargetsFollowSelection = false;
     this.updateGizmoOffset();
   };
 
@@ -403,6 +427,7 @@ export class Model {
     this.selectedLoadId = null;
     this.exitResults();
     this.newEntityDraft = 'load';
+    this.rightPanelTargetsFollowSelection = true;
     this.newEntityDraftNonce++;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
@@ -418,6 +443,7 @@ export class Model {
     this.selectedLoadId = null;
     this.exitResults();
     this.newEntityDraft = 'support';
+    this.rightPanelTargetsFollowSelection = true;
     this.newEntityDraftNonce++;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
@@ -632,7 +658,7 @@ export class Model {
       value: new THREE.Vector3(0, 0, 0),
     });
     load.createOrUpdate();
-    this.focusLoad(load.id);
+    this.focusLoad(load.id, true);
   };
 
   /** Create a blank linear (distributed) load on the given member ids and focus it for editing. */
@@ -646,7 +672,7 @@ export class Model {
       value: new THREE.Vector3(0, 0, 0),
     });
     load.createOrUpdate();
-    this.focusLoad(load.id);
+    this.focusLoad(load.id, true);
   };
 
   addPressureLoadToShells = (shellIds: number[]) => {
@@ -660,7 +686,7 @@ export class Model {
       value: new THREE.Vector3(0, -1, 0),
       magnitude: 0,
     }])
-    this.focusLoad(id)
+    this.focusLoad(id, true)
   };
 
   /** Create a node at the origin and focus it. */
@@ -1104,10 +1130,18 @@ export class Model {
     return {
       getWorkspaceState: () => this.workspaceContext.getCommandState(),
       applyWorkspaceState: state => {
+        const beforeSelection = this.workspaceContext.getCommandState().selection
+          .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+        const afterSelection = state.selection
+          .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
         this.workspaceContext.applyCommandState(state)
         if (!this.selector) return
         this.selector.selectedNodeIds = [...this.workspaceContext.selectedNodeIds]
         this.selector.selectedCenterlineIds = [...this.workspaceContext.selectedMemberIds]
+        if (beforeSelection !== afterSelection) {
+          this.workspaceSelectionRevision++
+          this.syncSelectionLinkedMemberPanel()
+        }
       },
       allowDestructive: () => allowDestructive,
       onCommitted: result => {
