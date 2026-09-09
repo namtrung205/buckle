@@ -35,8 +35,8 @@ bổ sung roadmap AI-native để tăng tốc dựng hình, truy vấn và cập
 | 13 | Command Bus + transaction + undo/redo | Core complete — Grid UI/E2E/history-cap verification deferred per user |
 | 14 | Parametric object kernel + regenerate/diff | Implemented — automated gates passed; UI verification pending |
 | 15 | AI Tool Registry + modes + permission policy | Implemented — automated gates passed; viewport harness verification pending |
-| 16 | AI Copilot MVP end-to-end | In progress — core MVP implemented; true streaming/cancel, P0 UI/E2E and 50-prompt eval pending |
-| 17 | Fast inspect/select/edit workflows | Planned |
+| 16 | AI Copilot MVP end-to-end | Core MVP implemented — remaining streaming/cancel, P0 UI/E2E and 50-prompt gates deferred by user on 2026-09-09 |
+| 17 | Fast inspect/select/edit workflows | In progress — core workflows and offline edit eval implemented; online provider eval and UI verification pending |
 | 18 | Fast parametric generation workflows | Planned |
 | 19 | AI safety, evals, observability và production gate | Planned |
 | 20 | Production MCP adapter | Planned after Goal 19 |
@@ -693,6 +693,51 @@ cho LLM khi gate chưa pass.
   chat dùng selection hiện tại; kiểm tra undo qua cả hai input path.
 
 ## Goal 17 — Fast inspect/select/edit workflows
+
+### Implementation record — 2026-09-09 (in progress)
+
+- User explicitly authorized moving from Goal 16 to Goal 17. This is the roadmap waiver for the
+  unfinished Goal 16 streaming/cancel, P0 UI/E2E and 50-prompt gates; those items remain recorded
+  and are not considered completed.
+- `query_entities` now supports deterministic filters for exact name/type, group, level, grid,
+  semantic role, section, material, connectivity, coordinate range, current selection and hidden
+  state. Unknown organizational IDs fail explicitly and exact totals/IDs come from Model Core.
+- Added provider-neutral `resolve_targets` and `remember_targets`. References resolve from current
+  selection/visibility and command provenance (`last_created`, `last_updated`, `last_affected`) or
+  conversation-scoped aliases; zero and ambiguous targets can be rejected with an explicit
+  expectation instead of silently choosing a subset.
+- Added `change_material`, `transform_entities` and `update_entity_properties` with preview/apply,
+  transaction validation, exact affected counts and undo. Transform supports move/copy/rotate/
+  mirror/array; batch property updates cover section/material/release/load/support/metadata and
+  reject topology rewiring through the generic property tool.
+- A member transform fails closed when a shared endpoint would move connected members outside the
+  target set, unless that node is explicitly targeted. Material edits preserve member topology and
+  parametric ownership; stale-plan conflict messages identify planned/current/provider revisions.
+- Added the versioned bilingual offline corpus `goal17-edit.v1.json`: all 10 reviewed tool-plan
+  scenarios pass for selection, pronoun/reference, alias, no-match, multi-match, preview and stale
+  revision. `Clear context` now recreates the in-memory executor so aliases/provenance/replay IDs do
+  not leak into the next conversation; aliases are purged on deletion and cannot bind to a later
+  entity that reuses the same ID.
+- Preview cards are revision-bound. Apply fails closed and asks for a new preview if the model was
+  edited after preview, covering the second conflict window after provider planning.
+- Dry-run now returns its exact planned change set. No-op edits report zero affected entities,
+  issue no misleading undo token and do not block undoing the prior meaningful edit. Provider calls
+  to structural edit tools are forced to preview regardless of a provider-supplied `preview:false`;
+  only the Apply UI can submit the corresponding commit.
+- Candidate selection now uses existing ID/selection/visibility/group/grid/connectivity/section/
+  material indexes before evaluating filters. Unknown section/material references fail explicitly;
+  material filtering also applies correctly to section and shell collections.
+- Automated verification: frontend fixture **148/148 passed**, focused Goal 17/Copilot/core lint passed,
+  backend Copilot/rate-governor **21/21 passed**, and production build passed. The latest indexed
+  100,000-member queries measured **P95 24.0 ms** for section and **30.8 ms** for material; the 1,000-node edit committed as one transaction,
+  one revision and one undo step.
+- Offline report: `docs/evals/goal17-edit-offline-2026-09-09.md`. Remaining before completion: run
+  the bilingual prompts against a configured live provider, exercise the four user-verification
+  scenarios in the live viewport, and attach the resulting manual/online-eval artifact to the final
+  commit SHA.
+- The safe online runner is available as `npm run eval:goal17:online`; provider calls are evaluated
+  against a fresh in-memory fixture rather than the open model. The 2026-09-09 runtime attempt did
+  not send an outbound request because the restarted backend session had no configured connection.
 
 ### Deliverables
 

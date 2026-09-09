@@ -1,4 +1,4 @@
-import { canonicalStringify, type CommandWorkspaceState, type EntityCollection, type EntityId, type EntityReference, type StructuralDocument } from '../structural/index.ts'
+import { type CommandWorkspaceState, type EntityCollection, type EntityId, type EntityReference, type StructuralDocument } from '../structural/index.ts'
 import type { QueryFilter } from './types.ts'
 
 const clone = <T>(value: T): T => structuredClone(value)
@@ -11,10 +11,14 @@ const inRange = (value: number, range?: Readonly<{ min?: number; max?: number }>
 const compare = (value: number, rule?: Readonly<{ lt?: number; lte?: number; gt?: number; gte?: number }>) =>
   !rule || (rule.lt === undefined || value < rule.lt) && (rule.lte === undefined || value <= rule.lte) &&
     (rule.gt === undefined || value > rule.gt) && (rule.gte === undefined || value >= rule.gte)
+const refKey = (ref: EntityReference) => `${ref.collection}:${ref.id}`
+const normalized = (values?: readonly string[]) => values?.map(value => value.toLowerCase())
 
 export class StructuralQueryService {
   readonly document: StructuralDocument
   private readonly getWorkspaceState: () => CommandWorkspaceState
+  private roleCacheRevision = -1
+  private readonly roleByEntity = new Map<string, string>()
 
   constructor(
     document: StructuralDocument,
@@ -52,15 +56,65 @@ export class StructuralQueryService {
 
   queryEntities(collection: EntityCollection, filter: QueryFilter = {}, limit = 1000) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new Error('limit must be an integer in [1, 10000]')
+    for (const id of filter.sectionIds ?? []) this.requireEntity('sections', id)
+    for (const id of filter.materialIds ?? []) this.requireEntity('materials', id)
+    const activeFilterKeys = Object.entries(filter).filter(([, value]) => value !== undefined).map(([key]) => key)
+    if (collection === 'members' && filter.sectionIds?.length && activeFilterKeys.every(key => key === 'sectionIds')) {
+      const ids = new Set<EntityId>()
+      for (const sectionId of filter.sectionIds) for (const id of this.document.memberIdsBySectionId.get(sectionId) ?? []) ids.add(id)
+      const sortedIds = [...ids].sort((a, b) => a - b)
+      return { total: sortedIds.length, truncated: sortedIds.length > limit, entities: sortedIds.slice(0, limit).map(id => this.describe(collection, id)) }
+    }
+    if (collection === 'members' && filter.materialIds?.length && activeFilterKeys.every(key => key === 'materialIds')) {
+      const materialIds = new Set(filter.materialIds)
+      const sectionIds = [...this.document.sections.values()].filter(section => materialIds.has(section.materialId)).map(section => section.id)
+      const sortedIds = [...this.memberIdsForSections(sectionIds)].sort((a, b) => a - b)
+      return { total: sortedIds.length, truncated: sortedIds.length > limit, entities: sortedIds.slice(0, limit).map(id => this.describe(collection, id)) }
+    }
     const idSet = filter.ids ? new Set(filter.ids) : undefined
-    const text = filter.nameContains?.toLocaleLowerCase()
-    const results = [...this.document[collection].values()]
-      .sort((a, b) => a.id - b.id)
-      .filter(record => {
+    const text = filter.nameContains?.toLowerCase()
+    const names = new Set(normalized(filter.names))
+    const types = new Set(normalized(filter.types))
+    const workspace = this.getWorkspaceState()
+    const selected = new Set(workspace.selection.map(refKey))
+    const hidden = new Set(workspace.hidden.map(refKey))
+    const groups = this.relationRefs('groups', filter.groupIds)
+    const levels = filter.levelIds?.map(id => this.requireEntity('levels', id))
+    const grids = this.relationRefs('grids', filter.gridIds)
+    const connected = filter.connectedTo?.length ? new Set(this.getConnectedEntities(filter.connectedTo).map(refKey)) : undefined
+    const candidateSets: Set<EntityId>[] = []
+    if (idSet) candidateSets.push(new Set([...idSet].filter(id => this.document[collection].has(id))))
+    if (filter.inSelection === true) candidateSets.push(this.idsForCollection(selected, collection))
+    if (filter.hidden === true) candidateSets.push(this.idsForCollection(hidden, collection))
+    if (groups) candidateSets.push(this.idsForCollection(groups, collection))
+    if (grids) candidateSets.push(this.idsForCollection(grids, collection))
+    if (connected) candidateSets.push(this.idsForCollection(connected, collection))
+    if (collection === 'members' && filter.sectionIds?.length) {
+      candidateSets.push(this.memberIdsForSections(filter.sectionIds))
+    }
+    if (collection === 'members' && filter.materialIds?.length) {
+      const sectionIds = [...this.document.sections.values()].filter(section => filter.materialIds!.includes(section.materialId)).map(section => section.id)
+      candidateSets.push(this.memberIdsForSections(sectionIds))
+    }
+    const candidates = candidateSets.length
+      ? [...candidateSets.reduce((smallest, current) => current.size < smallest.size ? current : smallest)].filter(id => candidateSets.every(set => set.has(id)))
+      : [...this.document[collection].keys()]
+    const matches = (record: { id: EntityId }) => {
+        const ref = { collection, id: record.id } as EntityReference
+        const key = refKey(ref)
         if (idSet && !idSet.has(record.id)) return false
-        if (text && !named(record).toLocaleLowerCase().includes(text)) return false
-        if (collection === 'nodes' && filter.position) {
-          const position = this.document.nodes.get(record.id)!.position
+        if (names.size && !names.has(named(record).toLowerCase())) return false
+        if (text && !named(record).toLowerCase().includes(text)) return false
+        if (types.size && !types.has(this.entityType(collection, record).toLowerCase())) return false
+        if (filter.inSelection !== undefined && selected.has(key) !== filter.inSelection) return false
+        if (filter.hidden !== undefined && hidden.has(key) !== filter.hidden) return false
+        if (groups && !groups.has(key)) return false
+        if (grids && !grids.has(key)) return false
+        if (levels && !levels.some(level => this.entityIntersectsLevel(ref, (level as { elevation: number }).elevation))) return false
+        if (connected && !connected.has(key)) return false
+        if (filter.position) {
+          const position = this.entityPosition(ref)
+          if (!position) return false
           if (!inRange(position[0], filter.position.x) || !inRange(position[1], filter.position.y) || !inRange(position[2], filter.position.z)) return false
         }
         if (collection === 'members') {
@@ -68,13 +122,24 @@ export class StructuralQueryService {
           if (filter.sectionIds && !filter.sectionIds.includes(member.sectionId)) return false
           const materialId = this.document.sections.get(member.sectionId)?.materialId
           if (filter.materialIds && (materialId === undefined || !filter.materialIds.includes(materialId))) return false
-          if (!compare(this.memberLength(record.id), filter.length)) return false
-          const role = this.semanticRole({ collection: 'members', id: record.id })
-          if (filter.semanticRoles && !filter.semanticRoles.includes(role)) return false
-        } else if (filter.semanticRoles && !filter.semanticRoles.includes(this.semanticRole({ collection, id: record.id }))) return false
+          if (filter.length && !compare(this.memberLength(record.id), filter.length)) return false
+          if (filter.semanticRoles && !filter.semanticRoles.includes(this.semanticRole({ collection: 'members', id: record.id }))) return false
+        } else {
+          if (collection === 'sections' && filter.materialIds && !filter.materialIds.includes(this.document.sections.get(record.id)!.materialId)) return false
+          if (collection === 'shells' && filter.materialIds && !filter.materialIds.includes(this.document.shells.get(record.id)!.materialId)) return false
+          if (filter.semanticRoles && !filter.semanticRoles.includes(this.semanticRole({ collection, id: record.id }))) return false
+        }
         return true
-      })
-    return { total: results.length, truncated: results.length > limit, entities: results.slice(0, limit).map(record => this.describe(collection, record.id)) }
+    }
+    let total = 0
+    const resultIds: EntityId[] = []
+    for (const id of candidates.sort((a, b) => a - b)) {
+      const record = this.document[collection].get(id)!
+      if (!matches(record)) continue
+      total++
+      if (resultIds.length < limit) resultIds.push(record.id)
+    }
+    return { total, truncated: total > limit, entities: resultIds.map(id => this.describe(collection, id)) }
   }
 
   getConnectedEntities(refs: readonly EntityReference[]) {
@@ -126,16 +191,9 @@ export class StructuralQueryService {
   }
 
   semanticRole(ref: EntityReference): string {
-    for (const object of this.document.parametricObjects.values()) {
-      for (const [role, binding] of Object.entries(object.roleBindings ?? {})) {
-        if (binding.collection === ref.collection && binding.id === ref.id) {
-          for (const token of ['column', 'rafter', 'purlin', 'bracing', 'brace', 'base-node', 'frame-line', 'bay']) {
-            if (role.includes(token)) return token === 'brace' ? 'bracing' : token
-          }
-          return role
-        }
-      }
-    }
+    this.refreshRoleCache()
+    const boundRole = this.roleByEntity.get(refKey(ref))
+    if (boundRole) return boundRole
     if (ref.collection === 'members') {
       const member = this.document.members.get(ref.id)
       if (member) {
@@ -147,6 +205,97 @@ export class StructuralQueryService {
       }
     }
     return ref.collection.slice(0, -1)
+  }
+
+  private refreshRoleCache() {
+    if (this.roleCacheRevision === this.document.revision) return
+    this.roleByEntity.clear()
+    for (const object of this.document.parametricObjects.values()) {
+      for (const [role, binding] of Object.entries(object.roleBindings ?? {})) {
+        const token = ['column', 'rafter', 'purlin', 'bracing', 'brace', 'base-node', 'frame-line', 'bay'].find(value => role.includes(value))
+        this.roleByEntity.set(refKey(binding), token === 'brace' ? 'bracing' : token ?? role)
+      }
+    }
+    this.roleCacheRevision = this.document.revision
+  }
+
+  private requireEntity(collection: EntityCollection, id: EntityId) {
+    const record = this.document[collection].get(id)
+    if (!record) throw new Error(`Unknown ${collection} id ${id}`)
+    return record
+  }
+
+  private idsForCollection(keys: ReadonlySet<string>, collection: EntityCollection) {
+    const prefix = `${collection}:`
+    return new Set([...keys].filter(key => key.startsWith(prefix)).map(key => Number(key.slice(prefix.length))))
+  }
+
+  private memberIdsForSections(sectionIds: readonly EntityId[]) {
+    const ids = new Set<EntityId>()
+    for (const sectionId of sectionIds) for (const id of this.document.memberIdsBySectionId.get(sectionId) ?? []) ids.add(id)
+    return ids
+  }
+
+  private relationRefs(collection: 'groups' | 'grids', ids?: readonly EntityId[]) {
+    if (!ids?.length) return undefined
+    const refs = new Set<string>()
+    for (const id of ids) {
+      const record = this.requireEntity(collection, id)
+      refs.add(`${collection}:${id}`)
+      if (collection === 'groups') {
+        for (const ref of (record as { entityRefs: readonly EntityReference[] }).entityRefs) refs.add(refKey(ref))
+      } else {
+        const rawRefs = (record as { data?: { entityRefs?: unknown } }).data?.entityRefs
+        if (Array.isArray(rawRefs)) for (const value of rawRefs) {
+          const ref = value as EntityReference
+          if (ref && typeof ref.collection === 'string' && Number.isSafeInteger(ref.id)) refs.add(refKey(ref))
+        }
+        for (const object of this.document.parametricObjects.values()) {
+          if (object.ownedEntityRefs.some(ref => ref.collection === 'grids' && ref.id === id)) {
+            for (const ref of object.ownedEntityRefs) refs.add(refKey(ref))
+          }
+        }
+      }
+    }
+    return refs
+  }
+
+  private entityType(collection: EntityCollection, record: unknown) {
+    const value = record as { type?: string; kind?: string; category?: string }
+    return value.type ?? value.kind ?? value.category ?? collection.replace(/s$/, '')
+  }
+
+  private entityPosition(ref: EntityReference): readonly [number, number, number] | undefined {
+    if (ref.collection === 'nodes') return this.document.nodes.get(ref.id)?.position
+    if (ref.collection === 'members') {
+      const member = this.document.members.get(ref.id)
+      if (!member) return undefined
+      const a = this.document.nodes.get(member.nodeI)!.position; const b = this.document.nodes.get(member.nodeJ)!.position
+      return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]
+    }
+    if (ref.collection === 'shells') {
+      const shell = this.document.shells.get(ref.id)
+      if (!shell) return undefined
+      const points = shell.nodeIds.map(id => this.document.nodes.get(id)!.position)
+      return [0, 1, 2].map(axis => points.reduce((sum, point) => sum + point[axis], 0) / points.length) as unknown as readonly [number, number, number]
+    }
+    if (ref.collection === 'levels') return [0, 0, this.document.levels.get(ref.id)!.elevation]
+    return undefined
+  }
+
+  private entityIntersectsLevel(ref: EntityReference, elevation: number) {
+    const tolerance = 1e-6
+    if (ref.collection === 'members') {
+      const member = this.document.members.get(ref.id)!
+      const za = this.document.nodes.get(member.nodeI)!.position[2]; const zb = this.document.nodes.get(member.nodeJ)!.position[2]
+      return elevation >= Math.min(za, zb) - tolerance && elevation <= Math.max(za, zb) + tolerance
+    }
+    if (ref.collection === 'shells') {
+      const values = this.document.shells.get(ref.id)!.nodeIds.map(id => this.document.nodes.get(id)!.position[2])
+      return elevation >= Math.min(...values) - tolerance && elevation <= Math.max(...values) + tolerance
+    }
+    const position = this.entityPosition(ref)
+    return !!position && Math.abs(position[2] - elevation) <= tolerance
   }
 
   private describe(collection: EntityCollection, id: EntityId) {

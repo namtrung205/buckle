@@ -49,6 +49,11 @@ type Replay = { signature: string; result: CommandResult }
 const emptyWorkspace = (): CommandWorkspaceState => ({ selection: [], hidden: [] })
 const refKey = (ref: EntityReference) => `${ref.collection}:${ref.id}`
 const clone = <T>(value: T): T => structuredClone(value)
+const stripAlias = <T extends { alias?: string }>(value: T) => {
+  const record = { ...value }
+  delete record.alias
+  return record
+}
 const snapshotToSeed = (snapshot: StructuralDocumentSnapshot): StructuralDocumentSeed => Object.fromEntries([
   ...ENTITY_COLLECTIONS.map(collection => [collection, clone(snapshot[collection])]),
   ['metadata', clone(snapshot.metadata)],
@@ -174,7 +179,7 @@ export class CommandGateway {
       return Object.freeze({
         ...resultBase,
         revision: this.document.revision,
-        changes: null,
+        changes: documentChanged ? this.document.previewReconcile(draft) : null,
         snapshotHash: candidate.getSnapshotHash(),
       })
     }
@@ -206,6 +211,7 @@ export class CommandGateway {
       previousRevision: beforeSnapshot.revision,
       revision: this.document.revision,
       timestamp: Date.now(),
+      changed: result.changed,
       changes: change,
     }) as CommandAuditEntry
     this.auditLog.push(audit)
@@ -269,6 +275,7 @@ export class CommandGateway {
       previousRevision: result.previousRevision,
       revision: result.revision,
       timestamp: Date.now(),
+      changed: result.changed,
       changes: result.changes,
     }))
   }
@@ -342,21 +349,16 @@ export class CommandGateway {
       }
       return id
     }
-    const remove = (collection: EntityCollection, ids: Set<EntityId>) => {
-      const values = collectionArray<{ id: EntityId }>(draft, collection)
-      ;(draft as Record<string, unknown>)[collection] = values.filter(value => !ids.has(value.id))
-    }
-
     switch (operation.type) {
       case 'CreateNodes':
         for (const raw of operation.payload.nodes) {
           const id = reserve('nodes', raw)
-          const { alias: _alias, ...record } = raw
+          const record = stripAlias(raw)
           collectionArray(draft, 'nodes').push({ ...record, id })
         }
         break
       case 'MoveNodes': {
-        const values = collectionArray(draft, 'nodes') as { id: EntityId; position: readonly [number, number, number] }[]
+        const values = collectionArray(draft, 'nodes') as { id: EntityId; position: readonly [number, number, number]; metadata?: Readonly<Record<string, unknown>> }[]
         for (const move of operation.payload.nodes) {
           const id = resolve(move.id)
           const index = values.findIndex(value => value.id === id)
@@ -365,6 +367,7 @@ export class CommandGateway {
             ...values[index],
             position: clone(move.position),
             ...(move.name === undefined ? {} : { name: move.name }),
+            ...(move.metadata === undefined ? {} : { metadata: clone(move.metadata) }),
           }
         }
         break
@@ -379,7 +382,7 @@ export class CommandGateway {
       case 'CreateMembers':
         for (const raw of operation.payload.members) {
           const id = reserve('members', raw)
-          const { alias: _alias, nodeI, nodeJ, sectionId, ...record } = raw
+          const { nodeI, nodeJ, sectionId, ...record } = stripAlias(raw)
           collectionArray<Member1DRecord>(draft, 'members').push({
             ...record,
             id,
@@ -414,14 +417,14 @@ export class CommandGateway {
       case 'CreateOrUpdateShells':
         for (const raw of operation.payload.shells) {
           const id = identifyUpsert('shells', raw)
-          const { alias: _alias, ...record } = raw
+          const record = stripAlias(raw)
           upsert('shells', { ...record, id })
         }
         break
       case 'CreateOrUpdateMaterials':
         for (const raw of operation.payload.materials) {
           const id = identifyUpsert('materials', raw)
-          const { alias: _alias, ...record } = raw
+          const record = stripAlias(raw)
           upsert('materials', { ...record, id })
         }
         break
@@ -434,7 +437,7 @@ export class CommandGateway {
       case 'CreateOrUpdateSections':
         for (const raw of operation.payload.sections) {
           const id = identifyUpsert('sections', raw)
-          const { alias: _alias, materialId, ...record } = raw
+          const { materialId, ...record } = stripAlias(raw)
           upsert('sections', { ...record, id, materialId: resolve(materialId) })
         }
         break
@@ -447,7 +450,7 @@ export class CommandGateway {
       case 'CreateOrUpdateLoads':
         for (const raw of operation.payload.loads) {
           const id = identifyUpsert('loads', raw)
-          const { alias: _alias, ...record } = raw
+          const record = stripAlias(raw)
           upsert('loads', { ...record, id })
         }
         break
@@ -460,7 +463,7 @@ export class CommandGateway {
       case 'CreateOrUpdateBoundaryConditions':
         for (const raw of operation.payload.boundaryConditions) {
           const id = identifyUpsert('boundaryConditions', raw)
-          const { alias: _alias, ...record } = raw
+          const record = stripAlias(raw)
           upsert('boundaryConditions', { ...record, id })
         }
         break
@@ -473,7 +476,7 @@ export class CommandGateway {
       case 'CreateOrUpdateGrids':
         for (const raw of operation.payload.grids) {
           const id = identifyUpsert('grids', raw)
-          const { alias: _alias, ...record } = raw
+          const record = stripAlias(raw)
           upsert('grids', { ...record, id })
         }
         break
@@ -486,7 +489,7 @@ export class CommandGateway {
       case 'CreateOrUpdateLevels':
         for (const raw of operation.payload.levels) {
           const id = identifyUpsert('levels', raw)
-          const { alias: _alias, ...record } = raw
+          const record = stripAlias(raw)
           upsert('levels', { ...record, id })
         }
         break
@@ -496,10 +499,23 @@ export class CommandGateway {
         draft = snapshotToSeed(candidate.getSnapshot())
         break
       }
+      case 'CreateOrUpdateGroups':
+        for (const raw of operation.payload.groups) {
+          const id = identifyUpsert('groups', raw)
+          const record = stripAlias(raw)
+          upsert('groups', { ...record, id })
+        }
+        break
+      case 'DeleteGroups': {
+        const candidate = new StructuralDocument(draft)
+        for (const ref of operation.payload.ids) candidate.deleteGroup(resolve(ref))
+        draft = snapshotToSeed(candidate.getSnapshot())
+        break
+      }
       case 'CreateOrUpdateParametricObjects':
         for (const raw of operation.payload.parametricObjects) {
           const id = identifyUpsert('parametricObjects', raw)
-          const { alias: _alias, ...record } = raw
+          const record = stripAlias(raw)
           upsert('parametricObjects', { ...record, id })
         }
         break

@@ -64,10 +64,18 @@ export type AgentBudget = Readonly<{
 
 export type QueryFilter = Readonly<{
   ids?: readonly EntityId[]
+  names?: readonly string[]
   nameContains?: string
+  types?: readonly string[]
   semanticRoles?: readonly string[]
   sectionIds?: readonly EntityId[]
   materialIds?: readonly EntityId[]
+  groupIds?: readonly EntityId[]
+  levelIds?: readonly EntityId[]
+  gridIds?: readonly EntityId[]
+  connectedTo?: readonly EntityReference[]
+  inSelection?: boolean
+  hidden?: boolean
   length?: Readonly<{ lt?: number; lte?: number; gt?: number; gte?: number }>
   position?: Readonly<{
     x?: Readonly<{ min?: number; max?: number }>

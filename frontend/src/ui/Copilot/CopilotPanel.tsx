@@ -14,7 +14,8 @@ import { COMMAND_SCHEMA_VERSION, type EntityReference } from '../../core/structu
 import { generateFrameArrayGraph, generateGridGraph, generatePortalFrameGraph } from '../../model/Generators/BasicParametricGenerators'
 import { generateWarehouseGraph } from '../../model/Generators/WarehouseGenerator'
 import { canRetryCopilotTurn, copilotToolCallId, type CopilotTurnStatus } from './CopilotRetry'
-import { copilotToolCallSignature, repeatedCopilotToolCycle, retainCopilotToolResults } from './CopilotLoopGuard'
+import { copilotContextConflictMessage, copilotPreviewConflictMessage, copilotToolCallSignature, repeatedCopilotToolCycle, retainCopilotToolResults } from './CopilotLoopGuard'
+import { safeProviderToolArguments } from './CopilotToolPolicy'
 
 type Message = {
   id: string
@@ -38,7 +39,7 @@ type RateLimitSettings = {
 }
 type ProviderConnection = { id: string; provider: ProviderKind; label: string; baseUrl: string; models: string[]; keyHint: string; rateLimit: RateLimitSettings }
 type TurnResult = { message: string; toolCalls: AiToolCall[]; contextRevision: number; finishReason: 'tool_calls' | 'stop' | 'cancelled' }
-type PendingApproval = { tool: string; args: Record<string, unknown>; preview: NonNullable<AiToolResponse['preview']> }
+type PendingApproval = { tool: string; args: Record<string, unknown>; preview: NonNullable<AiToolResponse['preview']>; revision: number }
 
 const apiRoot = (import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/\/$/, '')
 const sessionKey = 'buckle.copilot.session'
@@ -181,7 +182,12 @@ const CopilotPanel = observer(() => {
       } as never)
     }) as never },
   }), [model])
-  const executor = useMemo(() => model.createAiToolExecutor(parametricGenerators), [model, parametricGenerators])
+  // Replay IDs, recent targets and named aliases are scoped to one logical conversation.
+  // Replacing the conversation must also replace that in-memory tool session.
+  const executor = useMemo(() => {
+    if (!conversationId) throw new Error('Copilot conversation ID is required')
+    return model.createAiToolExecutor(parametricGenerators)
+  }, [conversationId, model, parametricGenerators])
   useEffect(() => { sessionStorage.setItem(messagesKey, JSON.stringify(messages.slice(-50))) }, [messages])
   useEffect(() => { sessionStorage.setItem(modeKey, mode) }, [mode])
   useEffect(() => { sessionStorage.setItem(conversationKey, conversationId) }, [conversationId])
@@ -249,20 +255,22 @@ const CopilotPanel = observer(() => {
       if (result.finishReason === 'cancelled') return 'cancelled'
       setStreamingText('')
       if (!result.toolCalls.length) { setMessages(current => [...current, newMessage('assistant', result.message || streamed || 'Done.')]); return 'completed' }
-      if (model.structuralDocument.revision !== startRevision || result.contextRevision !== startRevision) throw new Error('Model changed while Copilot was planning. Please submit again with refreshed context.')
+      const conflict = copilotContextConflictMessage(startRevision, model.structuralDocument.revision, result.contextRevision)
+      if (conflict) throw new Error(conflict)
       const queryOnly = result.toolCalls.every(call => queryToolNames.has(call.name))
       if (queryOnly && repeatedCopilotToolCycle(querySignatures, result.toolCalls)) {
         return finishWithoutTools('Copilot stopped a repeated tool loop and returned the available results.')
       }
       if (!queryOnly) querySignatures = []
       for (const [callIndex, providerCall] of result.toolCalls.entries()) {
-        const call = { ...providerCall, id: copilotToolCallId(logicalTurnId, round, callIndex) }; const response = executor.execute(call, mode); const refs = affectedRefs(response)
+        const call = { ...providerCall, id: copilotToolCallId(logicalTurnId, round, callIndex), arguments: safeProviderToolArguments(providerCall.name, providerCall.arguments) }
+        const response = executor.execute(call, mode); const refs = affectedRefs(response)
         setMessages(current => [...current, { id: crypto.randomUUID(), role: 'activity', text: activityText(response), ...(refs.length ? { affected: refs } : {}) }])
         if (response.undoToken) { setLastUndoToken(response.undoToken); onMutationCommitted(); querySignatures = [] }
         const explicitPreview = call.name === 'preview_transaction' || call.arguments.preview === true
         if (response.preview && (response.preview.requiresApproval || explicitPreview)) {
           const args = { ...call.arguments, preview: false, ...(response.preview.approvalToken ? { approvalToken: response.preview.approvalToken } : {}) }
-          setPending({ tool: call.name === 'preview_transaction' ? 'execute_transaction' : call.name, args, preview: response.preview })
+          setPending({ tool: call.name === 'preview_transaction' ? 'execute_transaction' : call.name, args, preview: response.preview, revision: response.revision })
           setMessages(current => [...current, newMessage('assistant', result.message || 'Review the proposed change before applying.')]); return 'completed'
         }
         toolResults = retainCopilotToolResults(toolResults, [{ toolCallId: call.id, tool: call.name, ok: response.ok, content: response as unknown as Record<string, unknown> }])
@@ -313,6 +321,12 @@ const CopilotPanel = observer(() => {
   }
   const applyPending = () => {
     if (!pending) return
+    const conflict = copilotPreviewConflictMessage(pending.revision, model.structuralDocument.revision)
+    if (conflict) {
+      setMessages(current => [...current, newMessage('error', conflict)])
+      setPending(null)
+      return
+    }
     const response = executor.execute({ id: crypto.randomUUID(), name: pending.tool, arguments: pending.args }, mode)
     setMessages(current => [...current, newMessage(response.ok ? 'activity' : 'error', activityText(response))]); if (response.undoToken) setLastUndoToken(response.undoToken); setPending(null)
   }

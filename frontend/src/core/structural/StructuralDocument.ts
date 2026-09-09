@@ -127,6 +127,26 @@ export class StructuralDocument {
 
   reconcile(seed: StructuralDocumentSeed): StructuralChangeSet | null {
     const next = new StructuralDocument(seed)
+    const preview = this.diff(next)
+    if (!preview) return null
+
+    const previousRevision = this.revision
+    this.replaceMaps(seed)
+    this.validate()
+    this.rebuildIndexes()
+    this.revision++
+    this.dirty = true
+    const change = deepFreeze({ ...preview, previousRevision, revision: this.revision }) as StructuralChangeSet
+    for (const listener of this.listeners) listener(change)
+    return change
+  }
+
+  /** Validate and compute the exact next change set without mutating this document. */
+  previewReconcile(seed: StructuralDocumentSeed): StructuralChangeSet | null {
+    return this.diff(new StructuralDocument(seed))
+  }
+
+  private diff(next: StructuralDocument): StructuralChangeSet | null {
     const changes = emptyChanges()
     let changed = canonicalStringify(this.metadata) !== canonicalStringify(next.metadata)
 
@@ -149,16 +169,7 @@ export class StructuralDocument {
       changed ||= created.length + updated.length + deleted.length > 0
     }
     if (!changed) return null
-
-    const previousRevision = this.revision
-    this.replaceMaps(seed)
-    this.validate()
-    this.rebuildIndexes()
-    this.revision++
-    this.dirty = true
-    const change = deepFreeze({ previousRevision, revision: this.revision, changes }) as StructuralChangeSet
-    for (const listener of this.listeners) listener(change)
-    return change
+    return deepFreeze({ previousRevision: this.revision, revision: this.revision + 1, changes }) as StructuralChangeSet
   }
 
   addNode(record: NodeRecord) { this.mutateCollection('nodes', record, false) }
@@ -302,7 +313,8 @@ export class StructuralDocument {
   }
 
   getSnapshotHash(): string {
-    const { revision: _revision, ...semantic } = this.getSnapshot()
+    const semantic = cloneRecord(this.getSnapshot()) as Partial<StructuralDocumentSnapshot>
+    delete semantic.revision
     return deterministicHash(semantic)
   }
 

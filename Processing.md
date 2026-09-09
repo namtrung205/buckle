@@ -104,8 +104,9 @@ POC record, then add a new implementation record covering:
 - Current automated verification: 122 frontend tests, 20 Copilot/rate-governor backend tests and
   production build pass.
 
-Goal 14 and Goal 15 statuses do not need to change. Goal 16 remains the active goal; do not move
-to Goal 17 until the issues and gates above are resolved or explicitly deferred.
+Goal 14 and Goal 15 statuses do not need to change. At this handoff point Goal 16 remained active;
+the later Goal 17 continuation below supersedes that instruction and records the user's explicit
+waiver for the deferred Goal 16 gates.
 
 ### Suggested continuation order
 
@@ -114,3 +115,67 @@ to Goal 17 until the issues and gates above are resolved or explicitly deferred.
 3. Complete missing P0 flows, Zoom and UI/E2E verification.
 4. Run the 50-prompt evaluation and concurrent-session gate.
 5. Decide whether Goal 16 can close.
+
+## Goal 17 continuation — 2026-09-09
+
+### Roadmap transition
+
+- The user explicitly requested continuing with Goal 17. This records the required waiver to move
+  on while Goal 16 still has provider-native streaming/in-flight cancellation, P0 UI/E2E and the
+  50-prompt evaluation pending.
+- Goal 16's remaining gates are deferred, not marked as passed. Goal 17 is now the only active goal.
+
+### Implemented
+
+- Expanded the deterministic query DSL with exact name/type, group, level, grid, semantic role,
+  section, material, connectivity, coordinate, selection and hidden-state filters.
+- Added `resolve_targets` and `remember_targets` for workspace/provenance-based reference resolution,
+  explicit zero/ambiguous-match behavior and conversation-scoped entity aliases.
+- Added `change_material`, `transform_entities` and `update_entity_properties` to the provider-neutral
+  registry, policy, executor and backend Copilot tool allowlists/prompt.
+- Relative transforms support move/copy/rotate/mirror/array. Copy/array preserve copied member-node
+  topology. Direct member transforms reject shared-node collateral changes outside the target set
+  unless the shared node is explicitly included.
+- Batch edits cover section/material/release/load/support/metadata. Generic property edits reject
+  topology rewiring; node metadata now persists through `MoveNodes` rather than being silently lost.
+- Query and edit operations use the existing Command Gateway for preview, validation, atomic apply,
+  revision/audit and undo. Material changes reuse or clone a compatible section while preserving
+  member topology and parametric ownership.
+- Copilot stale-context UX now reports the exact planned, current and provider revisions.
+- `Clear context` now creates a new executor session so aliases/provenance/replay IDs cannot leak
+  across conversations. Deleted alias targets are purged before an ID can be reused.
+- Preview cards carry their model revision; Apply fails closed when a manual/model edit made the
+  preview stale.
+- Provider-authored structural edit tools are forcibly previewed even if the provider emits
+  `preview:false`; commit arguments are generated only by the Apply UI.
+- Command Gateway dry-runs now return exact planned change sets. No-op edits report zero affected,
+  emit no undo token and cannot shadow the previous meaningful undo operation.
+- Query candidate sets use existing section/material/workspace/relationship indexes before filter
+  evaluation; unknown section/material IDs fail explicitly.
+- Added the versioned bilingual offline corpus `frontend/src/core/ai/evals/goal17-edit.v1.json` and
+  reproducible report `docs/evals/goal17-edit-offline-2026-09-09.md`.
+- Added `npm run eval:goal17:online`: it calls a configured backend provider but executes all returned
+  tools against a fresh in-memory fixture, never the open workspace. It records expected/actual tool
+  sequences and exact target/preview/revision checks without printing API keys.
+
+### Verification
+
+- Frontend `npm run test:fixture`: **148/148 passed**.
+- Goal 17 offline edit-contract corpus: **10/10 scenarios passed**; coverage includes selection,
+  pronoun/reference, no-match, multi-match and stale revision in Vietnamese and English.
+- Goal 17 100,000-member indexed filters: section **P95 24.0 ms**, material **P95 30.8 ms**
+  in the latest full run (gate <= 100 ms).
+- 1,000-node transform regression: one transaction, one revision, one undo step.
+- Backend Copilot/rate-governor tests: **21/21 passed** (13 existing dependency warnings).
+- Frontend `npm run build`: **passed** (existing large-chunk warning remains).
+- Focused ESLint for Goal 17 and stale-conflict files: **passed**.
+
+### Remaining before Goal 17 can close
+
+- Run the versioned Vietnamese/English corpus against at least one configured live provider and
+  retain tool-call validity/task-completion results; the deterministic offline contract run is done.
+  Current runtime attempt stopped before an outbound provider request because the new backend session
+  had no provider connection (`Configure a provider connection before chatting`).
+- Manually verify in the live viewport: select columns by level, change them to I500, move selected
+  nodes 250 mm in X, and hide edge-frame bracing; verify summaries and undo.
+- Attach benchmark/eval/manual evidence to the final Goal 17 commit SHA.

@@ -19,6 +19,7 @@ import type { AgentBudget, AiMode, AiToolCall, AiToolResponse, AiToolRuntime, Js
 type Replay = { signature: string; response: AiToolResponse }
 type Approval = { signature: string; revision: number }
 type LastMutation = { token: string; commandId: string; revision: number }
+type ResolvedTargetSource = 'selection' | 'hidden' | 'last_created' | 'last_updated' | 'last_affected' | 'alias'
 
 const clone = <T>(value: T): T => structuredClone(value)
 const asRecord = (value: unknown, label: string): Record<string, unknown> => {
@@ -65,6 +66,9 @@ const targetsFor = (tool: string, args: Record<string, unknown>): EntityReferenc
   if (tool === 'move_nodes') return asArray<{ id: number }>(args.nodes, 'nodes').map(node => ({ collection: 'nodes', id: node.id }))
   if (tool === 'update_members') return asArray<{ id: number }>(args.members, 'members').map(member => ({ collection: 'members', id: member.id }))
   if (tool === 'change_section') return asIds(args.memberIds, 'memberIds').map(id => ({ collection: 'members', id }))
+  if (tool === 'change_material') return asIds(args.memberIds, 'memberIds').map(id => ({ collection: 'members', id }))
+  if (tool === 'transform_entities') return asRefs(args.entities, 'entities')
+  if (tool === 'update_entity_properties') return asIds(args.ids, 'ids').map(id => ({ collection: args.collection as EntityCollection, id }))
   if (tool === 'delete_entities') return asRefs(args.entities, 'entities')
   return []
 }
@@ -75,6 +79,10 @@ export class AiToolExecutor {
   private readonly replay = new Map<string, Replay>()
   private readonly approvals = new Map<string, Approval>()
   private lastMutation?: LastMutation
+  private readonly recentTargets: Record<'last_created' | 'last_updated' | 'last_affected', EntityReference[]> = {
+    last_created: [], last_updated: [], last_affected: [],
+  }
+  private readonly namedTargets = new Map<string, EntityReference[]>()
   private agentSteps = 0
   private agentCommands = 0
   private readonly startedAt: number
@@ -126,6 +134,8 @@ export class AiToolExecutor {
     switch (call.name) {
       case 'get_model_summary': data = this.queries.getModelSummary(); break
       case 'get_selection': data = this.queries.getSelection(); break
+      case 'resolve_targets': data = this.resolveTargets(args); break
+      case 'remember_targets': data = this.rememberTargets(args); break
       case 'get_entities': data = this.queries.getEntities(args.collection as EntityCollection, args.ids as number[] | undefined); break
       case 'query_entities': data = this.queries.queryEntities(args.collection as EntityCollection, (args.filter ?? {}) as never, (args.limit as number | undefined) ?? 1000); break
       case 'get_connected_entities': data = this.queries.getConnectedEntities(asRefs(args.entities, 'entities')); break
@@ -144,7 +154,7 @@ export class AiToolExecutor {
     if (call.name === 'generate_parametric') return this.generate(call, args)
     const operations = this.operationsFor(call.name, args)
     if (mode === 'Modeling' && operations.some(operation => operation.type.includes('ParametricObject'))) throw new Error('Modeling mode cannot execute parametric operations')
-    const previewOnly = call.name === 'preview_transaction'
+    const previewOnly = call.name === 'preview_transaction' || args.preview === true
     return this.runOperations(call, operations, previewOnly, args.approvalToken as string | undefined)
   }
 
@@ -155,6 +165,9 @@ export class AiToolExecutor {
       case 'move_nodes': return [{ type: 'MoveNodes', payload: { nodes: args.nodes as never[] } }]
       case 'update_members': return [{ type: 'UpdateMembers', payload: { members: args.members as never[] } }]
       case 'change_section': return [{ type: 'UpdateMembers', payload: { members: asIds(args.memberIds, 'memberIds').map(id => ({ id, patch: { sectionId: args.sectionId as number } })) } }]
+      case 'change_material': return this.changeMaterialOperations(asIds(args.memberIds, 'memberIds'), args.materialId as number)
+      case 'transform_entities': return this.transformOperations(asRefs(args.entities, 'entities'), args)
+      case 'update_entity_properties': return this.updatePropertyOperations(args.collection as EntityCollection, asIds(args.ids, 'ids'), asRecord(args.patch, 'patch'))
       case 'delete_entities': return this.deleteOperations(asRefs(args.entities, 'entities'), args.cascade === true)
       case 'set_selection': return [{ type: 'SetSelection', payload: { entities: asRefs(args.entities, 'entities') } }]
       case 'hide_entities': return [{ type: 'HideEntities', payload: { entities: asRefs(args.entities, 'entities') } }]
@@ -162,6 +175,145 @@ export class AiToolExecutor {
       case 'execute_transaction':
       case 'preview_transaction': return clone(asArray<CommandTransactionOperation>(args.operations, 'operations'))
       default: throw new Error(`No mutation handler for ${name}`)
+    }
+  }
+
+  private changeMaterialOperations(memberIds: readonly number[], materialId: number): CommandTransactionOperation[] {
+    const material = this.document.materials.get(materialId)
+    if (!material) throw new Error(`Unknown materials id ${materialId}`)
+    const sectionCreates = new Map<number, ReturnType<typeof clone>>()
+    const targetBySource = new Map<number, number>()
+    let nextSectionId = Math.max(0, ...this.document.sections.keys()) + 1
+    const sectionShape = (section: { id: number; name: string; materialId: number; [key: string]: unknown }) => {
+      const shape = clone(section) as Record<string, unknown>
+      delete shape.id; delete shape.name; delete shape.materialId
+      return canonicalStringify(shape)
+    }
+    const updates = memberIds.map(id => {
+      const member = this.document.members.get(id)
+      if (!member) throw new Error(`Unknown members id ${id}`)
+      const source = this.document.sections.get(member.sectionId)!
+      let targetId = targetBySource.get(source.id)
+      if (targetId === undefined) {
+        const shape = sectionShape(source)
+        const existing = [...this.document.sections.values()].find(section => section.materialId === materialId && sectionShape(section) === shape)
+        targetId = existing?.id ?? nextSectionId++
+        if (!existing) sectionCreates.set(source.id, { ...clone(source), id: targetId, name: `${source.name} · ${material.name}`, materialId })
+        targetBySource.set(source.id, targetId)
+      }
+      return { id, patch: { sectionId: targetId } }
+    })
+    const operations: CommandTransactionOperation[] = []
+    if (sectionCreates.size) operations.push({ type: 'CreateOrUpdateSections', payload: { sections: [...sectionCreates.values()] as never[] } })
+    operations.push({ type: 'UpdateMembers', payload: { members: updates } })
+    return operations
+  }
+
+  private transformOperations(refs: readonly EntityReference[], args: Record<string, unknown>): CommandTransactionOperation[] {
+    const unsupported = refs.find(ref => ref.collection !== 'nodes' && ref.collection !== 'members')
+    if (unsupported) throw new Error(`transform_entities does not support ${unsupported.collection}`)
+    const memberIds = new Set(refs.filter(ref => ref.collection === 'members').map(ref => ref.id))
+    const explicitNodeIds = new Set(refs.filter(ref => ref.collection === 'nodes').map(ref => ref.id))
+    const nodeIds = new Set(explicitNodeIds)
+    for (const id of memberIds) {
+      const member = this.document.members.get(id)
+      if (!member) throw new Error(`Unknown members id ${id}`)
+      nodeIds.add(member.nodeI); nodeIds.add(member.nodeJ)
+    }
+    for (const id of nodeIds) if (!this.document.nodes.has(id)) throw new Error(`Unknown nodes id ${id}`)
+    const operation = args.operation as string
+    const translation = (args.translation ?? [0, 0, 0]) as readonly [number, number, number]
+    const origin = (args.origin ?? [0, 0, 0]) as readonly [number, number, number]
+    const axis = (args.axis ?? 'z') as 'x' | 'y' | 'z'
+    const angle = Number(args.angleDegrees ?? 0) * Math.PI / 180
+    const transform = (position: readonly [number, number, number], multiplier = 1): readonly [number, number, number] => {
+      const relative = [position[0] - origin[0], position[1] - origin[1], position[2] - origin[2]]
+      if (operation === 'move' || operation === 'copy' || operation === 'array') return [
+        position[0] + translation[0] * multiplier, position[1] + translation[1] * multiplier, position[2] + translation[2] * multiplier,
+      ]
+      if (operation === 'mirror') {
+        const index = axis === 'x' ? 0 : axis === 'y' ? 1 : 2
+        relative[index] *= -1
+        return [relative[0] + origin[0], relative[1] + origin[1], relative[2] + origin[2]]
+      }
+      if (operation !== 'rotate') throw new Error(`Unknown transform operation ${operation}`)
+      const [x, y, z] = relative; const cosine = Math.cos(angle); const sine = Math.sin(angle)
+      const rotated = axis === 'x' ? [x, y * cosine - z * sine, y * sine + z * cosine]
+        : axis === 'y' ? [x * cosine + z * sine, y, -x * sine + z * cosine]
+          : [x * cosine - y * sine, x * sine + y * cosine, z]
+      return [rotated[0] + origin[0], rotated[1] + origin[1], rotated[2] + origin[2]]
+    }
+    if ((operation === 'move' || operation === 'copy' || operation === 'array') && !args.translation) throw new Error(`${operation} requires translation`)
+    if (operation === 'rotate' && args.angleDegrees === undefined) throw new Error('rotate requires angleDegrees')
+    if (operation === 'move' || operation === 'rotate' || operation === 'mirror') {
+      for (const nodeId of nodeIds) {
+        if (explicitNodeIds.has(nodeId)) continue
+        const outsideTargets = [...(this.document.memberIdsByNodeId.get(nodeId) ?? [])].filter(id => !memberIds.has(id))
+        if (outsideTargets.length) {
+          throw new Error(`Transforming targeted members would also move connected member(s) ${outsideTargets.join(', ')} through shared node ${nodeId}; include the shared node explicitly or include all connected members`)
+        }
+      }
+      return [{ type: 'MoveNodes', payload: { nodes: [...nodeIds].sort((a, b) => a - b).map(id => ({ id, position: transform(this.document.nodes.get(id)!.position) })) } }]
+    }
+    const copies = operation === 'array' ? Number(args.copies ?? 0) : 1
+    if (!Number.isSafeInteger(copies) || copies < 1 || copies > 1000) throw new Error('array copies must be an integer in [1, 1000]')
+    const nodes: Record<string, unknown>[] = []; const members: Record<string, unknown>[] = []
+    for (let copyIndex = 1; copyIndex <= copies; copyIndex++) {
+      const aliasFor = (id: number) => `transform:${copyIndex}:node:${id}`
+      for (const id of [...nodeIds].sort((a, b) => a - b)) {
+        const node = this.document.nodes.get(id)!
+        nodes.push({ alias: aliasFor(id), ...(node.name ? { name: `${node.name} copy ${copyIndex}` } : {}), position: transform(node.position, copyIndex) })
+      }
+      for (const id of [...memberIds].sort((a, b) => a - b)) {
+        const member = this.document.members.get(id)!
+        members.push({ alias: `transform:${copyIndex}:member:${id}`, ...clone(member), id: undefined,
+          nodeI: { alias: aliasFor(member.nodeI) }, nodeJ: { alias: aliasFor(member.nodeJ) } })
+      }
+    }
+    const result: CommandTransactionOperation[] = [{ type: 'CreateNodes', payload: { nodes: nodes as never[] } }]
+    if (members.length) result.push({ type: 'CreateMembers', payload: { members: members as never[] } })
+    return result
+  }
+
+  private updatePropertyOperations(collection: EntityCollection, ids: readonly number[], rawPatch: Record<string, unknown>): CommandTransactionOperation[] {
+    const patch = clone(rawPatch)
+    delete patch.id
+    if (!Object.keys(patch).length) throw new Error('patch must change at least one property')
+    const allowed: Partial<Record<EntityCollection, readonly string[]>> = {
+      nodes: ['name', 'position', 'metadata'],
+      members: ['label', 'sectionId', 'referenceAxis', 'gammaDegrees', 'release', 'metadata'],
+      shells: ['name', 'thickness', 'materialId', 'metadata'],
+      sections: ['name', 'type', 'materialId', 'depth', 'height', 'width', 'tw', 'tf', 'diameter', 'thickness', 'r', 'ri', 'properties', 'metadata'],
+      materials: ['name', 'category', 'code', 'E', 'nu', 'rho', 'alpha', 'fy', 'fc', 'fu', 'ft', 'grade', 'preset', 'metadata'],
+      loads: ['name', 'type', 'targetIds', 'value', 'magnitude', 'metadata'],
+      boundaryConditions: ['name', 'type', 'targetNodeIds', 'dx', 'dy', 'dz', 'rx', 'ry', 'rz', 'rotationDegrees', 'metadata'],
+      grids: ['name', 'kind', 'data', 'metadata'], levels: ['name', 'elevation', 'metadata'], groups: ['name', 'entityRefs', 'metadata'],
+    }
+    const allowlist = allowed[collection]
+    if (!allowlist) throw new Error(`update_entity_properties does not support ${collection}`)
+    const unsupported = Object.keys(patch).find(key => !allowlist.includes(key))
+    if (unsupported) throw new Error(`${collection}.${unsupported} cannot be changed by update_entity_properties`)
+    const records: Record<string, unknown>[] = ids.map(id => {
+      const existing = this.document[collection].get(id)
+      if (!existing) throw new Error(`Unknown ${collection} id ${id}`)
+      return { ...clone(existing) as unknown as Record<string, unknown>, ...patch, id }
+    })
+    switch (collection) {
+      case 'nodes': return [{ type: 'MoveNodes', payload: { nodes: records.map(record => ({
+        id: Number(record.id), position: record.position as readonly [number, number, number],
+        ...(record.name === undefined ? {} : { name: record.name as string }),
+        ...(record.metadata === undefined ? {} : { metadata: record.metadata as Readonly<Record<string, unknown>> }),
+      })) } }]
+      case 'members': return [{ type: 'UpdateMembers', payload: { members: ids.map((id, index) => ({ id, patch: Object.fromEntries(Object.entries(records[index]).filter(([key]) => key !== 'id')) })) } }]
+      case 'shells': return [{ type: 'CreateOrUpdateShells', payload: { shells: records as never[] } }]
+      case 'sections': return [{ type: 'CreateOrUpdateSections', payload: { sections: records as never[] } }]
+      case 'materials': return [{ type: 'CreateOrUpdateMaterials', payload: { materials: records as never[] } }]
+      case 'loads': return [{ type: 'CreateOrUpdateLoads', payload: { loads: records as never[] } }]
+      case 'boundaryConditions': return [{ type: 'CreateOrUpdateBoundaryConditions', payload: { boundaryConditions: records as never[] } }]
+      case 'grids': return [{ type: 'CreateOrUpdateGrids', payload: { grids: records as never[] } }]
+      case 'levels': return [{ type: 'CreateOrUpdateLevels', payload: { levels: records as never[] } }]
+      case 'groups': return [{ type: 'CreateOrUpdateGroups', payload: { groups: records as never[] } }]
+      default: throw new Error(`update_entity_properties does not support ${collection}`)
     }
   }
 
@@ -175,29 +327,64 @@ export class AiToolExecutor {
     }
     push('loads', 'DeleteLoads'); push('boundaryConditions', 'DeleteBoundaryConditions'); push('shells', 'DeleteShells')
     push('members', 'DeleteMembers'); push('nodes', 'DeleteNodes', { cascade }); push('sections', 'DeleteSections', { cascade })
-    push('materials', 'DeleteMaterials'); push('grids', 'DeleteGrids'); push('levels', 'DeleteLevels'); push('parametricObjects', 'DeleteParametricObjects')
-    const unsupported = [...byCollection.keys()].filter(collection => collection === 'groups')
-    if (unsupported.length) throw new Error(`Deletion is not supported for ${unsupported.join(', ')}`)
+    push('materials', 'DeleteMaterials'); push('grids', 'DeleteGrids'); push('levels', 'DeleteLevels'); push('groups', 'DeleteGroups'); push('parametricObjects', 'DeleteParametricObjects')
     return operations
   }
 
   private runOperations(call: AiToolCall, operations: readonly CommandTransactionOperation[], previewOnly: boolean, approvalToken?: string): AiToolResponse {
     if (!operations.length) throw new Error('Transaction requires at least one operation')
-    const preview = classifyOperations(operations)
+    const preview = this.classifyOperations(operations)
     const operationSignature = canonicalStringify({ operations, revision: this.document.revision })
     const approved = approvalToken ? this.consumeApproval(approvalToken, operationSignature) : false
     const mustPreview = previewOnly || (preview.requiresApproval && !approved)
     const result = this.dispatch(this.envelope(call.id, { type: 'Transaction', payload: { operations } }, mustPreview))
+    const exactPreview = this.exactPreview(preview, result)
     if (mustPreview) {
       const token = preview.requiresApproval ? this.issueApproval(operationSignature) : undefined
       return {
         toolCallId: call.id, tool: call.name, ok: true, revision: this.document.revision,
-        preview: { ...preview, ...(token ? { approvalToken: token } : {}) },
+        preview: { ...exactPreview, ...(token ? { approvalToken: token } : {}) },
         warnings: preview.requiresApproval && !previewOnly ? ['Destructive change was previewed and requires approval'] : undefined,
         data: { snapshotHash: result.snapshotHash },
       }
     }
-    return this.committed(call, result, preview)
+    return this.committed(call, result, exactPreview)
+  }
+
+  private exactPreview(preview: ToolPreview, result: CommandResult): ToolPreview {
+    if (!result.changed) return { ...preview, created: 0, updated: 0, deleted: 0, affected: 0, risk: preview.requiresApproval ? 'high' : 'low' }
+    if (!result.changes) return preview
+    let created = 0; let updated = 0; let deleted = 0
+    for (const delta of Object.values(result.changes.changes)) {
+      created += delta.created.length; updated += delta.updated.length; deleted += delta.deleted.length
+    }
+    const affected = created + updated + deleted
+    const risk = preview.requiresApproval || affected > 1000 ? 'high' : affected > 100 ? 'medium' : 'low'
+    return { ...preview, created, updated, deleted, affected, risk }
+  }
+
+  private classifyOperations(operations: readonly CommandTransactionOperation[]): ToolPreview {
+    const base = classifyOperations(operations)
+    const upserts: Partial<Record<CommandTransactionOperation['type'], readonly [EntityCollection, string]>> = {
+      CreateOrUpdateShells: ['shells', 'shells'], CreateOrUpdateSections: ['sections', 'sections'],
+      CreateOrUpdateMaterials: ['materials', 'materials'], CreateOrUpdateLoads: ['loads', 'loads'],
+      CreateOrUpdateBoundaryConditions: ['boundaryConditions', 'boundaryConditions'],
+      CreateOrUpdateGrids: ['grids', 'grids'], CreateOrUpdateLevels: ['levels', 'levels'],
+      CreateOrUpdateGroups: ['groups', 'groups'], CreateOrUpdateParametricObjects: ['parametricObjects', 'parametricObjects'],
+    }
+    let newlyCreated = 0
+    for (const operation of operations) {
+      const mapping = upserts[operation.type]
+      if (!mapping) continue
+      const [collection, key] = mapping
+      const records = (operation.payload as unknown as Record<string, unknown>)[key]
+      if (!Array.isArray(records)) continue
+      newlyCreated += records.filter(record => {
+        const id = (record as { id?: unknown }).id
+        return !Number.isSafeInteger(id) || !this.document[collection].has(id as number)
+      }).length
+    }
+    return { ...base, created: base.created + newlyCreated, updated: Math.max(0, base.updated - newlyCreated) }
   }
 
   private generate(call: AiToolCall, args: Record<string, unknown>): AiToolResponse {
@@ -226,14 +413,65 @@ export class AiToolExecutor {
   }
 
   private committed(call: AiToolCall, result: CommandResult, preview: ToolPreview, data?: unknown): AiToolResponse {
+    if (!result.changed) {
+      return { toolCallId: call.id, tool: call.name, ok: true, revision: result.revision, data, preview }
+    }
     const token = crypto.randomUUID()
     this.lastMutation = { token, commandId: `ai:${call.id}`, revision: result.revision }
     const ids = result.changes ? Object.fromEntries(Object.entries(result.changes.changes).map(([collection, delta]) => [collection, [...delta.created, ...delta.updated, ...delta.deleted]]).filter(([, values]) => (values as number[]).length)) : undefined
+    if (result.changes) {
+      const created: EntityReference[] = []; const updated: EntityReference[] = []; const deleted: EntityReference[] = []
+      for (const [collection, delta] of Object.entries(result.changes.changes)) {
+        created.push(...delta.created.map(id => ({ collection: collection as EntityCollection, id })))
+        updated.push(...delta.updated.map(id => ({ collection: collection as EntityCollection, id })))
+        deleted.push(...delta.deleted.map(id => ({ collection: collection as EntityCollection, id })))
+      }
+      if (deleted.length) {
+        const removed = new Set(deleted.map(ref => `${ref.collection}:${ref.id}`))
+        for (const [alias, refs] of this.namedTargets) {
+          this.namedTargets.set(alias, refs.filter(ref => !removed.has(`${ref.collection}:${ref.id}`)))
+        }
+        for (const source of Object.keys(this.recentTargets) as (keyof typeof this.recentTargets)[]) {
+          this.recentTargets[source] = this.recentTargets[source].filter(ref => !removed.has(`${ref.collection}:${ref.id}`))
+        }
+      }
+      if (created.length) this.recentTargets.last_created = created
+      if (updated.length) this.recentTargets.last_updated = updated
+      this.recentTargets.last_affected = [...created, ...updated]
+    }
     return { toolCallId: call.id, tool: call.name, ok: true, revision: result.revision, data, ids, preview, undoToken: token }
   }
 
+  private resolveTargets(args: Record<string, unknown>) {
+    const source = args.source as ResolvedTargetSource
+    const workspace = this.runtime.getWorkspaceState()
+    const alias = typeof args.alias === 'string' ? args.alias.trim().toLocaleLowerCase() : ''
+    const initial = source === 'selection' ? workspace.selection : source === 'hidden' ? workspace.hidden
+      : source === 'alias' ? this.namedTargets.get(alias) : this.recentTargets[source]
+    if (!initial) throw new Error(`Unknown target source ${String(args.source)}`)
+    const collection = args.collection as EntityCollection | undefined
+    const roles = args.semanticRoles as string[] | undefined
+    const entities = initial.filter(ref => this.document[ref.collection].has(ref.id))
+      .filter(ref => !collection || ref.collection === collection)
+      .filter(ref => !roles?.length || roles.includes(this.queries.semanticRole(ref)))
+      .sort((a, b) => a.collection.localeCompare(b.collection) || a.id - b.id)
+    const expectation = (args.expect ?? 'any') as string
+    if (expectation === 'one_or_more' && entities.length === 0) throw new Error(`Target source ${source} matched no entities`)
+    if (expectation === 'exactly_one' && entities.length !== 1) throw new Error(`Target source ${source} matched ${entities.length} entities; expected exactly one`)
+    return { source, total: entities.length, entities: clone(entities), revision: this.document.revision }
+  }
+
+  private rememberTargets(args: Record<string, unknown>) {
+    const alias = typeof args.alias === 'string' ? args.alias.trim().toLocaleLowerCase() : ''
+    if (!alias || !/^[a-z][a-z0-9_-]{0,63}$/.test(alias)) throw new Error('alias must start with a letter and contain only letters, numbers, _ or -')
+    const entities = asRefs(args.entities, 'entities')
+    for (const ref of entities) if (!this.document[ref.collection].has(ref.id)) throw new Error(`Unknown ${ref.collection} id ${ref.id}`)
+    this.namedTargets.set(alias, clone(entities))
+    return { alias, total: entities.length, entities: clone(entities), revision: this.document.revision }
+  }
+
   private undo(call: AiToolCall, token: string): AiToolResponse {
-    const lastAudit = this.gateway.auditLog[this.gateway.auditLog.length - 1]
+    const lastAudit = [...this.gateway.auditLog].reverse().find(entry => entry.changed)
     if (!this.lastMutation || token !== this.lastMutation.token || this.document.revision !== this.lastMutation.revision || lastAudit?.commandId !== this.lastMutation.commandId) {
       throw new Error('Undo token is stale or does not refer to the latest AI change')
     }

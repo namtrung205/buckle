@@ -2,7 +2,7 @@ import type { CommandTransactionOperation, EntityReference } from '../structural
 import type { AiMode, AiToolDefinition, ToolPreview } from './types.ts'
 
 const workspaceTools = new Set(['set_selection', 'hide_entities', 'show_entities'])
-const editTools = new Set(['move_nodes', 'update_members', 'change_section', 'delete_entities'])
+const editTools = new Set(['move_nodes', 'update_members', 'change_section', 'change_material', 'transform_entities', 'update_entity_properties', 'delete_entities'])
 const modelingTools = new Set(['create_nodes', 'create_members', ...editTools, ...workspaceTools, 'execute_transaction', 'preview_transaction', 'undo_last_ai_change'])
 const generateTools = new Set([...workspaceTools, 'preview_transaction', 'undo_last_ai_change', 'generate_parametric'])
 

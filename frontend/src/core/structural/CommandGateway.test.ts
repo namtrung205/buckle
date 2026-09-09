@@ -170,6 +170,7 @@ test('dry run validates and resolves aliases but emits no side effects', () => {
 
   assert.equal(result.dryRun, true)
   assert.equal(result.changed, true)
+  assert.deepEqual(result.changes?.changes.nodes.created, [1])
   assert.equal(result.aliases['preview-node'], 1)
   assert.equal(document.nodes.size, 0)
   assert.equal(gateway.auditLog.length, 0)

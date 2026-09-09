@@ -7,6 +7,7 @@ import type {
   Member1DRecord,
   NodeRecord,
   GridRecord,
+  GroupRecord,
   LevelRecord,
   ParametricObjectRecord,
   SectionRecord,
@@ -24,7 +25,7 @@ export type Creatable<T> = Omit<T, 'id'> & { id?: EntityId; alias?: string }
 
 export type StructuralCommandOperation =
   | { type: 'CreateNodes'; payload: { nodes: readonly Creatable<NodeRecord>[] } }
-  | { type: 'MoveNodes'; payload: { nodes: readonly { id: LocalReference; position: Vector3Record; name?: string }[] } }
+  | { type: 'MoveNodes'; payload: { nodes: readonly { id: LocalReference; position: Vector3Record; name?: string; metadata?: Readonly<Record<string, unknown>> }[] } }
   | { type: 'DeleteNodes'; payload: { ids: readonly LocalReference[]; cascade?: boolean } }
   | { type: 'CreateMembers'; payload: { members: readonly (Omit<Creatable<Member1DRecord>, 'nodeI' | 'nodeJ' | 'sectionId'> & { nodeI: LocalReference; nodeJ: LocalReference; sectionId: LocalReference })[] } }
   | { type: 'UpdateMembers'; payload: { members: readonly { id: LocalReference; patch: Partial<Omit<Member1DRecord, 'id'>> }[] } }
@@ -43,6 +44,8 @@ export type StructuralCommandOperation =
   | { type: 'DeleteGrids'; payload: { ids: readonly LocalReference[] } }
   | { type: 'CreateOrUpdateLevels'; payload: { levels: readonly Creatable<LevelRecord>[] } }
   | { type: 'DeleteLevels'; payload: { ids: readonly LocalReference[] } }
+  | { type: 'CreateOrUpdateGroups'; payload: { groups: readonly Creatable<GroupRecord>[] } }
+  | { type: 'DeleteGroups'; payload: { ids: readonly LocalReference[] } }
   | { type: 'CreateOrUpdateParametricObjects'; payload: { parametricObjects: readonly Creatable<ParametricObjectRecord>[] } }
   | { type: 'DeleteParametricObjects'; payload: { ids: readonly LocalReference[] } }
   | { type: 'DetachFromParametricObject'; payload: { objectId: LocalReference; entities: readonly EntityReference[] } }
@@ -92,5 +95,6 @@ export type CommandAuditEntry = Readonly<{
   previousRevision: number
   revision: number
   timestamp: number
+  changed: boolean
   changes: StructuralChangeSet | null
 }>

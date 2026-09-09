@@ -10,14 +10,15 @@ export const ENTITY_COLLECTIONS = [
 ] as const
 export type EntityCollection = (typeof ENTITY_COLLECTIONS)[number]
 export type EntityReference = Readonly<{ collection: EntityCollection; id: EntityId }>
+export type EntityMetadata = { metadata?: Readonly<Record<string, unknown>> }
 
-export type NodeRecord = {
+export type NodeRecord = EntityMetadata & {
   id: EntityId
   name?: string
   position: Vector3Record
 }
 
-export type MaterialRecord = {
+export type MaterialRecord = EntityMetadata & {
   id: EntityId
   name: string
   category?: string
@@ -40,7 +41,7 @@ export const SECTION_TYPES = [
 ] as const
 export type SectionType = (typeof SECTION_TYPES)[number]
 
-export type SectionRecord = {
+export type SectionRecord = EntityMetadata & {
   id: EntityId
   name: string
   type: SectionType
@@ -57,7 +58,7 @@ export type SectionRecord = {
   properties?: Readonly<Record<string, number>>
 }
 
-export type Member1DRecord = {
+export type Member1DRecord = EntityMetadata & {
   id: EntityId
   label?: string
   nodeI: EntityId
@@ -68,7 +69,7 @@ export type Member1DRecord = {
   release?: string
 }
 
-export type Shell2DRecord = {
+export type Shell2DRecord = EntityMetadata & {
   id: EntityId
   name?: string
   nodeIds: readonly [EntityId, EntityId, EntityId, EntityId]
@@ -77,7 +78,7 @@ export type Shell2DRecord = {
 }
 
 export type LoadType = 'nodal' | 'linear' | 'area' | 'pressure'
-export type LoadRecord = {
+export type LoadRecord = EntityMetadata & {
   id: EntityId
   name?: string
   type: LoadType
@@ -88,7 +89,7 @@ export type LoadRecord = {
 
 export type BoundaryConditionType =
   | 'fixed' | 'pinned' | 'roller' | 'roller-x' | 'roller-y' | 'custom' | 'elastic'
-export type BoundaryConditionRecord = {
+export type BoundaryConditionRecord = EntityMetadata & {
   id: EntityId
   name?: string
   type: BoundaryConditionType
@@ -102,20 +103,20 @@ export type BoundaryConditionRecord = {
   rotationDegrees?: number
 }
 
-export type GridRecord = {
+export type GridRecord = EntityMetadata & {
   id: EntityId
   name: string
   kind?: string
   data?: Readonly<Record<string, unknown>>
 }
 
-export type LevelRecord = {
+export type LevelRecord = EntityMetadata & {
   id: EntityId
   name: string
   elevation: number
 }
 
-export type GroupRecord = {
+export type GroupRecord = EntityMetadata & {
   id: EntityId
   name: string
   entityRefs: readonly EntityReference[]

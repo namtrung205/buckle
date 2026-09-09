@@ -252,6 +252,15 @@ def test_generic_turn_returns_provider_neutral_tool_calls(client, monkeypatch):
     assert response.json()["toolCalls"][0]["name"] == "query_entities"
 
 
+def test_goal17_provider_neutral_tools_are_accepted_by_backend_contract():
+    tools = [{
+        "name": name, "description": f"Goal 17 {name}",
+        "inputSchema": {"type": "object", "properties": {}},
+    } for name in ["resolve_targets", "remember_targets", "change_material", "transform_entities", "update_entity_properties"]]
+    request = copilot.CopilotTurnRequest.model_validate(_turn_request(mode="Agent", tools=tools))
+    copilot._validate_turn_tools(request)
+
+
 def test_exhausted_provider_rate_limit_is_preserved_as_429(client, monkeypatch):
     async def rate_limited(_request, _session_id):
         raise copilot.ProviderQueueTimeout("Provider rate limit exceeded; retry after 2s")

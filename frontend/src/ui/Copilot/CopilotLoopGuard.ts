@@ -16,6 +16,16 @@ export const copilotToolCallSignature = (call: Pick<AiToolCall, 'name' | 'argume
 export const retainCopilotToolResults = <T>(previous: readonly T[], additions: readonly T[], limit = 40): T[] =>
   [...previous, ...additions].slice(-limit)
 
+export const copilotContextConflictMessage = (plannedRevision: number, currentRevision: number, providerRevision: number): string | null => {
+  if (currentRevision !== plannedRevision) return `Model changed while Copilot was planning (started at revision ${plannedRevision}, now ${currentRevision}). Review the latest model and retry.`
+  if (providerRevision !== plannedRevision) return `Provider used stale model revision ${providerRevision}; current revision is ${currentRevision}. Retry with refreshed context.`
+  return null
+}
+
+export const copilotPreviewConflictMessage = (previewRevision: number, currentRevision: number): string | null =>
+  previewRevision === currentRevision ? null
+    : `The proposed change is stale (previewed at revision ${previewRevision}, now ${currentRevision}). Review the latest model and preview again.`
+
 /** Detect a repeated suffix such as A,A or A,B,A,B. */
 export const repeatedCopilotToolCycle = (
   previousSignatures: readonly string[],

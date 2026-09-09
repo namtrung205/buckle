@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { copilotToolCallSignature, repeatedCopilotToolCycle, retainCopilotToolResults } from './CopilotLoopGuard.ts'
+import { copilotContextConflictMessage, copilotPreviewConflictMessage, copilotToolCallSignature, repeatedCopilotToolCycle, retainCopilotToolResults } from './CopilotLoopGuard.ts'
 
 const call = (name: string, arguments_: Record<string, unknown> = {}) => ({ name, arguments: arguments_ })
 
@@ -35,4 +35,15 @@ test('tool signatures are stable across object key order', () => {
 test('tool results remain available across rounds and retain the newest bounded window', () => {
   assert.deepEqual(retainCopilotToolResults(['sections'], ['summary']), ['sections', 'summary'])
   assert.deepEqual(retainCopilotToolResults(['old', 'sections'], ['summary'], 2), ['sections', 'summary'])
+})
+
+test('stale planning reports exact revisions instead of applying against changed context', () => {
+  assert.equal(copilotContextConflictMessage(4, 4, 4), null)
+  assert.match(copilotContextConflictMessage(4, 5, 4)!, /started at revision 4, now 5/)
+  assert.match(copilotContextConflictMessage(4, 4, 3)!, /stale model revision 3/)
+})
+
+test('stale preview cannot be applied after the model revision changes', () => {
+  assert.equal(copilotPreviewConflictMessage(7, 7), null)
+  assert.match(copilotPreviewConflictMessage(7, 8)!, /previewed at revision 7, now 8/)
 })

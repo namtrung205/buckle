@@ -464,12 +464,13 @@ async def create_plan(
 
 
 QUERY_TOOL_NAMES = {
-    "get_model_summary", "get_selection", "get_entities", "query_entities",
+    "get_model_summary", "get_selection", "resolve_targets", "remember_targets", "get_entities", "query_entities",
     "get_connected_entities", "get_nearby_nodes", "get_sections", "get_materials",
     "validate_model",
 }
 MUTATION_TOOL_NAMES = {
     "create_nodes", "create_members", "move_nodes", "update_members", "change_section",
+    "change_material", "transform_entities", "update_entity_properties",
     "delete_entities", "set_selection", "hide_entities", "show_entities",
     "execute_transaction", "preview_transaction", "undo_last_ai_change",
     "generate_parametric",
@@ -492,6 +493,10 @@ Mode rules are security boundaries:
 
 Prefer batch calls. Query before using unknown IDs. For a user request such as finding
 members by length/material, call query_entities and then set_selection if requested.
+For edits, resolve exact targets first, reject zero or ambiguous matches, then call the
+edit tool with preview=true. Apply only after user approval. Prefer transform_entities for
+move/copy/rotate/mirror/array, change_material for member material, and
+update_entity_properties for batch release/load/support/metadata edits.
 Destructive tools may return a preview and approval token: explain the preview and stop;
 never fabricate approval. Do not expose chain-of-thought. Keep final answers concise and
 state exact affected counts/IDs from tool results."""

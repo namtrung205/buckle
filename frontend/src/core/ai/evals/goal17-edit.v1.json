@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Goal 17 offline edit contract",
+  "description": "Bilingual prompts paired with reviewed provider-neutral tool plans. This corpus verifies deterministic target/edit semantics; it does not score provider language understanding.",
+  "cases": [
+    {
+      "id": "vi-level-columns",
+      "locale": "vi",
+      "prompt": "Chọn toàn bộ cột tầng 2",
+      "tags": ["selection", "level", "semantic-role"],
+      "onlineMode": "Edit",
+      "expectedTools": ["query_entities", "set_selection"],
+      "calls": [
+        { "name": "query_entities", "mode": "Edit", "arguments": { "collection": "members", "filter": { "levelIds": [2], "semanticRoles": ["column"] } } },
+        { "name": "set_selection", "mode": "Edit", "arguments": { "entities": [{ "collection": "members", "id": 2 }] } }
+      ],
+      "expect": { "ok": true, "entityRefs": ["members:2"] }
+    },
+    {
+      "id": "en-boundary-frame",
+      "locale": "en",
+      "prompt": "Find the members in the boundary frame",
+      "tags": ["group", "reference"],
+      "onlineMode": "Inspect",
+      "expectedTools": ["query_entities"],
+      "calls": [
+        { "name": "query_entities", "mode": "Inspect", "arguments": { "collection": "members", "filter": { "groupIds": [1] } } }
+      ],
+      "expect": { "ok": true, "entityRefs": ["members:1"] }
+    },
+    {
+      "id": "vi-pronoun-selection",
+      "locale": "vi",
+      "prompt": "Đổi chúng sang I500",
+      "tags": ["selection", "pronoun", "edit"],
+      "onlineMode": "Edit",
+      "expectedTools": ["resolve_targets", "update_entity_properties"],
+      "setup": [
+        { "name": "set_selection", "mode": "Modeling", "arguments": { "entities": [{ "collection": "members", "id": 1 }] } }
+      ],
+      "calls": [
+        { "name": "resolve_targets", "mode": "Edit", "arguments": { "source": "selection", "collection": "members", "expect": "one_or_more" } },
+        { "name": "update_entity_properties", "mode": "Edit", "arguments": { "collection": "members", "ids": [1], "patch": { "sectionId": 2 }, "preview": true } }
+      ],
+      "expect": { "ok": true, "entityRefs": ["members:1"], "memberSections": { "1": 1 }, "preview": { "updated": 1 }, "revision": 0 }
+    },
+    {
+      "id": "en-current-selection",
+      "locale": "en",
+      "prompt": "Inspect that selected column",
+      "tags": ["selection", "pronoun"],
+      "onlineMode": "Inspect",
+      "expectedTools": ["resolve_targets"],
+      "setup": [
+        { "name": "set_selection", "mode": "Modeling", "arguments": { "entities": [{ "collection": "members", "id": 2 }] } }
+      ],
+      "calls": [
+        { "name": "resolve_targets", "mode": "Inspect", "arguments": { "source": "selection", "collection": "members", "semanticRoles": ["column"], "expect": "exactly_one" } }
+      ],
+      "expect": { "ok": true, "entityRefs": ["members:2"] }
+    },
+    {
+      "id": "vi-last-created",
+      "locale": "vi",
+      "prompt": "Dịch các node vừa tạo 250 mm theo X",
+      "tags": ["provenance", "reference", "transform"],
+      "onlineMode": "Modeling",
+      "expectedTools": ["resolve_targets", "transform_entities"],
+      "setup": [
+        { "name": "create_nodes", "mode": "Modeling", "arguments": { "nodes": [{ "id": 10, "position": [0, 0, 6] }, { "id": 11, "position": [2, 0, 6] }] } }
+      ],
+      "calls": [
+        { "name": "resolve_targets", "mode": "Modeling", "arguments": { "source": "last_created", "collection": "nodes", "expect": "one_or_more" } },
+        { "name": "transform_entities", "mode": "Modeling", "arguments": { "entities": [{ "collection": "nodes", "id": 10 }, { "collection": "nodes", "id": 11 }], "operation": "move", "translation": [0.25, 0, 0], "preview": true } }
+      ],
+      "expect": { "ok": true, "entityRefs": ["nodes:10", "nodes:11"], "nodePositions": { "10": [0, 0, 6], "11": [2, 0, 6] }, "preview": { "updated": 2 }, "revision": 1 }
+    },
+    {
+      "id": "en-named-alias",
+      "locale": "en",
+      "prompt": "Remember these as edge_columns, then resolve them",
+      "tags": ["alias", "reference"],
+      "onlineMode": "Inspect",
+      "expectedTools": ["remember_targets", "resolve_targets"],
+      "setup": [
+        { "name": "set_selection", "mode": "Modeling", "arguments": { "entities": [{ "collection": "members", "id": 2 }] } }
+      ],
+      "calls": [
+        { "name": "remember_targets", "mode": "Inspect", "arguments": { "alias": "edge_columns", "entities": [{ "collection": "members", "id": 2 }] } },
+        { "name": "resolve_targets", "mode": "Inspect", "arguments": { "source": "alias", "alias": "edge_columns", "expect": "one_or_more" } }
+      ],
+      "expect": { "ok": true, "entityRefs": ["members:2"] }
+    },
+    {
+      "id": "vi-no-match",
+      "locale": "vi",
+      "prompt": "Chọn các phần tử vừa tạo",
+      "tags": ["no-match", "reference"],
+      "onlineMode": "Inspect",
+      "expectedTools": ["resolve_targets"],
+      "calls": [
+        { "name": "resolve_targets", "mode": "Inspect", "arguments": { "source": "last_created", "expect": "one_or_more" } }
+      ],
+      "expect": { "ok": false, "errorIncludes": "matched no entities" }
+    },
+    {
+      "id": "en-multi-match",
+      "locale": "en",
+      "prompt": "Select the node I just created",
+      "tags": ["multi-match", "ambiguity", "reference"],
+      "onlineMode": "Inspect",
+      "expectedTools": ["resolve_targets"],
+      "setup": [
+        { "name": "create_nodes", "mode": "Modeling", "arguments": { "nodes": [{ "id": 10, "position": [0, 0, 6] }, { "id": 11, "position": [2, 0, 6] }] } }
+      ],
+      "calls": [
+        { "name": "resolve_targets", "mode": "Inspect", "arguments": { "source": "last_created", "collection": "nodes", "expect": "exactly_one" } }
+      ],
+      "expect": { "ok": false, "errorIncludes": "matched 2 entities" }
+    },
+    {
+      "id": "vi-transform-preview",
+      "locale": "vi",
+      "prompt": "Xem trước khi xoay node B 90 độ quanh trục Z",
+      "tags": ["preview", "transform"],
+      "onlineMode": "Modeling",
+      "expectedTools": ["transform_entities"],
+      "calls": [
+        { "name": "transform_entities", "mode": "Modeling", "arguments": { "entities": [{ "collection": "nodes", "id": 2 }], "operation": "rotate", "origin": [0, 0, 0], "axis": "z", "angleDegrees": 90, "preview": true } }
+      ],
+      "expect": { "ok": true, "preview": { "updated": 1 }, "revision": 0 }
+    },
+    {
+      "id": "en-stale-revision",
+      "locale": "en",
+      "prompt": "Apply the edit planned before my manual model change",
+      "tags": ["stale-revision", "conflict"],
+      "skipOnline": "Deterministic UI revision guard; no provider call is required.",
+      "contextConflict": { "plannedRevision": 4, "currentRevision": 5, "providerRevision": 4 },
+      "expect": { "ok": false, "errorIncludes": "started at revision 4, now 5" }
+    }
+  ]
+}
