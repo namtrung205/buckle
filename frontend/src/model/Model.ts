@@ -698,6 +698,28 @@ export class Model {
     return revision >= 0 && this.workspaceContext.hiddenEntityRefs.has(`${collection}:${id}`)
   };
 
+  /** True while at least one node / member / shell is hidden. Reads the
+   *  hidden revision so MobX observers calling this re-render on show/hide
+   *  changes (the hidden Set is plain, non-observable render data). */
+  hasHiddenEntities = () => {
+    const revision = this.workspaceHiddenRevision
+    return revision >= 0 && this.workspaceContext.hiddenEntityRefs.size > 0
+  };
+
+  /** Show every hidden node / member / shell (bottom bar "Show all"): one
+   *  undoable transaction that clears the whole hidden set. */
+  showAllEntities = () => {
+    const entities = this.workspaceContext.getCommandState().hidden
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'ShowEntities', payload: { entities } },
+      ] },
+    })
+  };
+
   /** Add the currently selected nodes to the selection (used by hover quick-actions). */
   ensureSelected = (nodeIds: number[]) => {
     if (!nodeIds.length) return;

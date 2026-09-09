@@ -20,6 +20,7 @@ import {
   GridOn,
   GridOff,
   Compress,
+  Visibility as ShowAllIcon,
 } from '@mui/icons-material';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
@@ -223,6 +224,14 @@ const BottomBar = observer(() => {
         <Tooltip title={model.shrinkEnabled ? 'Shrink — ON (click to show elements at full length)' : 'Shrink — OFF (click to shorten elements at both ends, Midas-style)'}>
           <IconButton onClick={() => model.setShrinkEnabled(!model.shrinkEnabled)} sx={activeStyle(model.shrinkEnabled)}>
             <Compress sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+
+        <Divider orientation="vertical" flexItem sx={{ bgcolor: colors.border, mx: 0.5 }} />
+
+        <Tooltip title={model.hasHiddenEntities() ? 'Show all - reveal every hidden node, member and shell' : 'Show all - nothing is hidden'}>
+          <IconButton onClick={() => model.showAllEntities()} disabled={!model.hasHiddenEntities()} sx={activeStyle(false)}>
+            <ShowAllIcon sx={{ fontSize: 18 }} />
           </IconButton>
         </Tooltip>
       </Box>
