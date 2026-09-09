@@ -268,6 +268,8 @@ def test_catalogue_creation_tools_are_accepted_by_backend_contract():
     } for name in ["create_material", "create_section"]]
     request = copilot.CopilotTurnRequest.model_validate(_turn_request(mode="Generate", tools=tools))
     copilot._validate_turn_tools(request)
+    assert "Never claim that create_material or create_section is unavailable" in copilot.TOOL_SYSTEM_PROMPT
+    assert "Modeling, Generate or" in copilot.TOOL_SYSTEM_PROMPT
 
 
 def test_exhausted_provider_rate_limit_is_preserved_as_429(client, monkeypatch):
