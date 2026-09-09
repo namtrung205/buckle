@@ -209,8 +209,9 @@ export class Model {
   /** Incremented only when the canonical viewport selection changes. Panels
    *  use this to refresh selection-linked targets without re-seeding drafts. */
   workspaceSelectionRevision = 0;
-  /** True only for panels/drafts opened from the current viewport selection.
-   *  Opening an existing entity from the model tree must keep its saved targets. */
+  /** True while the right dock is bound to the live viewport selection: every
+   *  entity dock and draft follows later selection changes (node/member docks
+   *  rebind, support/load targets restage). clearFocus resets it. */
   rightPanelTargetsFollowSelection = false;
   selectedNodeId: number | null = null;
   selectedBoundaryConditionId: number | null = null;
@@ -309,7 +310,7 @@ export class Model {
   focusMember = (id: number | null) => {
     this.selectedMemberId = id;
     this.editingMemberIds = [];
-    this.rightPanelTargetsFollowSelection = false;
+    this.rightPanelTargetsFollowSelection = true;
     if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -325,22 +326,30 @@ export class Model {
     this.editingMemberIds = [...ids];
   };
 
-  /** Keep a context-menu member edit bound to the live viewport selection.
-   *  Direct tree/property focus remains single-entity and is intentionally not
-   *  rebound, because focusMember() clears editingMemberIds. */
-  private syncSelectionLinkedMemberPanel = () => {
-    if (!this.rightPanelOpen || this.editingMemberIds.length === 0) return;
-    const ids = [...this.workspaceContext.selectedMemberIds];
-    // An empty sweep (nothing hit) must not close the dock: keep the current
-    // batch untouched and let the user sweep again.
-    if (!ids.length) return;
-    this.editingMemberIds = ids;
-    this.selectedMemberId = ids[0];
+  /** Keep the right dock bound to the live viewport selection. The member and
+   *  node docks rebind to the swept entities (a multi-member sweep turns the
+   *  member dock into a batch edit); the support/load docks restage their
+   *  targets from the same workspaceSelectionRevision signal in RightPanel.
+   *  An empty sweep is a no-op: the dock keeps its current entity and stays
+   *  open. */
+  private syncSelectionLinkedPanel = () => {
+    if (!this.rightPanelOpen || !this.rightPanelTargetsFollowSelection) return;
+    if (this.selectedMemberId != null || this.editingMemberIds.length > 0) {
+      const ids = [...this.workspaceContext.selectedMemberIds];
+      if (!ids.length) return;
+      this.editingMemberIds = ids.length > 1 ? ids : [];
+      this.selectedMemberId = ids[0];
+      return;
+    }
+    if (this.selectedNodeId != null) {
+      const ids = [...this.workspaceContext.selectedNodeIds];
+      if (ids.length) this.selectedNodeId = ids[0];
+    }
   };
 
   focusNode = (id: number | null) => {
     this.selectedNodeId = id;
-    this.rightPanelTargetsFollowSelection = false;
+    this.rightPanelTargetsFollowSelection = true;
     if (id != null) { this.selectedMemberId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -350,17 +359,18 @@ export class Model {
   /** Focus a support / boundary condition in the right dock, by id. */
   focusBoundaryCondition = (id: number | null) => {
     this.selectedBoundaryConditionId = id;
-    this.rightPanelTargetsFollowSelection = false;
+    this.rightPanelTargetsFollowSelection = true;
     if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
 
-  /** Focus a load in the right dock, by id. */
-  focusLoad = (id: number | null, followSelection = false) => {
+  /** Focus a load in the right dock, by id. The dock follows the live viewport
+   *  selection: sweeping other elements restages the load's targets. */
+  focusLoad = (id: number | null) => {
     this.selectedLoadId = id;
-    this.rightPanelTargetsFollowSelection = followSelection;
+    this.rightPanelTargetsFollowSelection = true;
     if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -658,7 +668,7 @@ export class Model {
       value: new THREE.Vector3(0, 0, 0),
     });
     load.createOrUpdate();
-    this.focusLoad(load.id, true);
+    this.focusLoad(load.id);
   };
 
   /** Create a blank linear (distributed) load on the given member ids and focus it for editing. */
@@ -672,7 +682,7 @@ export class Model {
       value: new THREE.Vector3(0, 0, 0),
     });
     load.createOrUpdate();
-    this.focusLoad(load.id, true);
+    this.focusLoad(load.id);
   };
 
   addPressureLoadToShells = (shellIds: number[]) => {
@@ -686,7 +696,7 @@ export class Model {
       value: new THREE.Vector3(0, -1, 0),
       magnitude: 0,
     }])
-    this.focusLoad(id, true)
+    this.focusLoad(id)
   };
 
   /** Create a node at the origin and focus it. */
@@ -1140,7 +1150,7 @@ export class Model {
         this.selector.selectedCenterlineIds = [...this.workspaceContext.selectedMemberIds]
         if (beforeSelection !== afterSelection) {
           this.workspaceSelectionRevision++
-          this.syncSelectionLinkedMemberPanel()
+          this.syncSelectionLinkedPanel()
         }
       },
       allowDestructive: () => allowDestructive,
