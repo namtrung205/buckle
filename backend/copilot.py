@@ -698,8 +698,8 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
             message = response.json().get("choices", [{}])[0].get("message", {})
             text = str(message.get("content") or "").strip()
             tool_calls = _parse_tool_calls(message)
-    if len(tool_calls) > 10:
-        raise RuntimeError("Provider exceeded the 10 tool-call turn budget")
+    if len(tool_calls) > 25:
+        raise RuntimeError("Provider exceeded the 25 tool-call turn budget")
     allowed = {tool.name for tool in request.tools}
     if any(call["name"] not in allowed for call in tool_calls):
         raise RuntimeError("Provider returned a tool that is not available in this mode")
