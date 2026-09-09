@@ -124,6 +124,58 @@ def test_nvidia_preset_needs_only_an_api_key(client, monkeypatch):
     assert response.json()["models"] == ["meta/llama-3.3-70b-instruct"]
 
 
+def test_groq_preset_needs_only_an_api_key(client, monkeypatch):
+    async def fake_models(provider, base_url, api_key):
+        assert provider == "groq"
+        assert base_url == "https://api.groq.com/openai/v1"
+        assert api_key == "gsk-user-key"
+        return ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+
+    monkeypatch.setattr(copilot, "discover_models", fake_models)
+    response = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+        "provider": "groq", "apiKey": "gsk-user-key",
+    })
+    assert response.status_code == 201
+    assert response.json()["provider"] == "groq"
+    assert response.json()["label"] == "GroqCloud"
+    assert response.json()["baseUrl"] == "https://api.groq.com/openai/v1"
+    assert response.json()["models"] == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
+    assert response.json()["keyHint"] == "••••-key"
+    assert response.json()["rateLimit"] == {
+        "mode": "auto", "maxConcurrent": 2, "rpm": 24, "tpm": 6400,
+        "safetyFactor": 0.8, "maxWaitSeconds": 30.0, "maxRetries": 2,
+    }
+
+
+def test_rate_limit_policy_can_be_set_and_updated_per_connection(client, monkeypatch):
+    async def fake_models(_provider, _base_url, _api_key):
+        return ["test-model"]
+
+    monkeypatch.setattr(copilot, "discover_models", fake_models)
+    created = client.post("/api/copilot/connections", headers=SESSION_HEADERS, json={
+        "provider": "openai", "apiKey": "openai-user-key", "rateLimit": {
+            "mode": "manual", "maxConcurrent": 1, "rpm": 12, "tpm": 5000,
+            "safetyFactor": 0.75, "maxWaitSeconds": 15, "maxRetries": 1,
+        },
+    })
+    assert created.status_code == 201
+    connection_id = created.json()["id"]
+    assert created.json()["rateLimit"]["rpm"] == 12
+
+    updated = client.patch(
+        f"/api/copilot/connections/{connection_id}/rate-limit",
+        headers=SESSION_HEADERS,
+        json={
+            "mode": "auto", "maxConcurrent": 3, "rpm": 20, "tpm": 9000,
+            "safetyFactor": 0.8, "maxWaitSeconds": 25, "maxRetries": 2,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["rateLimit"]["maxConcurrent"] == 3
+    assert updated.json()["rateLimit"]["tpm"] == 9000
+    assert (SESSION_HEADERS["X-Copilot-Session"], connection_id) in copilot.rate_governors
+
+
 def _turn_request(mode="Inspect", tools=None):
     return {
         "requestId": "request-00000001",
@@ -159,6 +211,16 @@ def test_generic_turn_returns_provider_neutral_tool_calls(client, monkeypatch):
     response = client.post("/api/copilot/turn", json=_turn_request(), headers=SESSION_HEADERS)
     assert response.status_code == 200
     assert response.json()["toolCalls"][0]["name"] == "query_entities"
+
+
+def test_exhausted_provider_rate_limit_is_preserved_as_429(client, monkeypatch):
+    async def rate_limited(_request, _session_id):
+        raise copilot.ProviderQueueTimeout("Provider rate limit exceeded; retry after 2s")
+
+    monkeypatch.setattr(copilot, "run_copilot_turn", rate_limited)
+    response = client.post("/api/copilot/turn", json=_turn_request(), headers=SESSION_HEADERS)
+    assert response.status_code == 429
+    assert "retry after 2s" in response.json()["detail"]
 
 
 def test_turn_stream_emits_text_and_final_revision(client, monkeypatch):

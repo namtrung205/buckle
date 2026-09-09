@@ -35,7 +35,7 @@ bổ sung roadmap AI-native để tăng tốc dựng hình, truy vấn và cập
 | 13 | Command Bus + transaction + undo/redo | Core complete — Grid UI/E2E/history-cap verification deferred per user |
 | 14 | Parametric object kernel + regenerate/diff | Implemented — automated gates passed; UI verification pending |
 | 15 | AI Tool Registry + modes + permission policy | Implemented — automated gates passed; viewport harness verification pending |
-| 16 | AI Copilot MVP end-to-end | Planned |
+| 16 | AI Copilot MVP end-to-end | In progress — core MVP implemented; true streaming/cancel, P0 UI/E2E and 50-prompt eval pending |
 | 17 | Fast inspect/select/edit workflows | Planned |
 | 18 | Fast parametric generation workflows | Planned |
 | 19 | AI safety, evals, observability và production gate | Planned |
@@ -623,6 +623,26 @@ cho LLM khi gate chưa pass.
   quan sát viewport và undo toàn bộ chuỗi.
 
 ## Goal 16 — AI Copilot MVP end-to-end
+
+### Implementation record — 2026-09-09 (in progress)
+
+- Đã có endpoint provider-neutral `/api/copilot/turn` và `/api/copilot/turn/stream`,
+  mode/model/provider selection, BYOK phía server và multi-round tool execution.
+- Đã có context revision guard, preview, Apply/Reject/Undo, Select affected entities và
+  persistence theo conversation/session.
+- Mutation Retry hỗ trợ retry một lần sau lượt failed. Logical turn ID được giữ ổn định và
+  tool-call ID được suy ra theo round/vị trí, nên mutation đã commit được replay idempotent;
+  provider đổi nội dung cùng retry slot sẽ bị chặn bằng `IDEMPOTENCY_CONFLICT`.
+- NVIDIA NIM và GroqCloud preset, provider error display, Enter để gửi và Shift+Enter xuống dòng đã có.
+  Groq dùng OpenAI-compatible base URL `https://api.groq.com/openai/v1`, BYOK phía server và
+  tự động lấy model từ `/models`.
+- Provider settings cho phép cấu hình rate limit riêng từng connection: Auto/Manual/Disabled,
+  concurrency, RPM, TPM, safety factor, queue wait và retry. Backend governor điều tiết outbound
+  request, đọc token reset headers và tôn trọng `Retry-After` khi provider trả `429`.
+- Automated verification hiện tại: frontend fixture 118/118 pass, Copilot/rate-limit backend 17/17 pass,
+  production build pass; các file Copilot thay đổi cho Mutation Retry lint-clean.
+- Goal vẫn active: provider-native streaming/in-flight cancel, Zoom, material flow, P0 UI/E2E,
+  bộ eval 50 prompt, concurrent-session gate và live NVIDIA verification còn pending.
 
 ### POC implementation record — 2026-09-08
 

@@ -16,6 +16,11 @@
 
 - NVIDIA NIM was added consistently to backend and frontend, using the preset base URL
   `https://integrate.api.nvidia.com/v1`.
+- GroqCloud was added consistently to backend and frontend, using the OpenAI-compatible preset
+  base URL `https://api.groq.com/openai/v1`; model IDs are discovered from `/models`.
+- Per-connection outbound rate-limit settings are available in Copilot provider settings.
+  Backend governors enforce concurrency, rolling RPM/TPM budgets, safety factor, maximum queue
+  wait and bounded `429` retries honoring `Retry-After`; Auto mode learns Groq token reset headers.
 - Backend includes a mocked connection test for NVIDIA.
 - Frontend now formats FastAPI validation errors more clearly, supports Enter to send and
   Shift+Enter for a new line, and exposes Retry on user messages.
@@ -25,12 +30,15 @@
 
 ### Issues to address before closing Goal 16
 
-1. **Mutation Retry can duplicate entities.**
-   - `retryMessage()` calls `sendPrompt()` and creates a new request/tool-call identity.
-   - `AiToolExecutor` idempotency is keyed by tool-call ID, so retrying an already successful
-     prompt such as “create two nodes and one member” can create another copy.
-   - Preferred fix: show Retry only for failed/cancelled turns, or require preview/confirmation
-     for mutation retries, or preserve a stable logical-turn idempotency key.
+1. **Mutation Retry duplicate safety — resolved in working tree on 2026-09-09.**
+   - Retry is offered once and only after a failed turn.
+   - The retry preserves a logical turn ID; tool-call IDs are derived deterministically from
+     logical turn, round and call position, so an already committed mutation is replayed rather
+     than executed again.
+   - If the provider changes a tool call in the same retry slot, execution fails closed with
+     `IDEMPOTENCY_CONFLICT` instead of applying a different mutation.
+   - Regression coverage includes replay without duplicate entity creation and changed-content
+     conflict handling.
 
 2. **Streaming is currently simulated rather than provider-native.**
    - Backend waits for the entire provider response and then emits the completed text in
@@ -57,23 +65,19 @@
 
 ### Verification results
 
-- Frontend `npm run test:fixture`: **115/115 passed**.
-- Backend `backend/venv/Scripts/python.exe -m pytest backend/tests/test_copilot.py -q`:
-  **11/11 passed**.
+- Frontend `npm run test:fixture`: **118/118 passed** after Mutation Retry coverage.
+- Backend Copilot/rate-governor tests: **17/17 passed**, including Groq defaults, per-connection
+  create/update policy, header parsing, `429` retry/status preservation and queue-timeout coverage.
 - Frontend `npm run build`: **passed**.
 - `git diff --check`: **passed**.
-- Repository-wide `npm run lint`: **failed** because of many existing legacy violations;
-  Copilot currently contributes the two findings listed above.
+- Repository-wide `npm run lint` still has existing legacy violations; the focused Copilot files
+  are lint-clean after removing the prior constant-loop error and effect-dependency warning.
 
-### Goal checklist update needed
+### Goal checklist updated
 
-In `VIEWER_IMPLEMENTATION_GOALS.md`, change the Goal 16 queue status from:
+`VIEWER_IMPLEMENTATION_GOALS.md` now records Goal 16 as:
 
-> `Planned`
-
-to:
-
-> `In progress — core MVP implemented; retry safety, true streaming/cancel, P0 UI/E2E and 50-prompt eval pending`
+> `In progress — core MVP implemented; true streaming/cancel, P0 UI/E2E and 50-prompt eval pending`
 
 The Goal 16 POC statement saying streaming, cancel, mode/model selector, persistence and session
 isolation are all absent is now historical/outdated. Keep it explicitly labeled as the historical
@@ -86,16 +90,18 @@ POC record, then add a new implementation record covering:
 - Preview, Apply, Reject, Undo and Select affected entities.
 - Session message/context persistence.
 - NVIDIA NIM preset and improved provider error display.
-- Current automated verification: 115 frontend tests, 11 backend tests and production build pass.
+- GroqCloud preset with server-side BYOK and model discovery.
+- Per-provider connection rate-limit UI and server-side outbound governor.
+- Current automated verification: 118 frontend tests, 17 Copilot/rate-governor backend tests and
+  production build pass.
 
 Goal 14 and Goal 15 statuses do not need to change. Goal 16 remains the active goal; do not move
 to Goal 17 until the issues and gates above are resolved or explicitly deferred.
 
 ### Suggested continuation order
 
-1. Make Retry safe for mutation prompts and add regression coverage.
-2. Correct streaming/cancellation semantics and add in-flight cancellation tests.
-3. Add focused Copilot UI tests and remove its local lint findings.
-4. Complete missing P0 flows, Zoom and UI/E2E verification.
-5. Run the 50-prompt evaluation and concurrent-session gate.
-6. Update `VIEWER_IMPLEMENTATION_GOALS.md`, then decide whether Goal 16 can close.
+1. Correct streaming/cancellation semantics and add in-flight cancellation tests.
+2. Add focused Copilot UI tests beyond the Mutation Retry policy/idempotency coverage.
+3. Complete missing P0 flows, Zoom and UI/E2E verification.
+4. Run the 50-prompt evaluation and concurrent-session gate.
+5. Decide whether Goal 16 can close.

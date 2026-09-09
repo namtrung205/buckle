@@ -19,6 +19,7 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from provider_rate_limit import ProviderQueueTimeout, ProviderRateGovernor, estimate_request_tokens
 
 
 router = APIRouter(prefix="/api/copilot", tags=["copilot"])
@@ -85,11 +86,24 @@ class CopilotTurnRequest(BaseModel):
 class ConnectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    provider: Literal["openai", "deepseek", "anthropic", "gemini", "openrouter", "nvidia", "compatible"]
+    provider: Literal["openai", "deepseek", "anthropic", "gemini", "openrouter", "nvidia", "groq", "compatible"]
     api_key: str = Field(min_length=1, max_length=1000, alias="apiKey")
     label: str | None = Field(default=None, max_length=100)
     base_url: str | None = Field(default=None, alias="baseUrl", max_length=500)
     model_ids: list[str] = Field(default_factory=list, alias="modelIds", max_length=100)
+    rate_limit: "RateLimitSettings | None" = Field(default=None, alias="rateLimit")
+
+
+class RateLimitSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    mode: Literal["auto", "manual", "disabled"] = "auto"
+    max_concurrent: int = Field(default=2, alias="maxConcurrent", ge=1, le=10)
+    rpm: int | None = Field(default=None, ge=1, le=100_000)
+    tpm: int | None = Field(default=None, ge=1, le=100_000_000)
+    safety_factor: float = Field(default=0.8, alias="safetyFactor", ge=0.1, le=1.0)
+    max_wait_seconds: float = Field(default=30, alias="maxWaitSeconds", ge=0, le=300)
+    max_retries: int = Field(default=2, alias="maxRetries", ge=0, le=5)
 
 
 class ProviderConnection(BaseModel):
@@ -99,6 +113,7 @@ class ProviderConnection(BaseModel):
     api_key: str
     base_url: str
     models: list[str]
+    rate_limit: RateLimitSettings
 
 
 PROVIDER_DEFAULTS = {
@@ -108,8 +123,16 @@ PROVIDER_DEFAULTS = {
     "gemini": ("Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai"),
     "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1"),
     "nvidia": ("NVIDIA NIM", "https://integrate.api.nvidia.com/v1"),
+    "groq": ("GroqCloud", "https://api.groq.com/openai/v1"),
 }
 connections: dict[tuple[str, str], ProviderConnection] = {}
+rate_governors: dict[tuple[str, str], ProviderRateGovernor] = {}
+
+
+def _default_rate_limit(provider: str) -> RateLimitSettings:
+    if provider == "groq":
+        return RateLimitSettings(rpm=24, tpm=6400)
+    return RateLimitSettings()
 
 
 class PlannedNode(BaseModel):
@@ -229,6 +252,37 @@ async def discover_models(provider: str, base_url: str, api_key: str) -> list[st
     return sorted({str(value["id"]) for value in values if isinstance(value, dict) and value.get("id")})
 
 
+async def _provider_post(
+    client: httpx.AsyncClient,
+    connection: ProviderConnection,
+    session_id: str,
+    path: str,
+    payload: dict[str, Any],
+) -> httpx.Response:
+    key = (session_id, connection.id)
+    governor = rate_governors.get(key)
+    if governor is None:
+        governor = ProviderRateGovernor(connection.rate_limit)
+        rate_governors[key] = governor
+    return await governor.execute(
+        lambda: client.post(
+            f"{connection.base_url}/{path.lstrip('/')}",
+            headers={**_headers(connection.provider, connection.api_key), "content-type": "application/json"},
+            json=payload,
+        ),
+        estimate_request_tokens(payload),
+    )
+
+
+def _raise_provider_error(response: httpx.Response) -> None:
+    if response.status_code == 429:
+        retry_after = response.headers.get("retry-after")
+        suffix = f"; retry after {retry_after}s" if retry_after else ""
+        raise ProviderQueueTimeout(f"Provider rate limit exceeded after configured retries{suffix}")
+    if response.status_code >= 400:
+        raise RuntimeError(f"Provider request failed ({response.status_code})")
+
+
 def _public_connection(connection: ProviderConnection) -> dict[str, Any]:
     return {
         "id": connection.id,
@@ -237,6 +291,7 @@ def _public_connection(connection: ProviderConnection) -> dict[str, Any]:
         "baseUrl": connection.base_url,
         "models": connection.models,
         "keyHint": f"••••{connection.api_key[-4:]}",
+        "rateLimit": connection.rate_limit.model_dump(by_alias=True),
     }
 
 
@@ -263,8 +318,25 @@ async def create_connection(
     connection = ProviderConnection(
         id=str(uuid4()), provider=request.provider, label=label, api_key=request.api_key,
         base_url=base_url, models=sorted(set(models)),
+        rate_limit=request.rate_limit or _default_rate_limit(request.provider),
     )
     connections[(x_copilot_session, connection.id)] = connection
+    rate_governors[(x_copilot_session, connection.id)] = ProviderRateGovernor(connection.rate_limit)
+    return _public_connection(connection)
+
+
+@router.patch("/connections/{connection_id}/rate-limit")
+async def update_connection_rate_limit(
+    connection_id: str,
+    settings: RateLimitSettings,
+    x_copilot_session: str = Header(min_length=20, max_length=200),
+):
+    key = (x_copilot_session, connection_id)
+    connection = connections.get(key)
+    if not connection:
+        raise HTTPException(status_code=404, detail="Provider connection not found")
+    connection.rate_limit = settings
+    rate_governors[key] = ProviderRateGovernor(settings)
     return _public_connection(connection)
 
 
@@ -274,6 +346,7 @@ async def delete_connection(
     x_copilot_session: str = Header(min_length=20, max_length=200),
 ):
     connections.pop((x_copilot_session, connection_id), None)
+    rate_governors.pop((x_copilot_session, connection_id), None)
     return Response(status_code=204)
 
 
@@ -318,6 +391,7 @@ async def plan_copilot_request(request: PlanRequest, session_id: str) -> dict[st
             id="environment", provider="anthropic", label="Anthropic (environment)",
             api_key=api_key, base_url="https://api.anthropic.com/v1",
             models=[os.getenv("COPILOT_MODEL", "claude-sonnet-4-5")],
+            rate_limit=_default_rate_limit("anthropic"),
         )
         model = connection.models[0]
 
@@ -325,18 +399,15 @@ async def plan_copilot_request(request: PlanRequest, session_id: str) -> dict[st
     user_content = f"Model context:\n{context}\n\nUser request:\n{request.prompt}"
     async with httpx.AsyncClient(timeout=60) as client:
         if connection.provider == "anthropic":
-            response = await client.post(
-                f"{connection.base_url}/messages",
-                headers={**_headers(connection.provider, connection.api_key), "content-type": "application/json"},
-                json={
+            response = await _provider_post(
+                client, connection, session_id, "messages", {
                     "model": model, "max_tokens": 1800, "temperature": 0,
                     "system": SYSTEM_PROMPT,
                     "messages": [{"role": "user", "content": user_content}],
                     "tools": [COPILOT_TOOL],
                 },
             )
-            if response.status_code >= 400:
-                raise RuntimeError(f"Provider request failed ({response.status_code})")
+            _raise_provider_error(response)
             content = response.json().get("content", [])
             tools = [block for block in content if block.get("type") == "tool_use"]
             if not tools:
@@ -354,10 +425,8 @@ async def plan_copilot_request(request: PlanRequest, session_id: str) -> dict[st
                     "parameters": COPILOT_TOOL["input_schema"],
                 },
             }
-            response = await client.post(
-                f"{connection.base_url}/chat/completions",
-                headers={**_headers(connection.provider, connection.api_key), "content-type": "application/json"},
-                json={
+            response = await _provider_post(
+                client, connection, session_id, "chat/completions", {
                     "model": model, "temperature": 0,
                     "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
@@ -366,8 +435,7 @@ async def plan_copilot_request(request: PlanRequest, session_id: str) -> dict[st
                     "tools": [openai_tool], "tool_choice": "auto",
                 },
             )
-            if response.status_code >= 400:
-                raise RuntimeError(f"Provider request failed ({response.status_code})")
+            _raise_provider_error(response)
             message = response.json().get("choices", [{}])[0].get("message", {})
             tools = message.get("tool_calls") or []
             if not tools:
@@ -388,6 +456,8 @@ async def create_plan(
 ):
     try:
         return await plan_copilot_request(request, x_copilot_session)
+    except ProviderQueueTimeout as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
     except RuntimeError as error:
         status = 503 if "connection" in str(error).lower() else 502
         raise HTTPException(status_code=status, detail=str(error)) from error
@@ -444,6 +514,7 @@ def _turn_connection(request: CopilotTurnRequest, session_id: str) -> tuple[Prov
     return ProviderConnection(
         id="environment", provider="anthropic", label="Anthropic (environment)",
         api_key=api_key, base_url="https://api.anthropic.com/v1", models=[model],
+        rate_limit=_default_rate_limit("anthropic"),
     ), model
 
 
@@ -479,18 +550,15 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
     user_content = _turn_user_content(request)
     async with httpx.AsyncClient(timeout=60) as client:
         if connection.provider == "anthropic":
-            response = await client.post(
-                f"{connection.base_url}/messages",
-                headers={**_headers(connection.provider, connection.api_key), "content-type": "application/json"},
-                json={
+            response = await _provider_post(
+                client, connection, session_id, "messages", {
                     "model": model, "max_tokens": 2200, "temperature": 0,
                     "system": TOOL_SYSTEM_PROMPT,
                     "messages": [{"role": "user", "content": user_content}],
                     "tools": [{"name": tool.name, "description": tool.description, "input_schema": tool.input_schema} for tool in request.tools],
                 },
             )
-            if response.status_code >= 400:
-                raise RuntimeError(f"Provider request failed ({response.status_code})")
+            _raise_provider_error(response)
             content = response.json().get("content", [])
             text = "\n".join(str(block.get("text", "")) for block in content if block.get("type") == "text").strip()
             tool_calls = [{
@@ -498,10 +566,8 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
                 "arguments": block.get("input") or {},
             } for block in content if block.get("type") == "tool_use"]
         else:
-            response = await client.post(
-                f"{connection.base_url}/chat/completions",
-                headers={**_headers(connection.provider, connection.api_key), "content-type": "application/json"},
-                json={
+            response = await _provider_post(
+                client, connection, session_id, "chat/completions", {
                     "model": model, "temperature": 0,
                     "messages": [
                         {"role": "system", "content": TOOL_SYSTEM_PROMPT},
@@ -514,8 +580,7 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
                     "tool_choice": "auto",
                 },
             )
-            if response.status_code >= 400:
-                raise RuntimeError(f"Provider request failed ({response.status_code})")
+            _raise_provider_error(response)
             message = response.json().get("choices", [{}])[0].get("message", {})
             text = str(message.get("content") or "").strip()
             tool_calls = []
@@ -553,6 +618,8 @@ async def copilot_turn(
             cancelled_requests.discard(key)
             return {"message": "", "toolCalls": [], "finishReason": "cancelled", "contextRevision": request.context.get("revision")}
         return await run_copilot_turn(request, x_copilot_session)
+    except ProviderQueueTimeout as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
     except RuntimeError as error:
         status = 503 if "connection" in str(error).lower() else 502
         raise HTTPException(status_code=status, detail=str(error)) from error

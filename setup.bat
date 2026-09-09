@@ -151,13 +151,13 @@ if exist "frontend\package.json" if exist "backend\requirements.txt" (
     cd "%PROJECT_DIR%"
 )
 
-REM Create .env from example if not exists
-if not exist ".env" (
-    echo   Creating .env from .env.example...
-    copy ".env.example" ".env" >nul
-    echo   [OK] .env created. Please edit it with your configuration.
+REM Create .venv from example if not exists
+if not exist ".venv" (
+    echo   Creating .venv from .venv.example...
+    copy ".venv.example" ".venv" >nul
+    echo   [OK] .venv created. Please edit it with your configuration.
 ) else (
-    echo   [OK] .env already exists.
+    echo   [OK] .venv already exists.
 )
 
 REM --- Frontend ---
@@ -177,15 +177,15 @@ REM --- Backend ---
 echo.
 echo   Setting up backend virtual environment...
 cd backend
-if not exist "env" (
-    python -m venv env
+if not exist "venv" (
+    python -m venv venv
     if %errorlevel% neq 0 (
         echo   [ERROR] Failed to create virtual environment.
         pause
         exit /b 1
     )
 )
-call env\Scripts\activate.bat
+call venv\Scripts\activate.bat
 echo   Installing backend dependencies (pip install)...
 python -m pip install --upgrade pip
 pip install -r requirements.txt
@@ -213,7 +213,7 @@ echo     Open http://localhost:5173
 echo.
 echo   Backend:
 echo     cd %PROJECT_DIR%\backend
-echo     env\Scripts\activate
+echo     venv\Scripts\activate
 echo     python main.py
 echo     Open http://localhost:8000/docs
 echo.
