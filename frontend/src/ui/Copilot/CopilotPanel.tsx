@@ -6,6 +6,7 @@ import {
 } from '@mui/material'
 import { Close, DeleteOutline, InfoOutlined, Refresh, Send, Settings, SmartToy, Stop, Tune, Undo } from '@mui/icons-material'
 import { observer } from 'mobx-react-lite'
+import Draggable from 'react-draggable'
 import { useModel } from '../../model/Context'
 import { colors } from '../../theme'
 import { isToolAllowed, type AiMode, type AiToolCall, type AiToolResponse } from '../../core/ai'
@@ -160,6 +161,7 @@ const CopilotPanel = observer(() => {
   const [pending, setPending] = useState<PendingApproval | null>(null); const [lastUndoToken, setLastUndoToken] = useState('')
   const [conversationId, setConversationId] = useState(() => sessionStorage.getItem(conversationKey) ?? crypto.randomUUID())
   const abortRef = useRef<AbortController | null>(null); const requestIdRef = useRef('')
+  const panelRef = useRef<HTMLDivElement>(null); const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 })
   const [connectionDraft, setConnectionDraft] = useState({ provider: 'deepseek' as ProviderKind, label: '', apiKey: '', baseUrl: '', modelIds: '', rateLimit: defaultRateLimit() })
   const [rateEditor, setRateEditor] = useState<{ connectionId: string; value: RateLimitSettings } | null>(null)
 
@@ -323,8 +325,9 @@ const CopilotPanel = observer(() => {
   const selectAffected = (refs: EntityReference[]) => model.executeCommand({ commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: COMMAND_SCHEMA_VERSION, modelRevision: model.structuralDocument.revision, source: 'ui', payload: { entities: refs } })
 
   if (!open) return <Tooltip title="AI Copilot"><IconButton onClick={() => setOpen(true)} sx={{ position: 'fixed', right: 18, bottom: 38, zIndex: 1300, bgcolor: colors.accent, color: '#fff', '&:hover': { bgcolor: colors.accentHover } }}><SmartToy /></IconButton></Tooltip>
-  return <Paper elevation={12} sx={{ position: 'fixed', right: 16, bottom: 36, zIndex: 1300, width: 430, height: 610, display: 'flex', flexDirection: 'column', bgcolor: colors.surface, border: `1px solid ${colors.border}`, overflow: 'hidden' }}>
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: .5, px: 1, py: .75, borderBottom: `1px solid ${colors.border}` }}><SmartToy sx={{ color: colors.accentSoft }} /><Typography sx={{ fontWeight: 700, fontSize: 14 }}>Buckle AI</Typography>
+  return <Draggable nodeRef={panelRef} handle=".copilot-drag-handle" cancel="button, input, textarea, [role='button'], .MuiInputBase-root" bounds="body" position={panelPosition} onStop={(_, data) => setPanelPosition({ x: data.x, y: data.y })}>
+  <Paper ref={panelRef} elevation={12} sx={{ position: 'fixed', right: 16, bottom: 36, zIndex: 1300, width: { xs: 'calc(100vw - 24px)', sm: 430 }, height: { xs: 'min(610px, calc(100vh - 24px))', sm: 610 }, display: 'flex', flexDirection: 'column', bgcolor: colors.surface, border: `1px solid ${colors.border}`, overflow: 'hidden' }}>
+    <Box className="copilot-drag-handle" title="Drag to move chat" sx={{ display: 'flex', alignItems: 'center', gap: .5, px: 1, py: .75, borderBottom: `1px solid ${colors.border}`, cursor: 'grab', userSelect: 'none', '&:active': { cursor: 'grabbing' } }}><SmartToy sx={{ color: colors.accentSoft }} /><Typography sx={{ fontWeight: 700, fontSize: 14 }}>Buckle AI</Typography>
       <Select size="small" value={mode} onChange={event => setMode(event.target.value as AiMode)} sx={{ width: 104, height: 30, fontSize: 11 }}>{(['Inspect', 'Edit', 'Modeling', 'Generate', 'Agent'] as AiMode[]).map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}</Select>
       <Select size="small" value={selectedConnectionId && selectedModel ? `${selectedConnectionId}|${selectedModel}` : ''} onChange={event => { const [id, ...rest] = event.target.value.split('|'); setSelectedConnectionId(id); setSelectedModel(rest.join('|')) }} displayEmpty sx={{ flex: 1, height: 30, fontSize: 11, minWidth: 0 }} renderValue={value => value ? selectedModel : 'Choose model'}>{connections.flatMap(connection => connection.models.map(modelId => <MenuItem key={`${connection.id}|${modelId}`} value={`${connection.id}|${modelId}`}>{connection.label} · {modelId}</MenuItem>))}</Select>
       <Tooltip arrow title="Configure AI providers, models and rate limits" componentsProps={{ tooltip: { sx: { maxWidth: 280, px: 1.5, py: 1, fontSize: 13 } } }}><IconButton size="small" onClick={() => { setConnectionError(''); setSettingsOpen(true) }}><Settings fontSize="small" /></IconButton></Tooltip><Tooltip title="Undo last AI change"><span><IconButton size="small" disabled={!lastUndoToken || busy} onClick={undoAi}><Undo fontSize="small" /></IconButton></span></Tooltip><IconButton size="small" onClick={() => setOpen(false)}><Close fontSize="small" /></IconButton>
@@ -355,6 +358,7 @@ const CopilotPanel = observer(() => {
       </Stack></DialogContent><DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, borderTop: `1px solid ${colors.border}` }}><Button onClick={() => setSettingsOpen(false)}>Close</Button><Button size="large" variant="contained" disabled={!connectionDraft.apiKey.trim()} onClick={() => void saveConnection()}>Connect provider</Button></DialogActions>
     </Dialog>
   </Paper>
+  </Draggable>
 })
 
 export default CopilotPanel
