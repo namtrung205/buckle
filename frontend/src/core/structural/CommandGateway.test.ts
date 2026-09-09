@@ -157,6 +157,52 @@ test('selection and visibility share transaction history without changing model 
   assert.equal(workspace.state.hidden[0].id, 1)
 })
 
+test('workspace-only history stays correctly ordered with document edits', () => {
+  const document = new StructuralDocument()
+  const gateway = new CommandGateway(document)
+  const workspace = workspaceContext()
+  gateway.execute(envelope(document, 'create-node', {
+    type: 'CreateNodes', payload: { nodes: [{ id: 1, position: [0, 0, 0] }] },
+  }), workspace.context)
+  gateway.execute(envelope(document, 'select-node', {
+    type: 'SetSelection', payload: { entities: [{ collection: 'nodes', id: 1 }] },
+  }), workspace.context)
+
+  gateway.undo(workspace.context)
+  assert.equal(document.nodes.has(1), true)
+  assert.deepEqual(workspace.state.selection, [])
+  gateway.undo(workspace.context)
+  assert.equal(document.nodes.has(1), false)
+  gateway.redo(workspace.context)
+  assert.equal(document.nodes.has(1), true)
+  gateway.redo(workspace.context)
+  assert.equal((workspace.state as CommandWorkspaceState).selection[0].id, 1)
+})
+
+test('10k workspace selection avoids the full-document command path', () => {
+  const nodes = Array.from({ length: 10_000 }, (_, index) => ({
+    id: index + 1,
+    position: [index, 0, 0] as const,
+  }))
+  const document = new StructuralDocument({ nodes })
+  const gateway = new CommandGateway(document)
+  const workspace = workspaceContext()
+  const beforeHash = document.getSnapshotHash()
+  const startedAt = performance.now()
+  gateway.execute(envelope(document, 'select-10k', {
+    type: 'SetSelection',
+    payload: { entities: nodes.map(node => ({ collection: 'nodes', id: node.id })) },
+  }), workspace.context)
+  const elapsed = performance.now() - startedAt
+
+  assert.equal(workspace.state.selection.length, 10_000)
+  assert.equal(document.revision, 0)
+  assert.equal(document.getSnapshotHash(), beforeHash)
+  assert.ok(elapsed <= 500, `10k workspace selection took ${elapsed.toFixed(1)}ms`)
+  gateway.undo(workspace.context)
+  assert.deepEqual(workspace.state.selection, [])
+})
+
 test('dry run validates and resolves aliases but emits no side effects', () => {
   const document = baseDocument()
   const gateway = new CommandGateway(document)

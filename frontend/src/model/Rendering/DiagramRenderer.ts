@@ -340,6 +340,14 @@ export default class DiagramRenderer {
     }
   }
 
+  syncAllMemberStates() {
+    if (!this.database) return
+    this.flags.set(this.database.memberFlags.subarray(0, this.database.memberCount))
+    for (const geometry of [this.ribbonGeometry, this.lineGeometry]) {
+      ;(geometry.getAttribute('instanceFlags') as THREE.InstancedBufferAttribute).needsUpdate = true
+    }
+  }
+
   setMemberState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
     if (!this.database) return
     if (state.visible !== undefined) this.database.setMemberFlag(entityId, ENTITY_VISIBLE, state.visible)

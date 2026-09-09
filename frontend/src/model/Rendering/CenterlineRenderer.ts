@@ -317,6 +317,22 @@ export default class CenterlineRenderer {
     this.syncDirty()
   }
 
+  /** Copy workspace flags in one CPU pass and schedule one GPU upload per
+   * attribute. This avoids incrementing BufferAttribute versions per entity. */
+  syncAllEntityStates() {
+    const database = this.database
+    if (!database) return
+    for (let index = 0; index < database.memberCount; index++) {
+      const flags = database.memberFlags[index]
+      this.memberFlags[index * 2] = flags
+      this.memberFlags[index * 2 + 1] = flags
+    }
+    this.nodeFlags.set(database.nodeFlags.subarray(0, database.nodeCount))
+    ;(this.lineGeometry.getAttribute('entityFlags') as THREE.BufferAttribute).needsUpdate = true
+    ;(this.nodeGeometry.getAttribute('entityFlags') as THREE.BufferAttribute).needsUpdate = true
+    database.clearDirtyRanges()
+  }
+
   entityIdForVertexIndex(vertexIndex: number) {
     return this.database?.entityIdForMemberIndex(Math.floor(vertexIndex / VERTICES_PER_MEMBER))
   }

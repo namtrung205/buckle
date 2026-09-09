@@ -36,7 +36,8 @@ export type CommandGatewayOptions = {
   maxHistoryBytes?: number
 }
 
-type HistoryEntry = {
+type DocumentHistoryEntry = {
+  kind: 'document'
   before: StructuralDocumentSeed
   after: StructuralDocumentSeed
   beforeWorkspace: CommandWorkspaceState
@@ -44,7 +45,19 @@ type HistoryEntry = {
   bytes: number
 }
 
+type WorkspaceHistoryEntry = {
+  kind: 'workspace'
+  beforeWorkspace: CommandWorkspaceState
+  afterWorkspace: CommandWorkspaceState
+  bytes: number
+}
+
+type HistoryEntry = DocumentHistoryEntry | WorkspaceHistoryEntry
+
 type Replay = { signature: string; result: CommandResult }
+type WorkspaceOperation = Extract<StructuralCommandOperation, {
+  type: 'SetSelection' | 'HideEntities' | 'ShowEntities'
+}>
 
 const emptyWorkspace = (): CommandWorkspaceState => ({ selection: [], hidden: [] })
 const refKey = (ref: EntityReference) => `${ref.collection}:${ref.id}`
@@ -129,15 +142,20 @@ export class CommandGateway {
       )
     }
 
+    const operations = command.type === 'Transaction'
+      ? (command.payload as { operations: readonly CommandTransactionOperation[] }).operations
+      : [{ type: command.type, payload: command.payload } as StructuralCommandOperation]
+    const workspaceOnly = operations.every(operation =>
+      operation.type === 'SetSelection' || operation.type === 'HideEntities' || operation.type === 'ShowEntities',
+    )
+    if (workspaceOnly) return this.executeWorkspaceOnly(command, operations as readonly WorkspaceOperation[], signature, context)
+
     const beforeSnapshot = this.document.getSnapshot()
     const before = snapshotToSeed(beforeSnapshot)
     let draft = clone(before)
     const beforeWorkspace = clone(context.getWorkspaceState?.() ?? emptyWorkspace())
     let workspace = clone(beforeWorkspace)
     const aliases = new Map<string, EntityId>()
-    const operations = command.type === 'Transaction'
-      ? (command.payload as { operations: readonly CommandTransactionOperation[] }).operations
-      : [{ type: command.type, payload: command.payload } as StructuralCommandOperation]
     const explicitWorkspaceRefs = operations.flatMap(operation =>
       operation.type === 'SetSelection' || operation.type === 'HideEntities' || operation.type === 'ShowEntities'
         ? [...operation.payload.entities]
@@ -195,6 +213,7 @@ export class CommandGateway {
 
     if (result.changed) {
       this.pushHistory({
+        kind: 'document',
         before,
         after: snapshotToSeed(this.document.getSnapshot()),
         beforeWorkspace,
@@ -225,7 +244,7 @@ export class CommandGateway {
     if (!entry) return null
     this.historyBytes -= entry.bytes
     const previousRevision = this.document.revision
-    const change = this.document.reconcile(entry.before)
+    const change = entry.kind === 'document' ? this.document.reconcile(entry.before) : null
     context.applyWorkspaceState?.(clone(entry.beforeWorkspace))
     this.redoStack.push(entry)
     const result = this.historyResult('undo', previousRevision, change, true)
@@ -238,7 +257,7 @@ export class CommandGateway {
     const entry = this.redoStack.pop()
     if (!entry) return null
     const previousRevision = this.document.revision
-    const change = this.document.reconcile(entry.after)
+    const change = entry.kind === 'document' ? this.document.reconcile(entry.after) : null
     context.applyWorkspaceState?.(clone(entry.afterWorkspace))
     this.undoStack.push(entry)
     this.historyBytes += entry.bytes
@@ -288,6 +307,87 @@ export class CommandGateway {
       const removed = this.undoStack.shift()
       if (removed) this.historyBytes -= removed.bytes
     }
+  }
+
+  private executeWorkspaceOnly(
+    command: CommandEnvelope,
+    operations: readonly WorkspaceOperation[],
+    signature: string,
+    context: CommandGatewayContext,
+  ): CommandResult {
+    const beforeWorkspace = clone(context.getWorkspaceState?.() ?? emptyWorkspace())
+    let workspace = clone(beforeWorkspace)
+
+    for (const operation of operations) {
+      switch (operation.type) {
+        case 'SetSelection':
+          workspace = { ...workspace, selection: operation.payload.entities.map(clone) }
+          break
+        case 'HideEntities': {
+          const hidden = new Map(workspace.hidden.map(ref => [refKey(ref), ref]))
+          for (const ref of operation.payload.entities) hidden.set(refKey(ref), clone(ref))
+          workspace = { ...workspace, hidden: [...hidden.values()] }
+          break
+        }
+        case 'ShowEntities': {
+          const shown = new Set(operation.payload.entities.map(refKey))
+          workspace = { ...workspace, hidden: workspace.hidden.filter(ref => !shown.has(refKey(ref))) }
+          break
+        }
+      }
+    }
+
+    const explicitRefs = operations.flatMap(operation => [...operation.payload.entities])
+    for (const ref of explicitRefs) {
+      if (!this.document[ref.collection].has(ref.id)) {
+        throw new CommandValidationError(`Unknown workspace ${ref.collection} id ${ref.id}`)
+      }
+    }
+    const entityStillExists = (ref: EntityReference) => this.document[ref.collection].has(ref.id)
+    workspace = {
+      selection: workspace.selection.filter(entityStillExists),
+      hidden: workspace.hidden.filter(entityStillExists),
+    }
+    const workspaceChanged = canonicalStringify(workspace) !== canonicalStringify(beforeWorkspace)
+    const result = Object.freeze({
+      commandId: command.commandId,
+      ...(command.transactionId ? { transactionId: command.transactionId } : {}),
+      previousRevision: this.document.revision,
+      revision: this.document.revision,
+      dryRun: command.dryRun === true,
+      idempotentReplay: false,
+      changed: workspaceChanged,
+      changes: null,
+      aliases: {},
+      snapshotHash: this.document.getSnapshotHash(),
+    }) as CommandResult
+    if (command.dryRun) return result
+
+    if (workspaceChanged) {
+      context.applyWorkspaceState?.(clone(workspace))
+      this.pushHistory({
+        kind: 'workspace',
+        beforeWorkspace,
+        afterWorkspace: workspace,
+        bytes: canonicalStringify([beforeWorkspace, workspace]).length * 2,
+      })
+      this.redoStack.length = 0
+    }
+    const audit = Object.freeze({
+      commandId: command.commandId,
+      ...(command.transactionId ? { transactionId: command.transactionId } : {}),
+      type: command.type,
+      source: command.source,
+      previousRevision: this.document.revision,
+      revision: this.document.revision,
+      timestamp: Date.now(),
+      changed: workspaceChanged,
+      changes: null,
+    }) as CommandAuditEntry
+    this.auditLog.push(audit)
+    this.replayByCommandId.set(command.commandId, { signature, result })
+    context.onCommitted?.(result)
+    return result
   }
 
   private applyOperation(

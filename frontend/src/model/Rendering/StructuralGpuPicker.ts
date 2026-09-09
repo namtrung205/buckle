@@ -317,6 +317,15 @@ export default class StructuralGpuPicker {
     this.invalidate()
   }
 
+  syncAllEntityStates() {
+    if (!this.database) return
+    this.flags.set(this.database.memberFlags.subarray(0, this.database.memberCount))
+    this.nodeFlags.set(this.database.nodeFlags.subarray(0, this.database.nodeCount))
+    ;(this.geometry.getAttribute('instanceFlags') as THREE.InstancedBufferAttribute).needsUpdate = true
+    ;(this.nodeGeometry.getAttribute('instanceFlags') as THREE.BufferAttribute).needsUpdate = true
+    this.invalidate()
+  }
+
   invalidate() { this.dirty = true }
 
   /** Compile and populate the ID target during model loading, avoiding a shader

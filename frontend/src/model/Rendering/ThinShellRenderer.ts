@@ -541,6 +541,29 @@ export default class ThinShellRenderer {
     }
   }
 
+  syncAllMemberStates() {
+    const database = this.database
+    if (!database) return
+    const touchedBatches = new Set<Batch>()
+    for (const [entityId, location] of this.instanceLocationByEntityId) {
+      const memberIndex = database.memberIndexById.get(entityId)
+      if (memberIndex === undefined) continue
+      location.batch.flags[location.instanceIndex] = database.memberFlags[memberIndex]
+      touchedBatches.add(location.batch)
+    }
+    for (const batch of touchedBatches) {
+      ;(batch.geometry.getAttribute('instanceFlags') as THREE.InstancedBufferAttribute).needsUpdate = true
+    }
+    if (this.fallbackVertexByEntityId.size) {
+      for (const [entityId, vertex] of this.fallbackVertexByEntityId) {
+        const memberIndex = database.memberIndexById.get(entityId)
+        if (memberIndex === undefined) continue
+        this.fallbackFlags[vertex] = this.fallbackFlags[vertex + 1] = database.memberFlags[memberIndex]
+      }
+      ;(this.fallbackGeometry.getAttribute('entityFlags') as THREE.BufferAttribute).needsUpdate = true
+    }
+  }
+
   syncDirty() {
     const database = this.database
     if (!database) return

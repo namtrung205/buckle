@@ -147,9 +147,7 @@ class Selector {
       return
     }
     if (!this.isCtrlPressed) {
-      this.clearCenterlineSelection()
       this.selectedCenterlineIds = [entityId]
-      this.model.setStructuralMemberState(entityId, { selected: true })
       this.syncWorkspaceSelection()
       return
     }
@@ -184,9 +182,7 @@ class Selector {
       return
     }
     if (!this.isCtrlPressed) {
-      this.clearNodeSelection()
       this.selectedNodeIds = [entityId]
-      this.model.setStructuralNodeState(entityId, { selected: true })
       this.syncWorkspaceSelection()
       return
     }
@@ -198,33 +194,23 @@ class Selector {
     this.syncWorkspaceSelection()
   }
 
-  private clearCenterlineSelection() {
-    for (const entityId of this.selectedCenterlineIds) {
-      this.model.setStructuralMemberState(entityId, { selected: false })
-    }
+  private clearCenterlineSelection(sync = true) {
     this.selectedCenterlineIds = []
-    this.syncWorkspaceSelection()
+    if (sync) this.syncWorkspaceSelection()
   }
 
-  private clearNodeSelection() {
-    for (const entityId of this.selectedNodeIds) {
-      this.model.setStructuralNodeState(entityId, { selected: false })
-    }
+  private clearNodeSelection(sync = true) {
     this.selectedNodeIds = []
-    this.syncWorkspaceSelection()
+    if (sync) this.syncWorkspaceSelection()
   }
 
   replaceStructuralSelection(ids: readonly number[]) {
-    this.clearCenterlineSelection()
     const unique = [...new Set(ids)].filter(id => this.model.structuralSceneDB.memberIndexById.has(id))
     this.selectedCenterlineIds = unique
-    for (const id of unique) this.model.setStructuralMemberState(id, { selected: true })
     this.syncWorkspaceSelection()
   }
 
   syncCenterlineSelectionFromLegacy() {
-    this.clearCenterlineSelection()
-    this.clearNodeSelection()
     const memberIds = new Set<number>()
     const nodeIds = new Set<number>()
     for (const item of this.selected) {
@@ -235,15 +221,11 @@ class Selector {
     }
     this.selectedCenterlineIds = [...memberIds]
     this.selectedNodeIds = [...nodeIds]
-    for (const id of this.selectedCenterlineIds) {
-      this.model.setStructuralMemberState(id, { selected: true })
-    }
-    for (const id of this.selectedNodeIds) this.model.setStructuralNodeState(id, { selected: true })
     this.syncWorkspaceSelection()
   }
 
   syncLegacySelectionFromCenterline() {
-    this.clearLegacySelection()
+    this.clearLegacySelection(false)
     for (const id of this.selectedCenterlineIds) {
       const member = this.model.members.find(candidate => candidate.id === id)
       if (!member?.mesh || this.isMeshSelected(member.mesh)) continue
@@ -513,22 +495,18 @@ class Selector {
               this.selectionBox.startPoint,
               this.selectionBox.endPoint,
             )
-            if (!this.isCtrlPressed) this.clearNodeSelection()
-            const selected = new Set(this.selectedNodeIds)
+            const selected = new Set(this.isCtrlPressed ? this.selectedNodeIds : [])
             for (const id of ids) selected.add(id)
             this.selectedNodeIds = [...selected]
-            for (const id of ids) this.model.setStructuralNodeState(id, { selected: true })
           } else {
             const ids = this.model.structuralPicker.windowSelector.select(
               this.model.camera.cam,
               this.selectionBox.startPoint,
               this.selectionBox.endPoint,
             )
-            if (!this.isCtrlPressed) this.clearCenterlineSelection()
-            const selected = new Set(this.selectedCenterlineIds)
+            const selected = new Set(this.isCtrlPressed ? this.selectedCenterlineIds : [])
             for (const id of ids) selected.add(id)
             this.selectedCenterlineIds = [...selected]
-            for (const id of ids) this.model.setStructuralMemberState(id, { selected: true })
           }
           this.syncWorkspaceSelection()
           this.model.closeContextMenu()
@@ -677,8 +655,8 @@ class Selector {
   }
 
   clear() {
-    this.clearCenterlineSelection()
-    this.clearNodeSelection()
+    this.clearCenterlineSelection(false)
+    this.clearNodeSelection(false)
     if (this.hoveredCenterlineId !== null) {
       this.model.setStructuralMemberState(this.hoveredCenterlineId, { hovered: false })
       this.hoveredCenterlineId = null
@@ -687,10 +665,11 @@ class Selector {
       this.model.setStructuralNodeState(this.hoveredNodeId, { hovered: false })
       this.hoveredNodeId = null
     }
-    this.clearLegacySelection()
+    this.clearLegacySelection(false)
+    this.syncWorkspaceSelection()
   }
 
-  private clearLegacySelection() {
+  private clearLegacySelection(sync = true) {
     this.selected.forEach(m => {
       if (Array.isArray(m.object.material)) {
         const material = m.object.material as THREE.MeshLambertMaterial[]
@@ -701,7 +680,7 @@ class Selector {
       }
     })
     this.selected = []
-    this.syncWorkspaceSelection()
+    if (sync) this.syncWorkspaceSelection()
   }
   isMeshSelected(mesh: THREE.Mesh) {
     return this.selected.some(m => m.object === mesh)

@@ -1115,8 +1115,10 @@ export class Model {
         if (result.changes) {
           this.invalidateResults()
           applyStructuralChangeToLegacy(this, this.structuralDocument, result.changes)
+          this.refreshCommandRenderProjection()
+        } else {
+          this.refreshWorkspaceRenderProjection()
         }
-        this.refreshCommandRenderProjection()
       },
     }
   }
@@ -1141,6 +1143,31 @@ export class Model {
     this.thinShellRenderer.upload(this.structuralSceneDB)
     this.diagramRenderer.upload(this.structuralSceneDB)
     this.structuralPicker.upload(this.structuralSceneDB)
+    this.applyRenderModeVisibility()
+  }
+
+  /** Selection/visibility commands do not alter topology or geometry. Update
+   * their compact flag streams without rebuilding any renderer batches. */
+  private refreshWorkspaceRenderProjection() {
+    if (!this.centerlineRenderer || !this.thinShellRenderer || !this.diagramRenderer || !this.structuralPicker) return
+    const selectedNodes = this.workspaceContext.selectedNodeIds
+    const selectedMembers = this.workspaceContext.selectedMemberIds
+    const hidden = this.workspaceContext.hiddenEntityRefs
+    for (let index = 0; index < this.structuralSceneDB.nodeCount; index++) {
+      const id = this.structuralSceneDB.nodeIds[index]
+      this.structuralSceneDB.setNodeFlag(id, ENTITY_SELECTED, selectedNodes.has(id))
+      this.structuralSceneDB.setNodeFlag(id, ENTITY_VISIBLE, !hidden.has(`nodes:${id}`))
+    }
+    for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
+      const id = this.structuralSceneDB.memberIds[index]
+      this.structuralSceneDB.setMemberFlag(id, ENTITY_SELECTED, selectedMembers.has(id))
+      this.structuralSceneDB.setMemberFlag(id, ENTITY_VISIBLE, !hidden.has(`members:${id}`))
+    }
+    this.centerlineRenderer.syncAllEntityStates()
+    this.thinShellRenderer.syncAllMemberStates()
+    this.diagramRenderer.syncAllMemberStates()
+    this.structuralPicker.syncAllEntityStates()
+    this.gpuAnnotations.markDirty()
     this.applyRenderModeVisibility()
   }
 
