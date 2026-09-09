@@ -201,6 +201,12 @@ waiver for the deferred Goal 16 gates.
   already-parsed object, tolerating local runtime variations.
 - `_headers()` omits `Authorization` when a connection has no API key; `_public_connection()`
   reports `keyHint: "local"` for keyless connections.
+- Small-model tool-call robustness: flattened/singular `query_entities` arguments emitted by
+  small local models (`semanticRole: 'member'`, `materialId: [2]`, `length: 6`, placeholder junk
+  such as `[range]`) are normalized into the documented `{collection, filter}` shape in
+  `CopilotToolPolicy` before execution; `query_entities` schema-violation errors now list the
+  allowed keys so the provider can self-correct on retry; the backend tool system prompt
+  documents the exact `query_entities` argument contract with an example.
 
 ### Verification
 

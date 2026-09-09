@@ -587,6 +587,13 @@ Mode rules are security boundaries:
 
 Prefer batch calls. Query before using unknown IDs. For a user request such as finding
 members by length/material, call query_entities and then set_selection if requested.
+query_entities arguments must be {"collection": "<nodes|materials|sections|members|shells|loads|boundaryConditions|grids|levels|groups|parametricObjects>", "filter": {...}}.
+Every filter key lives inside filter: semanticRoles, materialIds, sectionIds, groupIds, levelIds,
+gridIds, types, nameContains, ids, length {lt|lte|gt|gte}. There is no top-level semanticRole,
+materialId or length parameter.
+Example: {"collection": "members", "filter": {"semanticRoles": ["column"], "materialIds": [1], "length": {"lte": 5}}}.
+Never pass placeholders such as [range]; omit that filter instead. If a tool call fails
+validation, fix the arguments against the tool schema and retry once.
 Use get_parametric_templates when defaults or engineering parameter names are needed; defaults
 returned by that tool are authoritative and must be stated in the generation preview.
 For edits, resolve exact targets first, reject zero or ambiguous matches, then call the

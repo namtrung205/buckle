@@ -59,7 +59,10 @@ const validateSchema = (value: unknown, schema: JsonSchema, path = 'arguments') 
     const record = asRecord(value, path)
     const properties = (schema.properties ?? {}) as Record<string, JsonSchema>
     for (const required of (schema.required ?? []) as string[]) if (record[required] === undefined) throw new Error(`${path}.${required} is required`)
-    if (schema.additionalProperties === false) for (const key of Object.keys(record)) if (!(key in properties)) throw new Error(`${path}.${key} is not allowed`)
+    if (schema.additionalProperties === false) {
+      const allowed = Object.keys(properties).join(', ')
+      for (const key of Object.keys(record)) if (!(key in properties)) throw new Error(`${path}.${key} is not allowed${allowed ? `; allowed keys: ${allowed}` : ''}`)
+    }
     for (const [key, child] of Object.entries(properties)) if (record[key] !== undefined && (child.type || child.oneOf || child.anyOf)) validateSchema(record[key], child, `${path}.${key}`)
   } else if (type === 'array') {
     const values = asArray(value, path)
