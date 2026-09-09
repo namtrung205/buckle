@@ -637,9 +637,10 @@ cho LLM khi gate chưa pass.
   Groq dùng OpenAI-compatible base URL `https://api.groq.com/openai/v1`, BYOK phía server và
   tự động lấy model từ `/models`.
 - Provider settings cho phép cấu hình rate limit riêng từng connection: Auto/Manual/Disabled,
-  concurrency, RPM, TPM, safety factor, queue wait và retry. Backend governor điều tiết outbound
-  request, đọc token reset headers và tôn trọng `Retry-After` khi provider trả `429`.
-- Automated verification hiện tại: frontend fixture 118/118 pass, Copilot/rate-limit backend 17/17 pass,
+  concurrency, RPM, TPM, safety factor, queue wait và retry. Auto chỉ theo quota headers thật của
+  provider, không dùng local token reservation; Manual mới áp rolling RPM/TPM. Backend governor
+  tôn trọng token reset và `Retry-After` khi provider trả `429`.
+- Automated verification hiện tại: frontend fixture 118/118 pass, Copilot/rate-limit backend 19/19 pass,
   production build pass; các file Copilot thay đổi cho Mutation Retry lint-clean.
 - Goal vẫn active: provider-native streaming/in-flight cancel, Zoom, material flow, P0 UI/E2E,
   bộ eval 50 prompt, concurrent-session gate và live NVIDIA verification còn pending.

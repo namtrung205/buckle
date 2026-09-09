@@ -32,9 +32,9 @@ def _seconds(value: str | None) -> float | None:
 class ProviderRateGovernor:
     """Per-connection outbound governor for provider requests.
 
-    RPM/TPM use a rolling minute. Auto mode additionally learns token exhaustion and
-    reset time from provider response headers. One governor is used per connection,
-    so separate provider keys do not block each other.
+    Manual mode applies configured RPM/TPM over a rolling minute. Auto mode relies on
+    provider quota headers instead of local token estimates, avoiding false-positive
+    throttling between multi-round Copilot calls.
     """
 
     def __init__(self, settings: Any):
@@ -64,11 +64,12 @@ class ProviderRateGovernor:
             await self._reserve(max(1, estimated_tokens), timeout)
             response = await send()
             retries = 0
+            retry_started = time.monotonic()
             while response.status_code == 429 and retries < self.settings.max_retries:
                 retry_after = _seconds(response.headers.get("retry-after"))
                 delay = retry_after if retry_after is not None else min(2 ** retries, 8)
                 delay += random.uniform(0, min(0.25, delay * 0.1))
-                if delay > timeout:
+                if delay > timeout - (time.monotonic() - retry_started):
                     break
                 await asyncio.sleep(delay)
                 retries += 1
@@ -79,6 +80,14 @@ class ProviderRateGovernor:
             self._semaphore.release()
 
     async def _reserve(self, estimated_tokens: int, max_wait: float) -> None:
+        if self.settings.mode == "auto":
+            wait = max(0.0, self._token_blocked_until - time.monotonic())
+            if 0 < wait <= max_wait:
+                await asyncio.sleep(wait)
+            # A long learned reset must not become a Buckle-generated quota error.
+            # Send and let the provider confirm with 429/Retry-After instead.
+            return
+
         started = time.monotonic()
         while True:
             async with self._lock:
@@ -88,7 +97,7 @@ class ProviderRateGovernor:
                     self._requests.popleft()
                 while self._tokens and self._tokens[0][0] <= cutoff:
                     self._tokens.popleft()
-                wait = max(0.0, self._token_blocked_until - now)
+                wait = 0.0
                 rpm = self.settings.rpm
                 if rpm:
                     request_budget = max(1, int(rpm * self.settings.safety_factor))

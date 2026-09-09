@@ -52,3 +52,45 @@ def test_manual_rpm_budget_fails_fast_when_queue_wait_is_exceeded():
             await governor.execute(send, 1)
 
     asyncio.run(scenario())
+
+
+def test_auto_mode_does_not_apply_local_rpm_or_tpm_estimates():
+    calls = 0
+
+    async def scenario():
+        governor = ProviderRateGovernor(_settings(mode="auto", rpm=1, tpm=1, max_wait_seconds=0.01))
+
+        async def send():
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200)
+
+        await governor.execute(send, 10_000)
+        await governor.execute(send, 10_000)
+
+    asyncio.run(scenario())
+    assert calls == 2
+
+
+def test_auto_mode_confirms_long_learned_reset_with_provider_instead_of_local_error():
+    calls = 0
+
+    async def scenario():
+        governor = ProviderRateGovernor(_settings(mode="auto", max_wait_seconds=0.01))
+
+        async def send():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return httpx.Response(200, headers={
+                    "x-ratelimit-remaining-tokens": "0",
+                    "x-ratelimit-reset-tokens": "60s",
+                })
+            return httpx.Response(200)
+
+        await governor.execute(send, 100)
+        return await governor.execute(send, 100)
+
+    response = asyncio.run(scenario())
+    assert response.status_code == 200
+    assert calls == 2

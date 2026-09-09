@@ -130,8 +130,6 @@ rate_governors: dict[tuple[str, str], ProviderRateGovernor] = {}
 
 
 def _default_rate_limit(provider: str) -> RateLimitSettings:
-    if provider == "groq":
-        return RateLimitSettings(rpm=24, tpm=6400)
     return RateLimitSettings()
 
 

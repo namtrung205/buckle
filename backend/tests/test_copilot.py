@@ -142,7 +142,7 @@ def test_groq_preset_needs_only_an_api_key(client, monkeypatch):
     assert response.json()["models"] == ["llama-3.3-70b-versatile", "openai/gpt-oss-120b"]
     assert response.json()["keyHint"] == "••••-key"
     assert response.json()["rateLimit"] == {
-        "mode": "auto", "maxConcurrent": 2, "rpm": 24, "tpm": 6400,
+        "mode": "auto", "maxConcurrent": 2, "rpm": None, "tpm": None,
         "safetyFactor": 0.8, "maxWaitSeconds": 30.0, "maxRetries": 2,
     }
 
