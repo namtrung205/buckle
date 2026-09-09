@@ -1,6 +1,8 @@
 import os
 import sys
+import asyncio
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -184,7 +186,7 @@ def _turn_request(mode="Inspect", tools=None):
         "mode": mode,
         "context": {"revision": 7, "counts": {"members": 2}},
         "history": [{"role": "user", "content": "Inspect the model"}],
-        "tools": tools or [{
+        "tools": tools if tools is not None else [{
             "name": "query_entities",
             "description": "Query entities",
             "inputSchema": {"type": "object", "properties": {}},
@@ -193,6 +195,43 @@ def _turn_request(mode="Inspect", tools=None):
         "connectionId": "connection-for-turn",
         "model": "test-model",
     }
+
+
+def test_finalization_turn_omits_empty_tool_configuration(monkeypatch):
+    session_id = SESSION_HEADERS["X-Copilot-Session"]
+    connection_id = "finalization-connection"
+    connection = copilot.ProviderConnection(
+        id=connection_id, provider="openai", label="OpenAI", api_key="test-key",
+        base_url="https://api.openai.com/v1", models=["test-model"],
+        rate_limit=copilot.RateLimitSettings(mode="disabled"),
+    )
+    copilot.connections[(session_id, connection_id)] = connection
+    captured = {}
+
+    async def fake_provider_post(_client, _connection, _session_id, path, payload):
+        captured.update(payload)
+        assert path == "chat/completions"
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Final answer"}}]})
+
+    monkeypatch.setattr(copilot, "_provider_post", fake_provider_post)
+    payload = _turn_request(tools=[])
+    payload["connectionId"] = connection_id
+    payload["toolResults"] = [{
+        "toolCallId": "query-1", "tool": "get_model_summary", "ok": True,
+        "content": {"ok": True, "data": {"members": 3}},
+    }]
+    try:
+        request = copilot.CopilotTurnRequest.model_validate(payload)
+        result = asyncio.run(copilot.run_copilot_turn(request, session_id))
+    finally:
+        copilot.connections.pop((session_id, connection_id), None)
+        copilot.rate_governors.pop((session_id, connection_id), None)
+
+    assert result["message"] == "Final answer"
+    assert result["finishReason"] == "stop"
+    assert "tools" not in captured
+    assert "tool_choice" not in captured
+    assert "No more tools are available" in captured["messages"][0]["content"]
 
 
 def test_generic_turn_returns_provider_neutral_tool_calls(client, monkeypatch):

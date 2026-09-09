@@ -546,15 +546,21 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
     _validate_turn_tools(request)
     connection, model = _turn_connection(request, session_id)
     user_content = _turn_user_content(request)
+    system_prompt = TOOL_SYSTEM_PROMPT if request.tools else (
+        TOOL_SYSTEM_PROMPT + "\nNo more tools are available for this turn. Answer the user's request now "
+        "using the supplied tool results. Mention any unresolved limitation concisely."
+    )
     async with httpx.AsyncClient(timeout=60) as client:
         if connection.provider == "anthropic":
+            payload = {
+                "model": model, "max_tokens": 2200, "temperature": 0,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_content}],
+            }
+            if request.tools:
+                payload["tools"] = [{"name": tool.name, "description": tool.description, "input_schema": tool.input_schema} for tool in request.tools]
             response = await _provider_post(
-                client, connection, session_id, "messages", {
-                    "model": model, "max_tokens": 2200, "temperature": 0,
-                    "system": TOOL_SYSTEM_PROMPT,
-                    "messages": [{"role": "user", "content": user_content}],
-                    "tools": [{"name": tool.name, "description": tool.description, "input_schema": tool.input_schema} for tool in request.tools],
-                },
+                client, connection, session_id, "messages", payload,
             )
             _raise_provider_error(response)
             content = response.json().get("content", [])
@@ -564,19 +570,21 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
                 "arguments": block.get("input") or {},
             } for block in content if block.get("type") == "tool_use"]
         else:
+            payload = {
+                "model": model, "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+            }
+            if request.tools:
+                payload["tools"] = [{"type": "function", "function": {
+                    "name": tool.name, "description": tool.description,
+                    "parameters": tool.input_schema,
+                }} for tool in request.tools]
+                payload["tool_choice"] = "auto"
             response = await _provider_post(
-                client, connection, session_id, "chat/completions", {
-                    "model": model, "temperature": 0,
-                    "messages": [
-                        {"role": "system", "content": TOOL_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ],
-                    "tools": [{"type": "function", "function": {
-                        "name": tool.name, "description": tool.description,
-                        "parameters": tool.input_schema,
-                    }} for tool in request.tools],
-                    "tool_choice": "auto",
-                },
+                client, connection, session_id, "chat/completions", payload,
             )
             _raise_provider_error(response)
             message = response.json().get("choices", [{}])[0].get("message", {})

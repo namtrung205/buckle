@@ -23,6 +23,11 @@
   enforces configured rolling RPM/TPM. Both enforce concurrency and bounded `429` retries honoring
   `Retry-After`. Long learned resets are confirmed with the provider instead of causing a local
   `Provider quota queue wait exceeded` false positive.
+- Multi-round tool results are retained for the full logical turn instead of being discarded after
+  each provider round. Repeated read-only cycles such as `get_sections -> get_model_summary` are
+  detected before another duplicate execution, then Copilot asks the provider for a final answer
+  with no tools exposed. Exhausting six tool rounds now follows the same finalization path instead
+  of emitting the generic `Copilot exceeded the six-round conversation budget` error.
 - Backend includes a mocked connection test for NVIDIA.
 - Frontend now formats FastAPI validation errors more clearly, supports Enter to send and
   Shift+Enter for a new line, and exposes Retry on user messages.
@@ -67,10 +72,11 @@
 
 ### Verification results
 
-- Frontend `npm run test:fixture`: **118/118 passed** after Mutation Retry coverage.
-- Backend Copilot/rate-governor tests: **19/19 passed**, including Groq defaults, per-connection create/update policy,
+- Frontend `npm run test:fixture`: **122/122 passed**, including Mutation Retry and multi-round
+  tool-result/loop-guard regressions.
+- Backend Copilot/rate-governor tests: **20/20 passed**, including Groq defaults, per-connection create/update policy,
   header parsing, `429` retry/status preservation, manual queue timeout and Auto no-false-positive
-  coverage.
+  coverage, plus provider-compatible tool-free finalization.
 - Frontend `npm run build`: **passed**.
 - `git diff --check`: **passed**.
 - Repository-wide `npm run lint` still has existing legacy violations; the focused Copilot files
@@ -95,7 +101,7 @@ POC record, then add a new implementation record covering:
 - NVIDIA NIM preset and improved provider error display.
 - GroqCloud preset with server-side BYOK and model discovery.
 - Per-provider connection rate-limit UI and server-side outbound governor.
-- Current automated verification: 118 frontend tests, 19 Copilot/rate-governor backend tests and
+- Current automated verification: 122 frontend tests, 20 Copilot/rate-governor backend tests and
   production build pass.
 
 Goal 14 and Goal 15 statuses do not need to change. Goal 16 remains the active goal; do not move

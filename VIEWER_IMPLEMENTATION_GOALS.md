@@ -640,7 +640,11 @@ cho LLM khi gate chưa pass.
   concurrency, RPM, TPM, safety factor, queue wait và retry. Auto chỉ theo quota headers thật của
   provider, không dùng local token reservation; Manual mới áp rolling RPM/TPM. Backend governor
   tôn trọng token reset và `Retry-After` khi provider trả `429`.
-- Automated verification hiện tại: frontend fixture 118/118 pass, Copilot/rate-limit backend 19/19 pass,
+- Multi-round orchestration giữ toàn bộ tool result trong logical turn. Chu kỳ query lặp không tiến
+  triển (ví dụ `get_sections -> get_model_summary`) được chặn trước lần thực thi trùng tiếp theo và
+  chuyển sang một provider finalization turn không expose tool. Khi đủ sáu tool round, Copilot cũng
+  chốt bằng kết quả hiện có thay vì báo lỗi conversation budget chung chung.
+- Automated verification hiện tại: frontend fixture 122/122 pass, Copilot/rate-limit backend 20/20 pass,
   production build pass; các file Copilot thay đổi cho Mutation Retry lint-clean.
 - Goal vẫn active: provider-native streaming/in-flight cancel, Zoom, material flow, P0 UI/E2E,
   bộ eval 50 prompt, concurrent-session gate và live NVIDIA verification còn pending.

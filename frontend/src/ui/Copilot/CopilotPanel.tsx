@@ -13,6 +13,7 @@ import { COMMAND_SCHEMA_VERSION, type EntityReference } from '../../core/structu
 import { generateFrameArrayGraph, generateGridGraph, generatePortalFrameGraph } from '../../model/Generators/BasicParametricGenerators'
 import { generateWarehouseGraph } from '../../model/Generators/WarehouseGenerator'
 import { canRetryCopilotTurn, copilotToolCallId, type CopilotTurnStatus } from './CopilotRetry'
+import { copilotToolCallSignature, repeatedCopilotToolCycle, retainCopilotToolResults } from './CopilotLoopGuard'
 
 type Message = {
   id: string
@@ -226,9 +227,20 @@ const CopilotPanel = observer(() => {
 
   const runConversation = async (text: string, logicalTurnId: string, onMutationCommitted: () => void): Promise<Exclude<CopilotTurnStatus, 'running' | 'failed'>> => {
     const controller = new AbortController(); abortRef.current = controller; const requestId = crypto.randomUUID(); requestIdRef.current = requestId
-    const toolDefinitions = executor.registry.list().filter(tool => isToolAllowed(mode, tool)).map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
+    const allowedTools = executor.registry.list().filter(tool => isToolAllowed(mode, tool))
+    const toolDefinitions = allowedTools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
+    const queryToolNames = new Set(allowedTools.filter(tool => tool.kind === 'query').map(tool => tool.name))
     const history = messages.filter(message => message.role === 'user' || message.role === 'assistant').slice(-12).map(message => ({ role: message.role as 'user' | 'assistant', content: message.text }))
     let toolResults: Array<{ toolCallId: string; tool: string; ok: boolean; content: Record<string, unknown> }> = []
+    let querySignatures: string[] = []
+    const finishWithoutTools = async (fallback: string): Promise<Exclude<CopilotTurnStatus, 'running' | 'failed'>> => {
+      let streamed = ''; setStreamingText('')
+      const result = await streamTurn({ requestId, conversationId, prompt: text, mode, context: context(), history, tools: [], toolResults, connectionId: selectedConnectionId, model: selectedModel }, controller.signal, chunk => { streamed += chunk; setStreamingText(current => current + chunk) })
+      if (result.finishReason === 'cancelled') return 'cancelled'
+      setStreamingText('')
+      setMessages(current => [...current, newMessage('assistant', result.message || streamed || fallback)])
+      return 'completed'
+    }
     for (let round = 0; round < 6; round++) {
       let streamed = ''; setStreamingText(''); const startRevision = model.structuralDocument.revision
       const result = await streamTurn({ requestId, conversationId, prompt: text, mode, context: context(), history, tools: toolDefinitions, toolResults, connectionId: selectedConnectionId, model: selectedModel }, controller.signal, chunk => { streamed += chunk; setStreamingText(current => current + chunk) })
@@ -236,21 +248,26 @@ const CopilotPanel = observer(() => {
       setStreamingText('')
       if (!result.toolCalls.length) { setMessages(current => [...current, newMessage('assistant', result.message || streamed || 'Done.')]); return 'completed' }
       if (model.structuralDocument.revision !== startRevision || result.contextRevision !== startRevision) throw new Error('Model changed while Copilot was planning. Please submit again with refreshed context.')
-      toolResults = []
+      const queryOnly = result.toolCalls.every(call => queryToolNames.has(call.name))
+      if (queryOnly && repeatedCopilotToolCycle(querySignatures, result.toolCalls)) {
+        return finishWithoutTools('Copilot stopped a repeated tool loop and returned the available results.')
+      }
+      if (!queryOnly) querySignatures = []
       for (const [callIndex, providerCall] of result.toolCalls.entries()) {
         const call = { ...providerCall, id: copilotToolCallId(logicalTurnId, round, callIndex) }; const response = executor.execute(call, mode); const refs = affectedRefs(response)
         setMessages(current => [...current, { id: crypto.randomUUID(), role: 'activity', text: activityText(response), ...(refs.length ? { affected: refs } : {}) }])
-        if (response.undoToken) { setLastUndoToken(response.undoToken); onMutationCommitted() }
+        if (response.undoToken) { setLastUndoToken(response.undoToken); onMutationCommitted(); querySignatures = [] }
         const explicitPreview = call.name === 'preview_transaction' || call.arguments.preview === true
         if (response.preview && (response.preview.requiresApproval || explicitPreview)) {
           const args = { ...call.arguments, preview: false, ...(response.preview.approvalToken ? { approvalToken: response.preview.approvalToken } : {}) }
           setPending({ tool: call.name === 'preview_transaction' ? 'execute_transaction' : call.name, args, preview: response.preview })
           setMessages(current => [...current, newMessage('assistant', result.message || 'Review the proposed change before applying.')]); return 'completed'
         }
-        toolResults.push({ toolCallId: call.id, tool: call.name, ok: response.ok, content: response as unknown as Record<string, unknown> })
+        toolResults = retainCopilotToolResults(toolResults, [{ toolCallId: call.id, tool: call.name, ok: response.ok, content: response as unknown as Record<string, unknown> }])
+        if (queryOnly) querySignatures.push(copilotToolCallSignature(call))
       }
     }
-    throw new Error('Copilot exceeded the six-round conversation budget')
+    return finishWithoutTools('Copilot reached its tool-call budget and returned the available results.')
   }
 
   const sendPrompt = async (text: string, retryOf?: Message) => {
