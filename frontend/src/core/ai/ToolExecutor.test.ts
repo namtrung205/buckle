@@ -56,11 +56,12 @@ test('registry exposes provider-neutral schemas for every P0 tool', () => {
   const names = new Set(registry.list().map(tool => tool.name))
   for (const name of [
     'get_model_summary', 'get_selection', 'resolve_targets', 'remember_targets', 'get_entities', 'query_entities', 'get_connected_entities',
-    'get_nearby_nodes', 'get_sections', 'get_materials', 'validate_model', 'create_nodes',
+    'get_nearby_nodes', 'get_sections', 'get_materials', 'get_parametric_templates', 'validate_model', 'create_nodes',
     'create_members', 'move_nodes', 'update_members', 'change_section', 'delete_entities',
     'change_material', 'transform_entities', 'update_entity_properties',
     'set_selection', 'hide_entities', 'show_entities', 'execute_transaction', 'preview_transaction',
-    'undo_last_ai_change',
+    'undo_last_ai_change', 'create_grid', 'create_portal_frame', 'create_frame_array',
+    'create_truss', 'create_warehouse', 'create_tower', 'update_parametric_object',
   ]) assert.equal(names.has(name), true, `missing ${name}`)
   assert.equal(registry.toOpenAiTools().length, registry.list().length)
   assert.equal(registry.toAnthropicTools().length, registry.list().length)
@@ -158,6 +159,8 @@ test('Inspect denies every registered mutation schema before handler execution',
     execute_transaction: { operations: [{ type: 'SetSelection', payload: { entities: [] } }] },
     preview_transaction: { operations: [{ type: 'SetSelection', payload: { entities: [] } }] },
     undo_last_ai_change: { undoToken: 'not-used' },
+    create_grid: {}, create_portal_frame: {}, create_frame_array: {}, create_truss: {},
+    create_warehouse: {}, create_tower: {}, update_parametric_object: { objectId: 1, parameters: {} },
     generate_parametric: { kind: 'MiniFrame', parameters: { x: 1 } },
   }
   const mutations = state.executor.registry.list().filter(tool => tool.kind === 'mutation')

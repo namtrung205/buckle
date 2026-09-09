@@ -8,6 +8,10 @@ export type WarehouseParameters = Record<string, unknown> & Readonly<{
   numBays: number
   numPurlins: number
   sectionId: number
+  columnSectionId?: number
+  rafterSectionId?: number
+  secondarySectionId?: number
+  bracingSectionId?: number
   materialId: number
   sectionArea: number
   hasBracing: boolean
@@ -60,7 +64,7 @@ export const generateWarehouseGraph = (params: Readonly<WarehouseParameters>): P
       nodes.push({ role: role(frame, side, 0), record: { name: `Eave-${side}-${frame}`, position: [x, y, params.height] } })
       members.push({
         role: `frame-line:${frame}:${side}:column`, nodeIRole: baseRole(frame, side), nodeJRole: role(frame, side, 0),
-        sectionId: params.sectionId, record: { label: `Column-${side}-${frame}` },
+        sectionId: params.columnSectionId ?? params.sectionId, record: { label: `Column-${side}-${frame}` },
       })
       supports.push({
         role: `frame-line:${frame}:${side}:support`, targetNodeRoles: [baseRole(frame, side)],
@@ -79,7 +83,7 @@ export const generateWarehouseGraph = (params: Readonly<WarehouseParameters>): P
         members.push({
           role: `frame-line:${frame}:${side}:rafter:${station}`,
           nodeIRole: role(frame, side, station), nodeJRole: role(frame, side, station + 1),
-          sectionId: params.sectionId, record: { label: `Rafter-${side}-${frame}-${station}` },
+          sectionId: params.rafterSectionId ?? params.sectionId, record: { label: `Rafter-${side}-${frame}-${station}` },
         })
       }
     }
@@ -92,7 +96,7 @@ export const generateWarehouseGraph = (params: Readonly<WarehouseParameters>): P
         members.push({
           role: `bay:${bay}:${side}:purlin:${station}`,
           nodeIRole: role(bay, side, station), nodeJRole: role(bay + 1, side, station),
-          sectionId: params.sectionId, record: { label: `Purlin-${side}-${bay}-${station}` },
+          sectionId: params.secondarySectionId ?? params.sectionId, record: { label: `Purlin-${side}-${bay}-${station}` },
         })
       }
     }
@@ -116,13 +120,14 @@ export const generateWarehouseGraph = (params: Readonly<WarehouseParameters>): P
 
   if (params.hasBracing) {
     for (const bay of new Set([0, params.numBays - 1])) {
+      const edge = bay === 0 ? 'start' : 'end'
       for (const side of ['left', 'right'] as const) {
         for (const [diagonal, from, to] of [
           [1, baseRole(bay, side), role(bay + 1, side, 0)],
           [2, role(bay, side, 0), baseRole(bay + 1, side)],
           [3, role(bay, side, 0), role(bay + 1, 'left', params.numPurlins)],
           [4, role(bay, 'left', params.numPurlins), role(bay + 1, side, 0)],
-        ] as const) members.push({ role: `bay:${bay}:${side}:bracing:${diagonal}`, nodeIRole: from, nodeJRole: to, sectionId: params.sectionId, record: { label: `Brace-${side}-${bay}-${diagonal}` } })
+        ] as const) members.push({ role: `edge:${edge}:${side}:bracing:${diagonal}`, nodeIRole: from, nodeJRole: to, sectionId: params.bracingSectionId ?? params.sectionId, record: { label: `Brace-${side}-${edge}-${diagonal}` } })
       }
     }
   }

@@ -3,7 +3,11 @@ import test from 'node:test'
 import { safeProviderToolArguments } from './CopilotToolPolicy.ts'
 
 test('provider structural edits are forced to preview until the user applies them', () => {
-  for (const tool of ['move_nodes', 'update_members', 'change_section', 'change_material', 'transform_entities', 'update_entity_properties']) {
+  for (const tool of [
+    'move_nodes', 'update_members', 'change_section', 'change_material', 'transform_entities', 'update_entity_properties',
+    'create_grid', 'create_portal_frame', 'create_frame_array', 'create_truss', 'create_warehouse', 'create_tower',
+    'update_parametric_object', 'generate_parametric',
+  ]) {
     assert.deepEqual(safeProviderToolArguments(tool, { preview: false, value: 1 }), { preview: true, value: 1 })
   }
   assert.deepEqual(safeProviderToolArguments('set_selection', { entities: [] }), { entities: [] })

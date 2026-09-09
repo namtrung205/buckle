@@ -465,7 +465,7 @@ async def create_plan(
 
 QUERY_TOOL_NAMES = {
     "get_model_summary", "get_selection", "resolve_targets", "remember_targets", "get_entities", "query_entities",
-    "get_connected_entities", "get_nearby_nodes", "get_sections", "get_materials",
+    "get_connected_entities", "get_nearby_nodes", "get_sections", "get_materials", "get_parametric_templates",
     "validate_model",
 }
 MUTATION_TOOL_NAMES = {
@@ -473,7 +473,8 @@ MUTATION_TOOL_NAMES = {
     "change_material", "transform_entities", "update_entity_properties",
     "delete_entities", "set_selection", "hide_entities", "show_entities",
     "execute_transaction", "preview_transaction", "undo_last_ai_change",
-    "generate_parametric",
+    "create_grid", "create_portal_frame", "create_frame_array", "create_truss",
+    "create_warehouse", "create_tower", "update_parametric_object", "generate_parametric",
 }
 ALLOWED_TOOL_NAMES = QUERY_TOOL_NAMES | MUTATION_TOOL_NAMES
 cancelled_requests: set[tuple[str, str]] = set()
@@ -488,11 +489,15 @@ Mode rules are security boundaries:
 - Inspect: query only.
 - Edit: mutate only selected entities.
 - Modeling: low-level create/update tools.
-- Generate: use generate_parametric, not low-level geometry tools.
+- Generate: prefer the matching high-level create_grid/create_portal_frame/create_frame_array/
+  create_truss/create_warehouse/create_tower tool. Use update_parametric_object for changes to an
+  existing generated object. Never use low-level geometry tools when a semantic generator exists.
 - Agent: multi-step tools within the supplied budget.
 
 Prefer batch calls. Query before using unknown IDs. For a user request such as finding
 members by length/material, call query_entities and then set_selection if requested.
+Use get_parametric_templates when defaults or engineering parameter names are needed; defaults
+returned by that tool are authoritative and must be stated in the generation preview.
 For edits, resolve exact targets first, reject zero or ambiguous matches, then call the
 edit tool with preview=true. Apply only after user approval. Prefer transform_entities for
 move/copy/rotate/mirror/array, change_material for member material, and

@@ -98,26 +98,50 @@ const assertRole = (role: string, roles: Set<string>) => {
   roles.add(role)
 }
 
-const validateGraph = (graph: ParametricEntityGraph) => {
+export const validateParametricGraph = (document: StructuralDocument, graph: ParametricEntityGraph, tolerance = 1e-6) => {
+  if (!Number.isFinite(tolerance) || tolerance <= 0) throw new Error('Parametric geometry tolerance must be greater than zero')
   const roles = new Set<string>()
   for (const collection of supportedCollections) {
     for (const entity of graph[collection] ?? []) assertRole(entity.role, roles)
   }
   const nodeRoles = new Set((graph.nodes ?? []).map(node => node.role))
+  const positions = new Map((graph.nodes ?? []).map(node => [node.role, node.record.position] as const))
+  const buckets = new Map<string, Array<{ role: string; position: readonly [number, number, number] }>>()
   for (const node of graph.nodes ?? []) {
     if (node.record.position.length !== 3 || node.record.position.some(value => !Number.isFinite(value))) {
       throw new Error(`Node role ${node.role} must contain three finite coordinates`)
     }
+    const [x, y, z] = node.record.position
+    const cell = [Math.floor(x / tolerance), Math.floor(y / tolerance), Math.floor(z / tolerance)] as const
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      for (const other of buckets.get(`${cell[0] + dx}:${cell[1] + dy}:${cell[2] + dz}`) ?? []) {
+        if (Math.hypot(x - other.position[0], y - other.position[1], z - other.position[2]) <= tolerance) {
+          throw new Error(`Node roles ${other.role} and ${node.role} are coincident within tolerance ${tolerance}`)
+        }
+      }
+    }
+    const key = `${cell[0]}:${cell[1]}:${cell[2]}`
+    buckets.set(key, [...(buckets.get(key) ?? []), { role: node.role, position: node.record.position }])
   }
+  const adjacency = new Map([...nodeRoles].map(role => [role, new Set<string>()]))
   for (const member of graph.members ?? []) {
     if (!nodeRoles.has(member.nodeIRole) || !nodeRoles.has(member.nodeJRole)) {
       throw new Error(`Member role ${member.role} references an unknown node role`)
     }
     if (member.nodeIRole === member.nodeJRole) throw new Error(`Member role ${member.role} is degenerate`)
+    if (!document.sections.has(member.sectionId)) throw new Error(`Member role ${member.role} references unsupported section ${member.sectionId}`)
+    const a = positions.get(member.nodeIRole)!; const b = positions.get(member.nodeJRole)!
+    if (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) <= tolerance) throw new Error(`Member role ${member.role} has zero length within tolerance ${tolerance}`)
+    adjacency.get(member.nodeIRole)!.add(member.nodeJRole); adjacency.get(member.nodeJRole)!.add(member.nodeIRole)
   }
   for (const shell of graph.shells ?? []) {
     if (new Set(shell.nodeRoles).size !== 4 || shell.nodeRoles.some(role => !nodeRoles.has(role))) {
       throw new Error(`Shell role ${shell.role} requires four unique node roles`)
+    }
+    if (!document.materials.has(shell.materialId)) throw new Error(`Shell role ${shell.role} references unsupported material ${shell.materialId}`)
+    for (let index = 0; index < shell.nodeRoles.length; index++) {
+      const a = shell.nodeRoles[index]; const b = shell.nodeRoles[(index + 1) % shell.nodeRoles.length]
+      adjacency.get(a)!.add(b); adjacency.get(b)!.add(a)
     }
   }
   const memberRoles = new Set((graph.members ?? []).map(member => member.role))
@@ -131,6 +155,15 @@ const validateGraph = (graph: ParametricEntityGraph) => {
   for (const support of graph.boundaryConditions ?? []) {
     if (!support.targetNodeRoles.length || support.targetNodeRoles.some(role => !nodeRoles.has(role))) {
       throw new Error(`Boundary condition role ${support.role} references an unknown node role`)
+    }
+  }
+  if (nodeRoles.size) {
+    const start = nodeRoles.values().next().value as string
+    const visited = new Set([start]); const queue = [start]
+    while (queue.length) for (const next of adjacency.get(queue.shift()!) ?? []) if (!visited.has(next)) { visited.add(next); queue.push(next) }
+    if (visited.size !== nodeRoles.size) {
+      const disconnected = [...nodeRoles].filter(role => !visited.has(role)).slice(0, 5)
+      throw new Error(`Parametric topology is disconnected at ${disconnected.join(', ')}`)
     }
   }
 }
@@ -151,7 +184,7 @@ export const prepareParametricRegeneration = <TParameters extends Record<string,
   if (canonicalStringify(graph) !== canonicalStringify(repeated)) {
     throw new Error(`Generator ${request.kind}@${request.generatorVersion} is not deterministic`)
   }
-  validateGraph(graph)
+  validateParametricGraph(document, graph)
 
   const existing = request.objectId === undefined ? undefined : document.parametricObjects.get(request.objectId)
   if (request.objectId !== undefined && !existing) throw new Error(`Unknown parametric object id ${request.objectId}`)

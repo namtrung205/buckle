@@ -11,8 +11,7 @@ import { useModel } from '../../model/Context'
 import { colors } from '../../theme'
 import { isToolAllowed, type AiMode, type AiToolCall, type AiToolResponse } from '../../core/ai'
 import { COMMAND_SCHEMA_VERSION, type EntityReference } from '../../core/structural'
-import { generateFrameArrayGraph, generateGridGraph, generatePortalFrameGraph } from '../../model/Generators/BasicParametricGenerators'
-import { generateWarehouseGraph } from '../../model/Generators/WarehouseGenerator'
+import { createParametricGeneratorCatalogue } from '../../model/Generators/ParametricCatalogue'
 import { canRetryCopilotTurn, copilotToolCallId, type CopilotTurnStatus } from './CopilotRetry'
 import { copilotContextConflictMessage, copilotPreviewConflictMessage, copilotToolCallSignature, repeatedCopilotToolCycle, retainCopilotToolResults } from './CopilotLoopGuard'
 import { safeProviderToolArguments } from './CopilotToolPolicy'
@@ -166,22 +165,7 @@ const CopilotPanel = observer(() => {
   const [connectionDraft, setConnectionDraft] = useState({ provider: 'deepseek' as ProviderKind, label: '', apiKey: '', baseUrl: '', modelIds: '', rateLimit: defaultRateLimit() })
   const [rateEditor, setRateEditor] = useState<{ connectionId: string; value: RateLimitSettings } | null>(null)
 
-  const parametricGenerators = useMemo(() => ({
-    Grid: { version: 1, generatorVersion: 'grid@1', generator: generateGridGraph as never },
-    PortalFrame: { version: 1, generatorVersion: 'portal-frame@1', generator: generatePortalFrameGraph as never },
-    FrameArray: { version: 1, generatorVersion: 'frame-array@1', generator: generateFrameArrayGraph as never },
-    Warehouse: { version: 1, generatorVersion: 'warehouse@1', generator: ((raw: Record<string, unknown>) => {
-      const sectionId = Number(raw.sectionId ?? [...model.structuralDocument.sections.keys()][0]); const section = model.structuralDocument.sections.get(sectionId)
-      if (!section) throw new Error('Warehouse requires a valid sectionId')
-      return generateWarehouseGraph({
-        width: 20, length: 60, height: 6, pitch: 15, numBays: 5, numPurlins: 3,
-        sectionId, materialId: section.materialId, sectionArea: Number(section.properties?.A ?? 0.01),
-        hasBracing: true, addSelfWeight: true, addWindLoad: false, windMagnitude: 1.2,
-        addSnowLoad: false, snowMagnitude: 0.8, addMembrane: false, membraneThickness: 0.002,
-        windOnRoof: true, windOnSideWalls: true, windOnEndWalls: true, snowOnRoof: true, ...raw,
-      } as never)
-    }) as never },
-  }), [model])
+  const parametricGenerators = useMemo(() => createParametricGeneratorCatalogue(model.structuralDocument), [model])
   // Replay IDs, recent targets and named aliases are scoped to one logical conversation.
   // Replacing the conversation must also replace that in-memory tool session.
   const executor = useMemo(() => {
@@ -347,7 +331,7 @@ const CopilotPanel = observer(() => {
       <Tooltip arrow title="Configure AI providers, models and rate limits" componentsProps={{ tooltip: { sx: { maxWidth: 280, px: 1.5, py: 1, fontSize: 13 } } }}><IconButton size="small" onClick={() => { setConnectionError(''); setSettingsOpen(true) }}><Settings fontSize="small" /></IconButton></Tooltip><Tooltip title="Undo last AI change"><span><IconButton size="small" disabled={!lastUndoToken || busy} onClick={undoAi}><Undo fontSize="small" /></IconButton></span></Tooltip><IconButton size="small" onClick={() => setOpen(false)}><Close fontSize="small" /></IconButton>
     </Box>
     <Box sx={{ flex: 1, overflowY: 'auto', p: 1.25, display: 'flex', flexDirection: 'column', gap: .8 }}>{messages.map(message => message.role === 'user' ? <Box key={message.id} sx={{ alignSelf: 'flex-end', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: .2, maxWidth: '88%' }}><Box sx={{ bgcolor: colors.accentHover, color: colors.text, px: 1.1, py: .7, borderRadius: 1, fontSize: 13, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Box>{canRetryCopilotTurn(message, busy) && <Button size="small" onClick={() => retryMessage(message)} sx={{ fontSize: 10, minWidth: 0, px: .8, color: colors.textDim }}><Refresh sx={{ fontSize: 12, mr: .3 }} />Retry once</Button>}</Box> : <Box key={message.id} sx={{ alignSelf: 'flex-start', maxWidth: message.role === 'activity' ? '100%' : '88%', bgcolor: message.role === 'activity' ? colors.bg : colors.surfaceAlt, border: message.role === 'activity' ? `1px solid ${colors.border}` : undefined, color: message.role === 'error' ? colors.danger : colors.text, px: 1.1, py: .7, borderRadius: 1, fontSize: message.role === 'activity' ? 11 : 13, whiteSpace: 'pre-wrap' }}>{message.text}{!!message.affected?.length && <Button size="small" sx={{ ml: 1, fontSize: 10 }} onClick={() => selectAffected(message.affected!)}>Select</Button>}</Box>)}
-      {pending && <Box sx={{ border: `1px solid ${colors.secondary}`, borderRadius: 1, p: 1, bgcolor: colors.bg }}><Typography fontSize={12} fontWeight={700}>Proposed change</Typography><Typography fontSize={12}>Add {pending.preview.created} · Update {pending.preview.updated} · Delete {pending.preview.deleted} · Risk {pending.preview.risk}</Typography><Stack direction="row" spacing={1} mt={1}><Button size="small" variant="contained" onClick={applyPending}>Apply</Button><Button size="small" onClick={() => setPending(null)}>Reject</Button></Stack></Box>}
+      {pending && <Box sx={{ border: `1px solid ${colors.secondary}`, borderRadius: 1, p: 1, bgcolor: colors.bg }}><Typography fontSize={12} fontWeight={700}>Proposed change</Typography><Typography fontSize={12}>Add {pending.preview.created} · Update {pending.preview.updated} · Delete {pending.preview.deleted} · Risk {pending.preview.risk}</Typography>{pending.preview.parametric && <Stack spacing={.25} mt={.5}><Typography fontSize={11}>{pending.preview.parametric.kind} · template {pending.preview.parametric.templateId}@{pending.preview.parametric.templateVersion}</Typography>{pending.preview.parametric.footprint && <Typography fontSize={11}>Size {pending.preview.parametric.footprint.size.map(value => `${Number(value.toFixed(3))} m`).join(' × ')}</Typography>}<Typography fontSize={11}>Sections {pending.preview.parametric.sectionIds.join(', ') || 'none'} · Loads {pending.preview.parametric.loadCount} · Supports {pending.preview.parametric.supportCount} · Render/analysis {pending.preview.parametric.estimatedCost.render}/{pending.preview.parametric.estimatedCost.analysis}</Typography>{pending.preview.parametric.defaultsApplied.length > 0 && <Typography fontSize={11} color={colors.textDim}>Defaults: {pending.preview.parametric.defaultsApplied.join(', ')}</Typography>}{pending.preview.parametric.warnings.map(warning => <Typography key={warning} fontSize={11} color={colors.secondary}>{warning}</Typography>)}</Stack>}<Stack direction="row" spacing={1} mt={1}><Button size="small" variant="contained" onClick={applyPending}>Apply</Button><Button size="small" onClick={() => setPending(null)}>Reject</Button></Stack></Box>}
       {streamingText && <Box sx={{ alignSelf: 'flex-start', maxWidth: '88%', bgcolor: colors.surfaceAlt, px: 1.1, py: .7, borderRadius: 1, fontSize: 13, whiteSpace: 'pre-wrap' }}>{streamingText}</Box>}
       {busy && <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={16} /><Typography fontSize={11}>Planning and running tools…</Typography></Stack>}
     </Box>

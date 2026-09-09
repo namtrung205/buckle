@@ -25,6 +25,27 @@ export type ToolPreview = Readonly<{
   risk: 'low' | 'medium' | 'high'
   requiresApproval: boolean
   approvalToken?: string
+  parametric?: ParametricPreview
+}>
+
+export type ParametricPreview = Readonly<{
+  kind: string
+  objectId: EntityId
+  templateId: string
+  templateVersion: number
+  defaultsApplied: readonly string[]
+  footprint?: Readonly<{
+    min: readonly [number, number, number]
+    max: readonly [number, number, number]
+    size: readonly [number, number, number]
+  }>
+  entityCounts: Readonly<Partial<Record<EntityCollection, number>>>
+  sectionIds: readonly EntityId[]
+  materialIds: readonly EntityId[]
+  loadCount: number
+  supportCount: number
+  warnings: readonly string[]
+  estimatedCost: Readonly<{ render: 'low' | 'medium' | 'high'; analysis: 'low' | 'medium' | 'high' }>
 }>
 
 export type AiToolResponse = Readonly<{
@@ -45,6 +66,15 @@ export type ParametricGeneratorBinding = Readonly<{
   generatorVersion: string
   generator: ParametricGenerator<Record<string, unknown>>
   constraints?: readonly Readonly<Record<string, unknown>>[]
+  templateId?: string
+  templateVersion?: number
+  parameterDefaults?: Readonly<Record<string, unknown>>
+  vocabulary?: Readonly<Record<string, readonly string[]>>
+  normalizeParameters?: (parameters: Readonly<Record<string, unknown>>) => Readonly<{
+    parameters: Readonly<Record<string, unknown>>
+    defaultsApplied?: readonly string[]
+    warnings?: readonly string[]
+  }>
 }>
 
 export type AiToolRuntime = Readonly<{

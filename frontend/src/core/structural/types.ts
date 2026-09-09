@@ -137,6 +137,10 @@ export type ParametricObjectRecord = {
     createdAt?: string
     updatedAt?: string
     parentObjectId?: EntityId
+    toolCallId?: string
+    transactionId?: string
+    templateId?: string
+    templateVersion?: number
   }>
 }
 

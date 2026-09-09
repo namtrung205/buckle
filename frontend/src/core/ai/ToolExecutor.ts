@@ -8,13 +8,14 @@ import {
   type CommandTransactionOperation,
   type EntityCollection,
   type EntityReference,
+  type ParametricEntityGraph,
   type StructuralCommand,
   type StructuralDocument,
 } from '../structural/index.ts'
 import { StructuralQueryService } from './StructuralQueryService.ts'
 import { AiToolRegistry } from './ToolRegistry.ts'
 import { assertSelectionScope, classifyOperations, isToolAllowed } from './ToolPolicy.ts'
-import type { AgentBudget, AiMode, AiToolCall, AiToolResponse, AiToolRuntime, JsonSchema, ToolPreview } from './types.ts'
+import type { AgentBudget, AiMode, AiToolCall, AiToolResponse, AiToolRuntime, JsonSchema, ParametricPreview, ToolPreview } from './types.ts'
 
 type Replay = { signature: string; response: AiToolResponse }
 type Approval = { signature: string; revision: number }
@@ -39,20 +40,33 @@ const asRefs = (value: unknown, label: string) => asArray<EntityReference>(value
   return clone(ref)
 })
 
+const PARAMETRIC_KIND_BY_TOOL: Readonly<Record<string, string>> = {
+  create_grid: 'Grid', create_portal_frame: 'PortalFrame', create_frame_array: 'FrameArray',
+  create_truss: 'Truss', create_warehouse: 'Warehouse', create_tower: 'Tower',
+}
+const generationControlKeys = new Set(['preview', 'approvalToken', 'objectId', 'kind', 'parameters'])
+
 const validateSchema = (value: unknown, schema: JsonSchema, path = 'arguments') => {
+  const alternatives = (schema.oneOf ?? schema.anyOf) as JsonSchema[] | undefined
+  if (alternatives?.length) {
+    for (const alternative of alternatives) {
+      try { validateSchema(value, alternative, path); return } catch { /* try the next declared shape */ }
+    }
+    throw new Error(`${path} does not match an allowed value shape`)
+  }
   const type = schema.type
   if (type === 'object') {
     const record = asRecord(value, path)
     const properties = (schema.properties ?? {}) as Record<string, JsonSchema>
     for (const required of (schema.required ?? []) as string[]) if (record[required] === undefined) throw new Error(`${path}.${required} is required`)
     if (schema.additionalProperties === false) for (const key of Object.keys(record)) if (!(key in properties)) throw new Error(`${path}.${key} is not allowed`)
-    for (const [key, child] of Object.entries(properties)) if (record[key] !== undefined && child.type) validateSchema(record[key], child, `${path}.${key}`)
+    for (const [key, child] of Object.entries(properties)) if (record[key] !== undefined && (child.type || child.oneOf || child.anyOf)) validateSchema(record[key], child, `${path}.${key}`)
   } else if (type === 'array') {
     const values = asArray(value, path)
     if (typeof schema.minItems === 'number' && values.length < schema.minItems) throw new Error(`${path} has too few items`)
     if (typeof schema.maxItems === 'number' && values.length > schema.maxItems) throw new Error(`${path} has too many items`)
     const item = schema.items as JsonSchema | undefined
-    if (item?.type) values.forEach((child, index) => validateSchema(child, item, `${path}[${index}]`))
+    if (item && (item.type || item.oneOf || item.anyOf)) values.forEach((child, index) => validateSchema(child, item, `${path}[${index}]`))
   } else if (type === 'string' && typeof value !== 'string') throw new Error(`${path} must be a string`)
   else if (type === 'integer' && !Number.isSafeInteger(value)) throw new Error(`${path} must be an integer`)
   else if (type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) throw new Error(`${path} must be a finite number`)
@@ -142,16 +156,29 @@ export class AiToolExecutor {
       case 'get_nearby_nodes': data = this.queries.getNearbyNodes(args.point as [number, number, number], args.radius as number, (args.limit as number | undefined) ?? 100); break
       case 'get_sections': data = this.queries.getEntities('sections', args.ids as number[] | undefined); break
       case 'get_materials': data = this.queries.getEntities('materials', args.ids as number[] | undefined); break
+      case 'get_parametric_templates': data = this.parametricTemplates(args.kind as string | undefined); break
       case 'validate_model': data = this.queries.validateModel(); break
       default: throw new Error(`No query handler for ${call.name}`)
     }
     return { toolCallId: call.id, tool: call.name, ok: true, revision: this.document.revision, data }
   }
 
+  private parametricTemplates(kind?: string) {
+    const entries = Object.entries(this.runtime.parametricGenerators ?? {})
+      .filter(([candidate]) => !kind || candidate === kind)
+      .map(([candidate, binding]) => ({
+        kind: candidate, templateId: binding.templateId ?? candidate, templateVersion: binding.templateVersion ?? binding.version,
+        generatorVersion: binding.generatorVersion, defaults: clone(binding.parameterDefaults ?? {}), vocabulary: clone(binding.vocabulary ?? {}),
+      }))
+      .sort((a, b) => a.kind.localeCompare(b.kind))
+    if (kind && !entries.length) throw new Error(`Unknown or unavailable parametric kind ${kind}`)
+    return { templates: entries }
+  }
+
   private executeMutation(call: AiToolCall, mode: AiMode): AiToolResponse {
     const args = call.arguments as Record<string, unknown>
     if (call.name === 'undo_last_ai_change') return this.undo(call, args.undoToken as string)
-    if (call.name === 'generate_parametric') return this.generate(call, args)
+    if (call.name === 'generate_parametric' || call.name === 'update_parametric_object' || PARAMETRIC_KIND_BY_TOOL[call.name]) return this.generate(call, args)
     const operations = this.operationsFor(call.name, args)
     if (mode === 'Modeling' && operations.some(operation => operation.type.includes('ParametricObject'))) throw new Error('Modeling mode cannot execute parametric operations')
     const previewOnly = call.name === 'preview_transaction' || args.preview === true
@@ -388,28 +415,82 @@ export class AiToolExecutor {
   }
 
   private generate(call: AiToolCall, args: Record<string, unknown>): AiToolResponse {
-    const binding = this.runtime.parametricGenerators?.[args.kind as string]
-    if (!binding) throw new Error(`Unknown or unavailable parametric kind ${String(args.kind)}`)
+    const existing = call.name === 'update_parametric_object' ? this.document.parametricObjects.get(args.objectId as number) : undefined
+    if (call.name === 'update_parametric_object' && !existing) throw new Error(`Unknown parametric object id ${String(args.objectId)}`)
+    const kind = PARAMETRIC_KIND_BY_TOOL[call.name] ?? existing?.kind ?? args.kind as string
+    const binding = this.runtime.parametricGenerators?.[kind]
+    if (!binding) throw new Error(`Unknown or unavailable parametric kind ${String(kind)}`)
+    const rawParameters = call.name === 'generate_parametric'
+      ? clone(asRecord(args.parameters, 'parameters'))
+      : call.name === 'update_parametric_object'
+        ? { ...clone(existing!.parameters), ...clone(asRecord(args.parameters, 'parameters')) }
+        : Object.fromEntries(Object.entries(args).filter(([key]) => !generationControlKeys.has(key)))
+    if (call.name === 'update_parametric_object') {
+      const patch = asRecord(args.parameters, 'parameters')
+      if ((kind === 'Warehouse' || kind === 'FrameArray') && (patch.length !== undefined || patch.baySpacing !== undefined) && patch.numBays === undefined) {
+        delete rawParameters.numBays
+      }
+    }
+    const normalized = binding.normalizeParameters?.(rawParameters) ?? { parameters: rawParameters, defaultsApplied: [], warnings: [] }
     const plan = prepareParametricRegeneration(this.document, {
-      objectId: args.objectId as number | undefined,
-      kind: args.kind as string,
+      objectId: call.name === 'update_parametric_object' ? existing!.id : args.objectId as number | undefined,
+      kind,
       version: binding.version,
-      parameters: clone(asRecord(args.parameters, 'parameters')),
+      parameters: clone(normalized.parameters),
       generatorVersion: binding.generatorVersion,
       generator: binding.generator,
       constraints: binding.constraints,
-      provenance: { source: 'AI Tool Registry' },
+      provenance: {
+        source: 'AI Tool Registry', toolCallId: call.id, transactionId: `ai:${call.id}`,
+        templateId: binding.templateId, templateVersion: binding.templateVersion,
+      },
     })
-    const preview = { ...classifyOperations(plan.command.payload.operations), created: plan.total.created, updated: plan.total.updated, deleted: plan.total.deleted, affected: plan.total.created + plan.total.updated + plan.total.deleted }
+    const parametric = this.parametricPreview(plan.graph, kind, plan.object.id, binding.templateId ?? kind, binding.templateVersion ?? binding.version, normalized.defaultsApplied ?? [], normalized.warnings ?? [])
+    const preview = { ...classifyOperations(plan.command.payload.operations), created: plan.total.created, updated: plan.total.updated, deleted: plan.total.deleted, affected: plan.total.created + plan.total.updated + plan.total.deleted, parametric }
     const signature = canonicalStringify({ operations: plan.command.payload.operations, revision: this.document.revision })
     const approved = typeof args.approvalToken === 'string' && this.consumeApproval(args.approvalToken, signature)
     const previewOnly = args.preview === true || (preview.requiresApproval && !approved)
     const result = this.dispatch(this.envelope(call.id, plan.command, previewOnly))
     if (previewOnly) {
       const token = preview.requiresApproval ? this.issueApproval(signature) : undefined
-      return { toolCallId: call.id, tool: call.name, ok: true, revision: this.document.revision, data: { objectId: plan.object.id }, preview: { ...preview, ...(token ? { approvalToken: token } : {}) } }
+      return { toolCallId: call.id, tool: call.name, ok: true, revision: this.document.revision, data: { objectId: plan.object.id }, warnings: parametric.warnings, preview: { ...preview, ...(token ? { approvalToken: token } : {}) } }
     }
     return this.committed(call, result, preview, { objectId: plan.object.id })
+  }
+
+  private parametricPreview(
+    graph: ParametricEntityGraph,
+    kind: string,
+    objectId: number,
+    templateId: string,
+    templateVersion: number,
+    defaultsApplied: readonly string[],
+    warnings: readonly string[],
+  ): ParametricPreview {
+    const entityCounts: Partial<Record<EntityCollection, number>> = {}
+    for (const collection of ['nodes', 'members', 'shells', 'loads', 'boundaryConditions', 'grids', 'levels'] as const) {
+      const count = graph[collection]?.length ?? 0
+      if (count) entityCounts[collection] = count
+    }
+    const positions = (graph.nodes ?? []).map(node => node.record.position)
+    const footprint = positions.length ? (() => {
+      const min = [Infinity, Infinity, Infinity] as [number, number, number]
+      const max = [-Infinity, -Infinity, -Infinity] as [number, number, number]
+      for (const point of positions) for (let axis = 0; axis < 3; axis++) { min[axis] = Math.min(min[axis], point[axis]); max[axis] = Math.max(max[axis], point[axis]) }
+      return { min, max, size: max.map((value, axis) => value - min[axis]) as [number, number, number] }
+    })() : undefined
+    const sectionIds = [...new Set((graph.members ?? []).map(member => member.sectionId))].sort((a, b) => a - b)
+    const materialIds = [...new Set((graph.shells ?? []).map(shell => shell.materialId))].sort((a, b) => a - b)
+    const complexity = (graph.nodes?.length ?? 0) + (graph.members?.length ?? 0) + (graph.shells?.length ?? 0) * 2
+    const cost = complexity > 5000 ? 'high' : complexity > 500 ? 'medium' : 'low'
+    const analysisComplexity = (graph.nodes?.length ?? 0) + (graph.members?.length ?? 0) * 2 + (graph.shells?.length ?? 0) * 8
+    const analysis = analysisComplexity > 10_000 ? 'high' : analysisComplexity > 1000 ? 'medium' : 'low'
+    return {
+      kind, objectId, templateId, templateVersion, defaultsApplied: [...new Set(defaultsApplied)].sort(),
+      ...(footprint ? { footprint } : {}), entityCounts, sectionIds, materialIds,
+      loadCount: graph.loads?.length ?? 0, supportCount: graph.boundaryConditions?.length ?? 0,
+      warnings: [...warnings], estimatedCost: { render: cost, analysis },
+    }
   }
 
   private committed(call: AiToolCall, result: CommandResult, preview: ToolPreview, data?: unknown): AiToolResponse {

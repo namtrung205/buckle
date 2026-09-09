@@ -9,6 +9,10 @@ const batch = (items: unknown) => ({ ...array(items), minItems: 1 })
 const ids = array({ type: 'integer', minimum: 1 })
 const ref = object({ collection: { type: 'string', enum: collections }, id: { type: 'integer', minimum: 1 } }, ['collection', 'id'])
 const vector = { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }
+const engineeringLength = { oneOf: [{ type: 'number' }, { type: 'string' }], description: 'Length as canonical metres or an explicit value such as 6000 mm, 6 m, 20 ft.' }
+const engineeringAngle = { oneOf: [{ type: 'number' }, { type: 'string' }], description: 'Angle in degrees or an explicit value such as 15 deg or 0.26 rad.' }
+const engineeringVector = { type: 'array', items: engineeringLength, minItems: 3, maxItems: 3 }
+const generationControl = { preview: { type: 'boolean' }, approvalToken: { type: 'string' } }
 
 const definitions: AiToolDefinition[] = [
   { name: 'get_model_summary', kind: 'query', description: 'Return exact model counts, revision, hash and units.', inputSchema: object({}) },
@@ -42,6 +46,7 @@ const definitions: AiToolDefinition[] = [
   { name: 'get_nearby_nodes', kind: 'query', description: 'Find nodes within a radius of a Z-up metre coordinate.', inputSchema: object({ point: vector, radius: { type: 'number', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 10_000 } }, ['point', 'radius']) },
   { name: 'get_sections', kind: 'query', description: 'Return all section catalogue records.', inputSchema: object({ ids }) },
   { name: 'get_materials', kind: 'query', description: 'Return all material catalogue records.', inputSchema: object({ ids }) },
+  { name: 'get_parametric_templates', kind: 'query', description: 'Return the versioned parametric template catalogue, published defaults and Vietnamese/English engineering vocabulary.', inputSchema: object({ kind: { type: 'string' } }) },
   { name: 'validate_model', kind: 'query', description: 'Validate topology and return deterministic warnings.', inputSchema: object({}) },
   { name: 'create_nodes', kind: 'mutation', description: 'Create a batch of nodes.', inputSchema: object({ nodes: batch(object({ id: { type: 'integer', minimum: 1 }, alias: { type: 'string' }, name: { type: 'string' }, position: vector }, ['position'])) }, ['nodes']) },
   { name: 'create_members', kind: 'mutation', description: 'Create a batch of straight members.', inputSchema: object({ members: batch(object({ id: { type: 'integer', minimum: 1 }, alias: { type: 'string' }, label: { type: 'string' }, nodeI: {}, nodeJ: {}, sectionId: {} }, ['nodeI', 'nodeJ', 'sectionId'])) }, ['members']) },
@@ -64,6 +69,37 @@ const definitions: AiToolDefinition[] = [
   { name: 'execute_transaction', kind: 'mutation', description: 'Execute canonical operations atomically.', inputSchema: object({ operations: batch({ type: 'object' }), approvalToken: { type: 'string' } }, ['operations']) },
   { name: 'preview_transaction', kind: 'mutation', description: 'Validate canonical operations without committing.', inputSchema: object({ operations: batch({ type: 'object' }) }, ['operations']) },
   { name: 'undo_last_ai_change', kind: 'mutation', description: 'Undo only this executor session’s latest AI mutation.', inputSchema: object({ undoToken: { type: 'string' } }, ['undoToken']) },
+  { name: 'create_grid', kind: 'mutation', description: 'Create an orthogonal grid with explicit X/Y bay spacings. Published defaults are 6 m by 6 m.', inputSchema: object({
+    name: { type: 'string' }, xSpacings: array(engineeringLength), ySpacings: array(engineeringLength), ...generationControl,
+  }) },
+  { name: 'create_portal_frame', kind: 'mutation', description: 'Create one pitched portal frame. Defaults: width 20 m, height 6 m, pitch 15 deg; sectionId defaults to the first catalogue section.', inputSchema: object({
+    width: engineeringLength, height: engineeringLength, pitch: engineeringAngle, sectionId: { type: 'integer', minimum: 1 }, origin: engineeringVector, ...generationControl,
+  }) },
+  { name: 'create_frame_array', kind: 'mutation', description: 'Create an array of portal frames. Prefer baySpacing; numBays is also accepted. Defaults: 20 x 60 x 6 m, 6 m bays, 15 deg pitch.', inputSchema: object({
+    width: engineeringLength, length: engineeringLength, height: engineeringLength, pitch: engineeringAngle,
+    baySpacing: engineeringLength, numBays: { type: 'integer', minimum: 1 }, sectionId: { type: 'integer', minimum: 1 }, longitudinalSectionId: { type: 'integer', minimum: 1 }, origin: engineeringVector, ...generationControl,
+  }) },
+  { name: 'create_truss', kind: 'mutation', description: 'Create a deterministic pitched roof truss. Defaults: span 20 m, height 3 m and 8 panels.', inputSchema: object({
+    span: engineeringLength, height: engineeringLength, panelCount: { type: 'integer', minimum: 2 }, sectionId: { type: 'integer', minimum: 1 }, origin: engineeringVector, ...generationControl,
+  }) },
+  { name: 'create_warehouse', kind: 'mutation', description: 'Create one complete parametric warehouse in one transaction. Understands nhịp/width, chiều dài/length, cao mép mái/height and bước khung/baySpacing. Defaults are published in the warehouse template and always reported in preview.', inputSchema: object({
+    width: engineeringLength, length: engineeringLength, height: engineeringLength, pitch: engineeringAngle,
+    baySpacing: engineeringLength, numBays: { type: 'integer', minimum: 1 }, numPurlins: { type: 'integer', minimum: 1 }, sectionId: { type: 'integer', minimum: 1 },
+    columnSectionId: { type: 'integer', minimum: 1 }, rafterSectionId: { type: 'integer', minimum: 1 }, secondarySectionId: { type: 'integer', minimum: 1 }, bracingSectionId: { type: 'integer', minimum: 1 },
+    hasBracing: { type: 'boolean' }, addSelfWeight: { type: 'boolean' }, addWindLoad: { type: 'boolean' }, windMagnitude: { type: 'number' },
+    addSnowLoad: { type: 'boolean' }, snowMagnitude: { type: 'number' }, addMembrane: { type: 'boolean' }, membraneThickness: engineeringLength,
+    windOnRoof: { type: 'boolean' }, windOnSideWalls: { type: 'boolean' }, windOnEndWalls: { type: 'boolean' }, snowOnRoof: { type: 'boolean' }, ...generationControl,
+  }) },
+  { name: 'create_tower', kind: 'mutation', description: 'Create a lattice transmission tower. Defaults: 36 m body, 4 m peak, 8 m base, 3 m top and 9 panels.', inputSchema: object({
+    circuit: { type: 'string', enum: ['single', 'double'] }, bodyHeight: engineeringLength, peakHeight: engineeringLength,
+    baseWidth: engineeringLength, topWidth: engineeringLength, panelCount: { type: 'integer', minimum: 1 }, straightPanels: { type: 'integer', minimum: 0 },
+    taper: { type: 'string', enum: ['linear', 'step'] }, armCount: { type: 'integer', minimum: 0, maximum: 3 }, armLength: engineeringLength,
+    armDrop: engineeringLength, armSpacing: engineeringLength, legSectionId: { type: 'integer', minimum: 1 }, braceSectionId: { type: 'integer', minimum: 1 },
+    autoSupports: { type: 'boolean' }, supportKind: { type: 'string', enum: ['pinned', 'fixed'] }, autoLoads: { type: 'boolean' }, windForce: { type: 'number' }, gravity: { type: 'number' }, ...generationControl,
+  }) },
+  { name: 'update_parametric_object', kind: 'mutation', description: 'Update/regenerate an existing parametric object while preserving semantic-role IDs. Supply only changed parameters; for example {length:"72 m"}.', inputSchema: object({
+    objectId: { type: 'integer', minimum: 1 }, parameters: { type: 'object' }, ...generationControl,
+  }, ['objectId', 'parameters']) },
   { name: 'generate_parametric', kind: 'mutation', description: 'Create or regenerate a registered high-level parametric object.', inputSchema: object({ kind: { type: 'string' }, parameters: { type: 'object' }, objectId: { type: 'integer', minimum: 1 }, preview: { type: 'boolean' }, approvalToken: { type: 'string' } }, ['kind', 'parameters']) },
 ]
 

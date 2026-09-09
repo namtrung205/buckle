@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Goal 18 bilingual parametric golden prompts",
+  "cases": [
+    { "id": "vi-grid", "prompt": "Tạo lưới X bước 6 m, Y bước 8 m", "tool": "create_grid", "arguments": { "xSpacings": ["6 m"], "ySpacings": ["8 m"], "preview": true }, "kind": "Grid" },
+    { "id": "vi-portal", "prompt": "Tạo một khung portal nhịp 24 m, cao mép mái 7 m, góc mái 12 độ", "tool": "create_portal_frame", "arguments": { "width": "24 m", "height": "7 m", "pitch": "12 độ", "preview": true }, "kind": "PortalFrame" },
+    { "id": "en-frame-array", "prompt": "Create a 60 m long portal-frame array at 6 m spacing", "tool": "create_frame_array", "arguments": { "length": "60 m", "baySpacing": "6 m", "preview": true }, "kind": "FrameArray" },
+    { "id": "vi-truss", "prompt": "Tạo giàn mái nhịp 30 m, cao 4 m, 10 khoang", "tool": "create_truss", "arguments": { "span": "30 m", "height": "4 m", "panelCount": 10, "preview": true }, "kind": "Truss" },
+    { "id": "vi-warehouse", "prompt": "Dựng nhà xưởng 30 × 60 × 8 m, bước khung 6 m", "tool": "create_warehouse", "arguments": { "width": "30 m", "length": "60 m", "height": "8 m", "baySpacing": "6 m", "preview": true }, "kind": "Warehouse" },
+    { "id": "en-tower", "prompt": "Create a 42 m lattice tower with a 9 m base and 10 panels", "tool": "create_tower", "arguments": { "bodyHeight": "42 m", "baseWidth": "9 m", "panelCount": 10, "preview": true }, "kind": "Tower" },
+    { "id": "vi-update-warehouse", "prompt": "Đổi chiều dài nhà xưởng thành 72 m", "tool": "update_parametric_object", "arguments": { "objectId": 1, "parameters": { "length": "72 m" }, "preview": true }, "kind": "Warehouse", "setup": [{ "tool": "create_warehouse", "arguments": { "width": "30 m", "length": "60 m", "height": "8 m", "baySpacing": "6 m", "preview": false } }] }
+  ]
+}
