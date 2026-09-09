@@ -104,6 +104,7 @@ const FpsOverlay = observer(() => {
       <Stack direction="row" spacing={0.5} sx={{ mt: 0.75, flexWrap: 'wrap', gap: 0.5 }}>
         <Button size="small" variant="outlined" disabled={busy} onClick={() => void model.loadBenchmarkFixture(1_000)}>Load 1k</Button>
         <Button size="small" variant="outlined" disabled={busy} onClick={() => void model.loadBenchmarkFixture(10_000)}>Load 10k</Button>
+        <Button size="small" variant="outlined" disabled={busy} onClick={() => void model.loadBenchmarkFixture(100_000)}>Load 100k</Button>
         <Button size="small" variant="contained" disabled={busy} onClick={() => void benchmark.run()}>Run</Button>
         <Button size="small" variant="outlined" disabled={busy || model.structuralSceneDB.memberCount === 0} onClick={() => void model.runResultBenchmark()}>Result test</Button>
         <Button size="small" variant="outlined" disabled={busy || model.structuralSceneDB.memberCount === 0} onClick={() => void model.runAnnotationBenchmark()}>Text/symbol test</Button>

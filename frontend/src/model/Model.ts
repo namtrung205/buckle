@@ -1136,7 +1136,7 @@ export class Model {
   }
 
   /** Replace the current model with an explicit user-requested deterministic fixture. */
-  async loadBenchmarkFixture(beamCount: 1_000 | 10_000, seed = 0x4255434b) {
+  async loadBenchmarkFixture(beamCount: 1_000 | 10_000 | 100_000, seed = 0x4255434b) {
     if (this.performanceBenchmark.running) throw new Error('Wait for the active benchmark to finish')
     this.performanceBenchmark.fixtureLoading = true
     this.performanceBenchmark.setFixture(null)
