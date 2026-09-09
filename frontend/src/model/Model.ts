@@ -950,18 +950,29 @@ export class Model {
 
       window.addEventListener("resize", this.onResize);
       window.addEventListener('pointermove', this.updatePointerCoords);
-      window.addEventListener('keydown', this.onCommandHistoryKeyDown);
+      window.addEventListener('keydown', this.onGlobalKeyDown);
     } else {
       window.removeEventListener("resize", this.onResize);
       window.removeEventListener('pointermove', this.updatePointerCoords);
-      window.removeEventListener('keydown', this.onCommandHistoryKeyDown);
+      window.removeEventListener('keydown', this.onGlobalKeyDown);
     }
   }
 
-  private onCommandHistoryKeyDown = (event: KeyboardEvent) => {
-    if (!(event.ctrlKey || event.metaKey)) return
+  /** Global keyboard shortcuts: Escape re-arms select mode, Ctrl+Z / Ctrl+Y
+   *  (and Shift variants) drive the command history. Form fields are skipped. */
+  private onGlobalKeyDown = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement | null
     if (target?.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+    // Escape ends the active navigation tool (zoom / pan / orbit / ...) and
+    // re-arms select mode - the keyboard twin of the bottom bar Select button.
+    if (event.key === 'Escape') {
+      if (this.navTool !== 'select') {
+        event.preventDefault()
+        this.setNavTool('select')
+      }
+      return
+    }
+    if (!(event.ctrlKey || event.metaKey)) return
     const key = event.key.toLowerCase()
     const undo = key === 'z' && !event.shiftKey
     const redo = key === 'y' || (key === 'z' && event.shiftKey)
