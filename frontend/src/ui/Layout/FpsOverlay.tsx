@@ -1,5 +1,5 @@
 import { observer } from 'mobx-react-lite';
-import { Box, Button, Stack } from '@mui/material';
+import { Box, Button, LinearProgress, Stack } from '@mui/material';
 import { useRef, useState } from 'react';
 import { useModel } from '../../model/Context';
 import { UI } from '../Results/Components/ui';
@@ -93,7 +93,16 @@ const FpsOverlay = observer(() => {
       )}
       {(benchmark.running || benchmark.fixtureLoading || benchmark.resultRunning) && (
         <Box sx={{ color: '#fbbf24', mt: 0.5 }}>
-          {benchmark.fixtureLoading ? 'Loading fixture…' : benchmark.resultRunning ? 'Testing result textures…' : `${benchmark.phase} ${benchmark.progress}%`}
+          {benchmark.fixtureLoading ? (
+            <>
+              <LinearProgress
+                variant="determinate"
+                value={benchmark.fixtureProgress}
+                sx={{ mb: 0.5, height: 6, borderRadius: 3, '& .MuiLinearProgress-bar': { backgroundColor: '#fbbf24' } }}
+              />
+              Loading fixture · {benchmark.fixtureStage || 'Working'}… {benchmark.fixtureProgress}%
+            </>
+          ) : benchmark.resultRunning ? 'Testing result textures…' : `${benchmark.phase} ${benchmark.progress}%`}
         </Box>
       )}
       {model.solidPreparation.active && (

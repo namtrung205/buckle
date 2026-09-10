@@ -143,6 +143,15 @@ export default class ViewerBenchmark {
     this.fixture = info
   }
 
+  /** Fixture load feedback: 0–100 with the current pipeline stage label. */
+  fixtureProgress = 0
+  fixtureStage = ''
+
+  setFixtureProgress(value: number, stage?: string) {
+    this.fixtureProgress = Math.max(0, Math.min(100, Math.round(value)))
+    if (stage) this.fixtureStage = stage
+  }
+
   recordFrame(timestampMs: number, updateMs: number, renderSubmitMs: number) {
     const render = this.model.renderer.info.render
     this.mainRenderStats = {

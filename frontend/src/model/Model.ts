@@ -165,6 +165,8 @@ export class Model {
   // axes : Axes
   nodes : Node[]
   members : Member[]
+  /** Highest member `index` ever assigned — O(1) source for the next index. */
+  memberIndexHighWater = 0
   shells : Shell[] = []
   boundaryConditions : BoundaryCondition[] = []
   // lines : Line3D[]
@@ -1039,6 +1041,7 @@ export class Model {
     this.rootGizmoCanvas();
     this.nodes = []
     this.members = []
+    this.memberIndexHighWater = 0
     this.shells = []
     this.layer = 0
     this.legacyStructuralRoot.name = 'LegacyStructuralRoot'
@@ -1066,6 +1069,7 @@ export class Model {
       fpsFrameCount: false,
       fpsAccumMs: false,
       fpsLastFrameTime: false,
+      memberIndexHighWater: false,
       performanceBenchmark: false,
       structuralDocument: false,
       commandGateway: false,
@@ -1140,11 +1144,20 @@ export class Model {
     if (this.performanceBenchmark.running) throw new Error('Wait for the active benchmark to finish')
     this.performanceBenchmark.fixtureLoading = true
     this.performanceBenchmark.setFixture(null)
+    this.performanceBenchmark.setFixtureProgress(0, 'Generating fixture')
     try {
+      // Yield between the long synchronous steps so the HUD can actually paint
+      // the progress bar — no rendering happens while main-thread work runs.
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const startedAt = performance.now()
       const fixture = generateStructuralBenchmarkFixture({ beamCount, seed })
+      this.performanceBenchmark.setFixtureProgress(10, 'Committing document')
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       buildModelFromJson(this, fixture)
+      // The SceneDB upload is scheduled from the commit; give it two frames.
+      this.performanceBenchmark.setFixtureProgress(85, 'Uploading scene buffers')
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      this.performanceBenchmark.setFixtureProgress(100)
       const loadMs = performance.now() - startedAt
       this.performanceBenchmark.setFixture({
         kind: fixture.metadata.fixture,

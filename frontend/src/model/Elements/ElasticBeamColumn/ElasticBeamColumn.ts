@@ -41,7 +41,13 @@ class ElasticBeamColumn {
   constructor(model: Model, label: string, nodes: Node[], section: Section, id?: number) {
     this.model = model
     this.id = id ? id : Math.floor(Math.random() * 0x7FFFFFFF)
-    this.index = this.model.members.length === 0 ? 1 : Math.max(...this.model.members.map(member => member.index)) + 1
+    // O(1) next index from the model's high-water mark. The previous
+    // `Math.max(...this.model.members.map(...))` spread was O(n) per created
+    // member (O(n²) per bulk import) and froze the main thread for tens of
+    // seconds on 100k-member loads. Numbering stays unique; it restarts at 1
+    // only when the projection explicitly resets the high-water mark.
+    this.index = this.model.members.length === 0 ? 1 : this.model.memberIndexHighWater + 1
+    this.model.memberIndexHighWater = Math.max(this.model.memberIndexHighWater, this.index)
 
     this.nodes = nodes
     this.label = label ? label : `Member ${this.index}`
@@ -372,7 +378,6 @@ class ElasticBeamColumn {
   iSection(section: ISection | IPNSection, L: number): THREE.ExtrudeGeometry {
     const shape = new THREE.Shape();
     const { depth, width, tw, tf } = section
-    const r = (section as ISection).r ?? 0
 
     // Half-dimensions
     const H = depth / 2, B = width / 2, TW = tw / 2, TF = tf;

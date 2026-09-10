@@ -24,8 +24,28 @@ const legacySection = (document: StructuralDocument, id: number): Section => {
  * Incrementally mirrors a canonical command commit into legacy semantic objects.
  * This is a temporary Goal-13 migration projection: the document remains the
  * authority, while Solid Extrude and pre-command property panels keep working.
+ *
+ * Complexity contract: every id lookup goes through Map indexes and every
+ * removal is one filter pass per collection. A naive `find`/`findIndex` per
+ * entity is O(n²) across a bulk commit and froze the main thread for tens of
+ * seconds on 100k-member imports.
  */
 export const applyStructuralChangeToLegacy = (
+  model: Model,
+  document: StructuralDocument,
+  change: StructuralChangeSet,
+) => {
+  // One action for the whole projection: MobX batches the notifications of the
+  // thousands of array mutations instead of scheduling reactions per push.
+  runInAction(() => projectStructuralChanges(model, document, change))
+}
+
+/**
+ * Projection body (see the complexity contract above). Declared after the
+ * entry point but only ever invoked from inside it, so the reference is
+ * always initialized by call time.
+ */
+const projectStructuralChanges = (
   model: Model,
   document: StructuralDocument,
   change: StructuralChangeSet,
@@ -35,57 +55,77 @@ export const applyStructuralChangeToLegacy = (
   // Remove dependants before their topology. Domain cascade has already been
   // validated and committed in StructuralDocument, so only projection cleanup
   // happens here.
-  for (const id of changes.loads.deleted) {
-    const index = model.loads.findIndex(item => item.id === id)
-    if (index >= 0) {
-      model.loads[index].dispose()
-      model.loads.splice(index, 1)
-    }
+  const deletedLoadIds = new Set(changes.loads.deleted)
+  if (deletedLoadIds.size) {
+    model.loads = model.loads.filter(load => {
+      if (!deletedLoadIds.has(load.id)) return true
+      load.dispose()
+      return false
+    })
   }
-  for (const id of changes.boundaryConditions.deleted) {
-    model.boundaryConditions.find(item => item.id === id)?.delete()
+  const deletedBoundaryConditionIds = new Set(changes.boundaryConditions.deleted)
+  if (deletedBoundaryConditionIds.size) {
+    const boundaryConditionsById = new Map(model.boundaryConditions.map(item => [item.id, item]))
+    for (const id of deletedBoundaryConditionIds) boundaryConditionsById.get(id)?.delete()
   }
-  for (const id of changes.shells.deleted) {
-    const index = model.shells.findIndex(item => item.id === id)
-    if (index >= 0) {
-      model.shells[index].dispose()
-      model.shells.splice(index, 1)
-    }
+  const deletedShellIds = new Set(changes.shells.deleted)
+  if (deletedShellIds.size) {
+    model.shells = model.shells.filter(shell => {
+      if (!deletedShellIds.has(shell.id)) return true
+      shell.dispose()
+      return false
+    })
   }
-  for (const id of changes.members.deleted) {
-    const index = model.members.findIndex(item => item.id === id)
-    if (index >= 0) {
-      model.members[index].disposeProjection()
-      model.members.splice(index, 1)
-    }
+
+  // Members to remove: explicit deletes plus everything that must be rebuilt
+  // (topology changed, its section changed or its material changed).
+  const rebuildMemberIds = new Set([...changes.members.deleted, ...changes.members.created, ...changes.members.updated])
+  for (const nodeId of changes.nodes.updated) {
+    for (const memberId of document.memberIdsByNodeId.get(nodeId) ?? []) rebuildMemberIds.add(memberId)
   }
-  for (const id of changes.nodes.deleted) {
-    const index = model.nodes.findIndex(item => item.id === id)
-    if (index >= 0) {
-      model.nodes[index].dispose()
-      model.nodes.splice(index, 1)
-    }
+  for (const sectionId of [...changes.sections.updated, ...changes.sections.created]) {
+    for (const memberId of document.memberIdsBySectionId.get(sectionId) ?? []) rebuildMemberIds.add(memberId)
+  }
+  if (changes.materials.updated.length) for (const id of document.members.keys()) rebuildMemberIds.add(id)
+  if (rebuildMemberIds.size) {
+    model.members = model.members.filter(member => {
+      if (!rebuildMemberIds.has(member.id)) return true
+      member.disposeProjection()
+      return false
+    })
+    if (model.members.length === 0) model.memberIndexHighWater = 0
+  }
+
+  const deletedNodeIds = new Set(changes.nodes.deleted)
+  if (deletedNodeIds.size) {
+    model.nodes = model.nodes.filter(node => {
+      if (!deletedNodeIds.has(node.id)) return true
+      node.dispose()
+      return false
+    })
   }
 
   if (changes.materials.created.length || changes.materials.updated.length || changes.materials.deleted.length) {
-    runInAction(() => { model.materials = [...document.materials.values()].map(item => structuredClone(item) as Material) })
+    model.materials = [...document.materials.values()].map(item => structuredClone(item) as Material)
   }
   if (
     changes.sections.created.length || changes.sections.updated.length || changes.sections.deleted.length ||
     changes.materials.created.length || changes.materials.updated.length || changes.materials.deleted.length
   ) {
-    runInAction(() => { model.sections = [...document.sections.keys()].map(id => legacySection(document, id)) })
+    model.sections = [...document.sections.keys()].map(id => legacySection(document, id))
   }
 
+  const nodesById = new Map(model.nodes.map(node => [node.id, node]))
   for (const id of [...changes.nodes.created, ...changes.nodes.updated]) {
     const record = document.nodes.get(id)!
     const position = jsonToThree(record.position[0], record.position[1], record.position[2])
-    let node = model.nodes.find(item => item.id === id)
+    let node = nodesById.get(id)
     if (!node) {
       node = new Node(position, record.name, id)
       node.model = model
       node.create()
       model.nodes.push(node)
+      nodesById.set(id, node)
     } else {
       node.x = position.x
       node.y = position.y
@@ -95,45 +135,29 @@ export const applyStructuralChangeToLegacy = (
     }
   }
 
-  const rebuildMemberIds = new Set([...changes.members.created, ...changes.members.updated])
-  for (const nodeId of changes.nodes.updated) {
-    for (const memberId of document.memberIdsByNodeId.get(nodeId) ?? []) rebuildMemberIds.add(memberId)
-  }
-  for (const sectionId of [...changes.sections.updated, ...changes.sections.created]) {
-    for (const memberId of document.memberIdsBySectionId.get(sectionId) ?? []) rebuildMemberIds.add(memberId)
-  }
-  if (changes.materials.updated.length) for (const id of document.members.keys()) rebuildMemberIds.add(id)
-
-  for (const id of rebuildMemberIds) {
-    const existing = model.members.findIndex(item => item.id === id)
-    if (existing >= 0) {
-      model.members[existing].disposeProjection()
-      model.members.splice(existing, 1)
+  if (rebuildMemberIds.size) {
+    const sectionsById = new Map(model.sections.map(section => [section.id, section]))
+    for (const id of rebuildMemberIds) {
+      const record = document.members.get(id)
+      if (!record) continue
+      const nodeI = nodesById.get(record.nodeI)
+      const nodeJ = nodesById.get(record.nodeJ)
+      const section = sectionsById.get(record.sectionId)
+      if (!nodeI || !nodeJ || !section) continue
+      const member = new ElasticBeamColumn(model, record.label ?? `Member ${id}`, [nodeI, nodeJ], section, id)
+      member.gamma = record.gammaDegrees ?? 0
+      member.release = record.release ?? ''
+      if (record.referenceAxis) {
+        member.vecxz = jsonToThree(record.referenceAxis[0], record.referenceAxis[1], record.referenceAxis[2])
+      }
+      member.create()
+      model.members.push(member)
     }
-    const record = document.members.get(id)
-    if (!record) continue
-    const nodeI = model.nodes.find(node => node.id === record.nodeI)
-    const nodeJ = model.nodes.find(node => node.id === record.nodeJ)
-    const section = model.sections.find(item => item.id === record.sectionId)
-    if (!nodeI || !nodeJ || !section) continue
-    const member = new ElasticBeamColumn(model, record.label ?? `Member ${id}`, [nodeI, nodeJ], section, id)
-    member.gamma = record.gammaDegrees ?? 0
-    member.release = record.release ?? ''
-    if (record.referenceAxis) {
-      member.vecxz = jsonToThree(record.referenceAxis[0], record.referenceAxis[1], record.referenceAxis[2])
-    }
-    member.create()
-    model.members.push(member)
   }
 
   for (const id of [...changes.shells.created, ...changes.shells.updated]) {
-    const existing = model.shells.findIndex(item => item.id === id)
-    if (existing >= 0) {
-      model.shells[existing].dispose()
-      model.shells.splice(existing, 1)
-    }
     const record = document.shells.get(id)!
-    const nodes = record.nodeIds.map(nodeId => model.nodes.find(node => node.id === nodeId)!)
+    const nodes = record.nodeIds.map(nodeId => nodesById.get(nodeId)!)
     const shell = new Shell(model, record.name ?? `Shell-${id}`, nodes, record.thickness, legacyMaterial(document, record.materialId), id)
     shell.create()
     model.shells.push(shell)
