@@ -13,6 +13,7 @@ import {
   Layers as LayersIcon,
   Height as HeightIcon,
   CellTower as CellTowerIcon,
+  ZoomIn as ZoomInIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import Settings from '../Settings/Settings';
@@ -156,6 +157,10 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   // model is null on the first render (Viewer provides it only after Model.getInstance() resolves)
   const isLocked = model?.isLocked ?? false;
   const hasResults = !!model?.output;
+  // At least one node / member / shell is selected in the viewport.
+  const hasSelection = ((model?.selectedNodeIds.length ?? 0) +
+    (model?.selectedMemberIds.length ?? 0) +
+    (model?.selectedShellIds.length ?? 0)) > 0;
   // Use model-level MobX state so ContextMenu and TopBar share the same dialog state
   const open = (dialog: string) => {
     const ok = model?.openDialog(dialog) ?? false;
@@ -516,6 +521,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
             <RibbonPanel label="Modify">
               <RibbonButton title="Draw" label="Draw" onClick={() => open('draw')} disabled={isLocked} iconImage={{ src: '/pencil.png', alt: 'Draw', size: 15 }} />
               <RibbonButton title="Move" label="Move" onClick={() => open('move')} disabled={isLocked} icon={<MoveIcon sx={{ fontSize: 15 }} />} />
+              <RibbonButton title="Zoom to selected entities" label="Zoom Sel" onClick={() => model?.zoomToSelected()} disabled={!hasSelection} icon={<ZoomInIcon sx={{ fontSize: 15 }} />} />
             </RibbonPanel>
             <RibbonPanel label="Generate">
               <RibbonButton title="Warehouse generator" label="Warehouse" onClick={() => open('warehouseWizard')} disabled={isLocked} iconImage={{ src: '/warehouse.png', alt: 'Generator', size: 15 }} />

@@ -7,6 +7,7 @@ import {
   Edit as EditIcon,
   ContentCopy as CopyIcon,
   VisibilityOff as HideIcon,
+  ZoomIn as ZoomIcon,
 } from '@mui/icons-material';
 import { useModel } from '../../model/Context';
 import { observer } from 'mobx-react-lite';
@@ -60,6 +61,7 @@ const ContextMenu = observer(() => {
         item('Move node(s)', <MoveIcon fontSize="small" />, () => model.openDialog('move')),
         item('Add nodal load', <LoadIcon fontSize="small" />, () => model.addNodalLoadToNodes(nodeIds)),
         item('Add support', <SupportIcon fontSize="small" />, () => model.addSupportToNodes(nodeIds)),
+        item('Zoom to selected', <ZoomIcon fontSize="small" />, () => model.zoomToSelected()),
         item('Delete node(s)', <DeleteIcon fontSize="small" />, model.deleteSelectedNodes, true),
       ]}
 
@@ -68,11 +70,13 @@ const ContextMenu = observer(() => {
         item('Add member load', <LoadIcon fontSize="small" />, () => model.addLinearLoadToMembers(memberIds)),
         item('Copy element(s)', <CopyIcon fontSize="small" />, () => model.openDialog('copy')),
         item('Hide element(s)', <HideIcon fontSize="small" />, model.hideSelectedMembers),
+        item('Zoom fit selected', <ZoomIcon fontSize="small" />, () => model.zoomToSelected()),
         item('Delete element(s)', <DeleteIcon fontSize="small" />, model.deleteSelectedMembers, true),
       ]}
 
       {model.selectionMode === 'shell2d' && shellIds.length > 0 && [
         item('Add pressure load', <LoadIcon fontSize="small" />, () => model.addPressureLoadToShells(shellIds)),
+        item('Zoom fit selected', <ZoomIcon fontSize="small" />, () => model.zoomToSelected()),
         item('Delete shell(s)', <DeleteIcon fontSize="small" />, model.deleteSelectedShells, true),
       ]}
     </Menu>

@@ -1397,11 +1397,15 @@ export class Model {
     })
   }
 
-  /** Frame the camera to a set of members/shells (union of world bounds). */
+  /** Frame the camera to a set of nodes/members/shells (union of world bounds). */
   zoomToRefs = (refs: readonly EntityReference[]) => {
     const box = new THREE.Box3()
     for (const ref of refs) {
-      if (ref.collection === 'members') {
+      if (ref.collection === 'nodes') {
+        const node = this.nodes.find(n => n.id === ref.id)
+        if (!node) continue
+        box.expandByPoint(new THREE.Vector3(node.x, node.y, node.z))
+      } else if (ref.collection === 'members') {
         const member = this.members.find(m => m.id === ref.id)
         if (!member) continue
         for (const endpoint of member.nodes) box.expandByPoint(new THREE.Vector3(endpoint.x, endpoint.y, endpoint.z))
@@ -1412,6 +1416,17 @@ export class Model {
       }
     }
     if (!box.isEmpty()) this.camera.fitBoxToView(box)
+  }
+
+  /** Zoom the camera to the current viewport selection (nodes/members/shells). */
+  zoomToSelected = () => {
+    const refs: EntityReference[] = [
+      ...[...this.selectedNodeIds].map(id => ({ collection: 'nodes' as const, id })),
+      ...[...this.selectedMemberIds].map(id => ({ collection: 'members' as const, id })),
+      ...[...this.selectedShellIds].map(id => ({ collection: 'shells' as const, id })),
+    ]
+    if (!refs.length) return
+    this.zoomToRefs(refs)
   }
 
   /** Whether the entity ref (members/shells) is currently hidden in the
