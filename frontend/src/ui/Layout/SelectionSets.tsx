@@ -47,6 +47,9 @@ const SelectionSets = observer(({ disabled = false }: SelectionSetsProps) => {
   const [pending, setPending] = useState<PendingCreate>(null);
   const [draftName, setDraftName] = useState('');
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+  /** Drag & drop: move a folder/set under another folder (or to the root). */
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dragOverId, setDragOverId] = useState<number | null>(null);
 
   // Keep assign buttons reactive to viewport member/shell picks.
   void model.workspaceSelectionRevision;
@@ -84,6 +87,25 @@ const SelectionSets = observer(({ disabled = false }: SelectionSetsProps) => {
     setDraftName('');
   };
 
+  /** True when `candidateId` is `id` itself or lives anywhere inside its subtree
+   *  (dropping there would create a cycle the document would reject). */
+  const isSelfOrDescendant = (id: number, candidateId: number): boolean => {
+    if (id === candidateId) return true;
+    const visit = (parentId: number): boolean =>
+      model.selectionSetChildren(parentId).some(
+        child => child.id === candidateId || (child.kind === 'folder' && visit(child.id)),
+      );
+    return visit(id);
+  };
+
+  /** Re-parent a node via drag & drop (no-op when the parent didn't change). */
+  const moveNode = (id: number, parentId: number | null) => {
+    if (parentId !== null && isSelfOrDescendant(id, parentId)) return;
+    const current = model.structuralDocument.selectionSets.get(id);
+    if (!current || current.parentId === parentId) return;
+    model.updateSelectionSet(id, { parentId });
+  };
+
   const nodeProps = {
     disabled,
     pending,
@@ -94,6 +116,11 @@ const SelectionSets = observer(({ disabled = false }: SelectionSetsProps) => {
     beginCreate,
     assignableCount,
     openContextMenu,
+    dragId,
+    dragOverId,
+    setDragId,
+    setDragOverId,
+    moveNode,
   };
 
   return (
@@ -144,14 +171,31 @@ const SelectionSets = observer(({ disabled = false }: SelectionSetsProps) => {
         </Box>
       )}
 
-      {roots.map(node => (
-        <SelectionSetNode
-          key={node.id}
-          node={node}
-          depth={0}
-          {...nodeProps}
-        />
-      ))}
+      <Box
+        flex={1}
+        minHeight={24}
+        onDragOver={(e) => {
+          if (dragId === null) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          setDragOverId(null);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (dragId !== null) moveNode(dragId, null);
+          setDragId(null);
+          setDragOverId(null);
+        }}
+      >
+        {roots.map(node => (
+          <SelectionSetNode
+            key={node.id}
+            node={node}
+            depth={0}
+            {...nodeProps}
+          />
+        ))}
+      </Box>
 
       {/* Floating context menu (right-click on folder / set / entity rows) */}
       <Menu
@@ -197,7 +241,7 @@ interface CreateRowProps {
 }
 
 const CreateRow = ({ kind, value, onChange, onConfirm, onCancel, depth }: CreateRowProps) => (
-  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 2, pl: 6 + depth * 1.5, py: 0.5 }}>
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 2, pl: 6 + depth * 1.5, py: 0.75 }}>
     {kind === 'folder'
       ? <FolderIcon sx={{ fontSize: 16, color: colors.accentSoft }} />
       : <SelectionSetIcon sx={{ fontSize: 16, color: colors.secondary }} />}
@@ -232,6 +276,11 @@ interface SelectionSetNodeProps {
   beginCreate: (kind: SelectionSetKind, parentId: number | null) => void;
   assignableCount: number;
   openContextMenu: (event: React.MouseEvent, items: ContextMenuItem[]) => void;
+  dragId: number | null;
+  dragOverId: number | null;
+  setDragId: React.Dispatch<React.SetStateAction<number | null>>;
+  setDragOverId: React.Dispatch<React.SetStateAction<number | null>>;
+  moveNode: (id: number, parentId: number | null) => void;
 }
 
 const SelectionSetNode = observer(({
@@ -246,6 +295,11 @@ const SelectionSetNode = observer(({
   beginCreate,
   assignableCount,
   openContextMenu,
+  dragId,
+  dragOverId,
+  setDragId,
+  setDragOverId,
+  moveNode,
 }: SelectionSetNodeProps) => {
   const model = useModel();
   const [expanded, setExpanded] = useState(true);
@@ -257,6 +311,13 @@ const SelectionSetNode = observer(({
   const children = isFolder ? model.selectionSetChildren(node.id) : [];
   const expandable = isFolder || node.entityRefs.length > 0;
   const showChildren = expandable && (expanded || (pending?.parentId === node.id));
+
+  /** Pass-through props (drag state + handlers + shared UI state) for child nodes. */
+  const nodeDragProps = {
+    disabled, pending, draftName, onDraftNameChange, onConfirmCreate, onCancelCreate,
+    beginCreate, assignableCount, openContextMenu,
+    dragId, dragOverId, setDragId, setDragOverId, moveNode,
+  };
 
   const commitRename = () => {
     const name = nameDraft.trim();
@@ -331,6 +392,29 @@ const SelectionSetNode = observer(({
     <Box>
       {/* Row */}
       <Box
+        draggable={!disabled && !renaming}
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = 'move';
+          // Firefox refuses to start a drag with an empty dataTransfer
+          e.dataTransfer.setData('text/plain', String(node.id));
+          setDragId(node.id);
+        }}
+        onDragEnd={() => { setDragId(null); setDragOverId(null); }}
+        onDragOver={(e) => {
+          if (dragId === null || dragId === node.id || !isFolder) return;
+          e.preventDefault(); // allow drop
+          e.stopPropagation(); // don't let the root drop-zone clear the highlight
+          e.dataTransfer.dropEffect = 'move';
+          setDragOverId(node.id);
+        }}
+        onDragLeave={() => setDragOverId(current => (current === node.id ? null : current))}
+        onDrop={(e) => {
+          e.preventDefault();
+          e.stopPropagation(); // don't let the root drop-zone move the node back to root
+          if (dragId !== null && isFolder) moveNode(dragId, node.id);
+          setDragId(null);
+          setDragOverId(null);
+        }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         onContextMenu={(event) => openContextMenu(event, nodeMenuItems())}
@@ -340,8 +424,11 @@ const SelectionSetNode = observer(({
           justifyContent: 'space-between',
           px: 2,
           pl: 6 + depth * 1.5,
-          py: 0.7,
+          py: 1,
           cursor: 'pointer',
+          backgroundColor: dragOverId === node.id ? 'rgba(74, 144, 226, 0.18)' : 'transparent',
+          outline: dragOverId === node.id ? `1px dashed ${colors.accent}` : 'none',
+          outlineOffset: '-1px',
           '&:hover': { backgroundColor: colors.hover },
         }}
       >
@@ -411,9 +498,8 @@ const SelectionSetNode = observer(({
             </Box>
           )}
         </Box>
-{/* Hover actions */}
-        {hovered && (
-          <Box sx={{ display: 'flex', gap: 0.25, flexShrink: 0 }}>
+{/* Hover actions (always mounted; hidden via visibility so the row doesn't jump) */}
+        <Box sx={{ display: 'flex', gap: 0.25, flexShrink: 0, visibility: hovered ? 'visible' : 'hidden' }}>
             {isFolder ? (
               <>
                 <Tooltip title="New selection set here">
@@ -481,7 +567,6 @@ const SelectionSetNode = observer(({
               <DeleteIcon sx={{ fontSize: 14 }} />
             </IconButton>
           </Box>
-        )}
       </Box>
 
       {/* Children: sub-folders/sets for folders, entity list for sets */}
@@ -502,15 +587,7 @@ const SelectionSetNode = observer(({
               key={child.id}
               node={child}
               depth={depth + 1}
-              disabled={disabled}
-              pending={pending}
-              draftName={draftName}
-              onDraftNameChange={onDraftNameChange}
-              onConfirmCreate={onConfirmCreate}
-              onCancelCreate={onCancelCreate}
-              beginCreate={beginCreate}
-              assignableCount={assignableCount}
-              openContextMenu={openContextMenu}
+              {...nodeDragProps}
             />
           ))}
           {!isFolder && node.entityRefs.map(ref => (
@@ -592,7 +669,7 @@ const SelectionSetEntityRow = ({ setId, entityRef: ref, depth, disabled, openCon
         justifyContent: 'space-between',
         px: 2,
         pl: 6 + (depth + 1) * 1.5,
-        py: 0.6,
+        py: 0.8,
         cursor: 'pointer',
         '&:hover': { backgroundColor: colors.hover },
       }}
@@ -616,7 +693,8 @@ const SelectionSetEntityRow = ({ setId, entityRef: ref, depth, disabled, openCon
           {label}
         </Typography>
       </Box>
-      {hovered && (
+      {/* Always mounted; hidden via visibility so the row doesn't shift on hover */}
+      <Box sx={{ visibility: hovered ? 'visible' : 'hidden' }}>
         <Tooltip title="Remove from set">
           <span>
             <IconButton
@@ -629,7 +707,7 @@ const SelectionSetEntityRow = ({ setId, entityRef: ref, depth, disabled, openCon
             </IconButton>
           </span>
         </Tooltip>
-      )}
+      </Box>
     </Box>
   );
 };
