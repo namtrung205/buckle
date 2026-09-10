@@ -1318,6 +1318,29 @@ export class Model {
     })
   }
 
+  /** Remove one entity (member/shell) from a set without touching the rest. */
+  removeEntityFromSelectionSet = (setId: number, ref: EntityReference) => {
+    const current = this.structuralDocument.selectionSets.get(setId)
+    if (!current || current.kind !== 'set') return
+    const key = `${ref.collection}:${ref.id}`
+    const remaining = current.entityRefs.filter(item => `${item.collection}:${item.id}` !== key)
+    if (remaining.length !== current.entityRefs.length) {
+      this.updateSelectionSet(setId, { entityRefs: remaining })
+    }
+  }
+
+  /** Select a single entity (member/shell) in the viewport — used by the
+   *  entity rows nested inside a selection-set node. */
+  selectEntity = (ref: EntityReference) => {
+    if (ref.collection !== 'members' && ref.collection !== 'shells') return
+    if (!this.structuralDocument[ref.collection].has(ref.id)) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { entities: [ref] },
+    })
+  }
+
   /** Execute one validated canonical command and refresh renderer projections. */
   executeCommand(command: CommandEnvelope, options: { allowDestructive?: boolean } = {}): CommandResult {
     return this.commandGateway.execute(command, this.commandContext(options.allowDestructive === true))

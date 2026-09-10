@@ -12,10 +12,13 @@ import {
   Delete as DeleteIcon,
   Check as ConfirmIcon,
   Close as CancelIcon,
+  Polyline as MemberIcon,
+  GridView as ShellIcon,
+  PlaylistRemove as RemoveFromSetIcon,
 } from '@mui/icons-material';
 import { colors, fontFamily } from '../../theme';
 import { useModel } from '../../model/Context';
-import type { SelectionSetKind, SelectionSetRecord } from '../../core/structural';
+import type { EntityReference, SelectionSetKind, SelectionSetRecord } from '../../core/structural';
 
 interface SelectionSetsProps {
   /** Disabled while the analysis results lock is active. */
@@ -194,7 +197,8 @@ const SelectionSetNode = observer(({
 
   const isFolder = node.kind === 'folder';
   const children = isFolder ? model.selectionSetChildren(node.id) : [];
-  const showChildren = expanded || (pending?.parentId === node.id);
+  const expandable = isFolder || node.entityRefs.length > 0;
+  const showChildren = expandable && (expanded || (pending?.parentId === node.id));
 
   const commitRename = () => {
     const name = nameDraft.trim();
@@ -229,8 +233,11 @@ const SelectionSetNode = observer(({
           onClick={() => { if (isFolder) setExpanded(prev => !prev); else model.selectFromSelectionSet(node.id); }}
           sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flex: 1 }}
         >
-          {isFolder ? (
-            <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 20 }}>
+          {expandable ? (
+            <Box
+              onClick={(e) => { e.stopPropagation(); setExpanded(prev => !prev); }}
+              sx={{ display: 'flex', alignItems: 'center', minWidth: 20, cursor: 'pointer' }}
+            >
               {showChildren
                 ? <ExpandMoreIcon sx={{ fontSize: 18, color: colors.textDim }} />
                 : <ChevronRightIcon sx={{ fontSize: 18, color: colors.textDim }} />}
@@ -358,10 +365,10 @@ const SelectionSetNode = observer(({
         )}
       </Box>
 
-      {/* Children (folders only) */}
-      {isFolder && showChildren && (
+      {/* Children: sub-folders/sets for folders, entity list for sets */}
+      {showChildren && (
         <>
-          {pending && pending.parentId === node.id && (
+          {isFolder && pending && pending.parentId === node.id && (
             <CreateRow
               kind={pending.kind}
               value={draftName}
@@ -371,7 +378,7 @@ const SelectionSetNode = observer(({
               depth={depth + 1}
             />
           )}
-          {children.map(child => (
+          {isFolder && children.map(child => (
             <SelectionSetNode
               key={child.id}
               node={child}
@@ -386,10 +393,92 @@ const SelectionSetNode = observer(({
               assignableCount={assignableCount}
             />
           ))}
+          {!isFolder && node.entityRefs.map(ref => (
+            <SelectionSetEntityRow
+              key={`${ref.collection}:${ref.id}`}
+              setId={node.id}
+              entityRef={ref}
+              depth={depth + 1}
+              disabled={disabled}
+            />
+          ))}
         </>
       )}
     </Box>
   );
 });
+
+interface SelectionSetEntityRowProps {
+  setId: number;
+  entityRef: EntityReference;
+  depth: number;
+  disabled: boolean;
+}
+
+/** Leaf row inside a selection set: a member or shell stored in the set.
+ *  Click selects it in the viewport; hover offers Remove-from-set. */
+const SelectionSetEntityRow = ({ setId, entityRef: ref, depth, disabled }: SelectionSetEntityRowProps) => {
+  const model = useModel();
+  const [hovered, setHovered] = useState(false);
+
+  const isMember = ref.collection === 'members';
+  const member = isMember ? model.structuralDocument.members.get(ref.id) : undefined;
+  const shell = !isMember ? model.structuralDocument.shells.get(ref.id) : undefined;
+  const label = isMember
+    ? (member?.label || `Member ${ref.id}`)
+    : (shell?.name || `Shell ${ref.id}`);
+
+  return (
+    <Box
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={() => model.selectEntity(ref)}
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        px: 2,
+        pl: 6 + (depth + 1) * 1.5,
+        py: 0.6,
+        cursor: 'pointer',
+        '&:hover': { backgroundColor: colors.hover },
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flex: 1 }}>
+        <Box sx={{ minWidth: 20 }} />
+        {isMember
+          ? <MemberIcon sx={{ fontSize: 16, color: colors.textDim }} />
+          : <ShellIcon sx={{ fontSize: 16, color: colors.textDim }} />}
+        <Typography
+          sx={{
+            fontSize: '0.7rem',
+            color: colors.textFaint,
+            fontFamily,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            flex: 1,
+          }}
+        >
+          {label}
+        </Typography>
+      </Box>
+      {hovered && (
+        <Tooltip title="Remove from set">
+          <span>
+            <IconButton
+              size="small"
+              disabled={disabled}
+              onClick={(e) => { e.stopPropagation(); model.removeEntityFromSelectionSet(setId, ref); }}
+              sx={{ padding: '1px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
+            >
+              <RemoveFromSetIcon sx={{ fontSize: 14 }} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      )}
+    </Box>
+  );
+};
 
 export default SelectionSets;
