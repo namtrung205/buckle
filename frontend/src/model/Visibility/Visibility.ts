@@ -9,7 +9,16 @@ class Visibility {
   members : boolean = true
   memberLabels : boolean = false
   sections : boolean = true
+  /** Load visibility master switch. When false nothing load-related renders:
+   *  the instanced arrow/batch hides AND the label stream skips load values
+   *  regardless of the two sub-flags below. */
   loads : boolean = true
+  /** Sub-toggle: load SYMBOLS (nodal/element arrows + distributed bands —
+   *  the GPU instanced batch). Only meaningful while `loads` is on. */
+  loadSymbols : boolean = true
+  /** Sub-toggle: load VALUES (numeric labels riding the GPU annotation
+   *  stream). Only meaningful while `loads` is on. */
+  loadValues : boolean = true
   // Startup defaults: structural axis grids and the level datum set stay
   // HIDDEN until enabled in Settings → Level. GridSystem / LevelVisual
   // read these flags when they are created, so the 3D view and this dialog
@@ -82,9 +91,24 @@ class Visibility {
 
   showOrHideLoads(visible : boolean){
     this.loads = visible
-    // Loads render through one instanced batch (3 draw calls total) - flip the
-    // whole group; the label stream gates load labels on this same flag.
+    // Master switch: flip the instanced batch (3 draw calls total) and gate
+    // the label stream; the sub-flags (loadSymbols / loadValues below) are
+    // irrelevant while this is off.
     this.model.loadGpuRenderer?.setVisible(visible)
+    this.model.syncGpuAnnotations()
+  }
+
+  /** Show/hide load symbol geometry only (arrows + bands). Load value labels
+   *  keep following loadValues - the two sub-toggles are independent. */
+  showOrHideLoadSymbols(visible : boolean){
+    this.loadSymbols = visible
+    this.model.loadGpuRenderer?.setVisible(visible && this.loads)
+    this.model.syncGpuAnnotations()
+  }
+
+  /** Show/hide numeric load value labels only (GPU annotation stream). */
+  showOrHideLoadValues(visible : boolean){
+    this.loadValues = visible
     this.model.syncGpuAnnotations()
   }
 

@@ -70,7 +70,9 @@ const Settings = ({open, onClose}) => {
     node: ['nodes', 'nodeLabels'],
     member: ['members', 'memberLabels', 'sections'],
     boundary: ['supports', 'releases'],
-    load: ['loads'],
+    // Load tab splits into master switch + the two sub-views so symbols and
+    // numeric values can be toggled independently.
+    load: ['loads', 'loadSymbols', 'loadValues'],
     level: ['grids', 'levels'],
   };
 
@@ -80,7 +82,9 @@ const Settings = ({open, onClose}) => {
     members : { label: 'Members', value: 'members'},
     memberLabels : { label: 'Member Labels', value: 'memberLabels', },
     sections: { label: 'Sections', value: 'sections' },
-    loads: { label: 'Loads', value: 'loads' },
+    loads: { label: 'Loads (master)', value: 'loads' },
+    loadSymbols: { label: 'Load Symbols (arrows/bands)', value: 'loadSymbols' },
+    loadValues: { label: 'Load Values (labels)', value: 'loadValues' },
     supports: { label: 'Supports', value: 'supports' },
     releases: { label: 'Releases', value: 'releases' },
     grids: { label: 'Grids', value: 'grids' },
@@ -114,6 +118,12 @@ const Settings = ({open, onClose}) => {
         break;
       case 'loads':
         model.visibility.showOrHideLoads(checked)
+        break;
+      case 'loadSymbols':
+        model.visibility.showOrHideLoadSymbols(checked)
+        break;
+      case 'loadValues':
+        model.visibility.showOrHideLoadValues(checked)
         break;
       case 'supports':
         model.visibility.showOrHideSupports(checked)

@@ -1718,7 +1718,7 @@ export class Model {
       ))
     }
     const labels: import('./Rendering/GpuAnnotations').WorldLabelCandidate[] = []
-    if (this.visibility?.loads ?? true) for (const load of this.loads) {
+    if ((this.visibility?.loads ?? true) && (this.visibility?.loadValues ?? true)) for (const load of this.loads) {
       for (const target of load.targets) {
         const node = this.nodes.find(item => item.id === target)
         const memberIndex = this.structuralSceneDB.memberIndexById.get(target)
