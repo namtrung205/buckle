@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  analysisTransportToDocumentSeedWithOrganizational,
   COMMAND_SCHEMA_VERSION,
   CommandGateway,
   StructuralDocument,
@@ -166,4 +167,50 @@ test('selection sets survive a snapshot round-trip but stay out of the analysis 
   const analysis = restored.createAnalysisSnapshot().model
   assert.equal('selectionSets' in analysis, false)
   assert.equal('groups' in analysis, false)
+})
+
+test('buckle project file round-trip restores every organizational collection the transport omits', () => {
+  const document = new StructuralDocument({
+    ...baseSeed(),
+    grids: [{ id: 70, name: 'Grid A', kind: 'orthogonal', data: {} }],
+    levels: [{ id: 80, name: 'Roof', elevation: 6 }],
+    groups: [{ id: 90, name: 'Bay 1', entityRefs: [{ collection: 'members', id: 1 }] }],
+    selectionSets: [
+      { id: 100, name: 'F', kind: 'folder', parentId: null, entityRefs: [] },
+      { id: 101, name: 'Columns', kind: 'set', parentId: 100, entityRefs: [{ collection: 'members', id: 1 }] },
+    ],
+    parametricObjects: [
+      { id: 110, kind: 'frame-line', version: 1, parameters: {}, ownedEntityRefs: [], generatorVersion: 'test' },
+    ],
+  })
+
+  // Save halves: the backend-compatible transport plus the organizational slice.
+  const analysis = document.createAnalysisSnapshot().model
+  const saved = document.getSnapshot()
+  const organizational = {
+    selectionSets: saved.selectionSets,
+    groups: saved.groups,
+    parametricObjects: saved.parametricObjects,
+    grids: saved.grids,
+    levels: saved.levels,
+  }
+  for (const key of ['selectionSets', 'groups', 'parametricObjects', 'grids', 'levels']) {
+    assert.equal(key in analysis, false, `analysis transport must omit ${key}`)
+  }
+
+  // Load: rebuild the full document from the two halves. (The transport
+  // round-trip normalizes optional member fields like gamma/release, so we
+  // assert content — not the full snapshot hash.)
+  const restored = new StructuralDocument(
+    analysisTransportToDocumentSeedWithOrganizational(analysis, organizational),
+  )
+  assert.equal(restored.nodes.size, document.nodes.size)
+  assert.equal(restored.members.size, document.members.size)
+  assert.equal(restored.selectionSets.size, 2)
+  assert.equal(restored.selectionSets.get(101)?.parentId, 100)
+  assert.deepEqual(restored.selectionSets.get(101)?.entityRefs, [{ collection: 'members', id: 1 }])
+  assert.equal(restored.groups.get(90)?.name, 'Bay 1')
+  assert.equal(restored.grids.get(70)?.name, 'Grid A')
+  assert.equal(restored.levels.get(80)?.elevation, 6)
+  assert.equal(restored.parametricObjects.get(110)?.kind, 'frame-line')
 })

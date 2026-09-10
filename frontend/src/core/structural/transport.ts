@@ -1,8 +1,26 @@
 import type {
   AnalysisTransportInput,
+  GroupRecord,
+  GridRecord,
+  LevelRecord,
   MaterialRecord,
+  ParametricObjectRecord,
+  SelectionSetRecord,
   StructuralDocumentSeed,
 } from './types.ts'
+
+/** Organizational document collections deliberately omitted from the analysis
+ *  transport (they carry no stiffness/topology information). Buckle persists
+ *  them alongside the transport in the project file so a save/open round-trip
+ *  restores the whole workspace — selection sets, groups, parametric objects,
+ *  grids and levels — not just the analyzable geometry. */
+export type OrganizationalDocumentSeed = {
+  selectionSets?: readonly SelectionSetRecord[]
+  groups?: readonly GroupRecord[]
+  parametricObjects?: readonly ParametricObjectRecord[]
+  grids?: readonly GridRecord[]
+  levels?: readonly LevelRecord[]
+}
 
 /** Normalize the denormalized v1 API model into stable-ID document records. */
 export const analysisTransportToDocumentSeed = (model: AnalysisTransportInput): StructuralDocumentSeed => {
@@ -59,4 +77,20 @@ export const analysisTransportToDocumentSeed = (model: AnalysisTransportInput): 
     })),
     metadata,
   }
+}
+
+/** Same as `analysisTransportToDocumentSeed`, then merges the organizational
+ *  document collections preserved by Buckle project files. */
+export const analysisTransportToDocumentSeedWithOrganizational = (
+  model: AnalysisTransportInput,
+  organizational?: OrganizationalDocumentSeed,
+): StructuralDocumentSeed => {
+  const seed = analysisTransportToDocumentSeed(model)
+  if (!organizational) return seed
+  if (organizational.groups) seed.groups = [...organizational.groups]
+  if (organizational.parametricObjects) seed.parametricObjects = [...organizational.parametricObjects]
+  if (organizational.selectionSets) seed.selectionSets = [...organizational.selectionSets]
+  if (organizational.grids) seed.grids = [...organizational.grids]
+  if (organizational.levels) seed.levels = [...organizational.levels]
+  return seed
 }

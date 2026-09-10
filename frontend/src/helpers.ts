@@ -11,7 +11,8 @@ import Model from './model/Model';
 import { threeToJson, jsonToThree } from './utils/axis';
 import { runInAction } from 'mobx';
 import type { StructuralModelDto } from './contracts/structuralModel';
-import { analysisTransportToDocumentSeed, type AnalysisTransportInput } from './core/structural';
+import { isBuckleProjectFile, PROJECT_FILE_KIND, PROJECT_FILE_VERSION, type BuckleProjectFile } from './contracts/projectFile';
+import { analysisTransportToDocumentSeed, analysisTransportToDocumentSeedWithOrganizational, type AnalysisTransportInput } from './core/structural';
 
 /**
  * Export the model to the shared JSON schema.
@@ -34,13 +35,44 @@ export const exportModelJson = (model: Model) => {
 };
 
 /**
+ * Export the model as a full Buckle project file: the backend-compatible
+ * analysis transport plus the organizational document collections (selection
+ * sets, groups, parametric objects, grids, levels) that the transport
+ * deliberately omits, so a save/open round-trip restores the whole workspace.
+ */
+export const exportProjectJson = (model: Model): BuckleProjectFile => {
+  const transport = structuredClone(model.createAnalysisSnapshot().model) as unknown as StructuralModelDto;
+  const snapshot = model.structuralDocument.getSnapshot();
+  return {
+    kind: PROJECT_FILE_KIND,
+    version: PROJECT_FILE_VERSION,
+    model: transport,
+    organizational: {
+      selectionSets: snapshot.selectionSets,
+      groups: snapshot.groups,
+      parametricObjects: snapshot.parametricObjects,
+      grids: snapshot.grids,
+      levels: snapshot.levels,
+    },
+  };
+};
+
+/**
  * Build the Three.js scene from a Z-up JSON payload (the shared schema).
  * Converts nodes, member vecxz, boundary conditions and load values from the
  * Z-up engineering frame into the three.js Y-up scene frame. Created shells
  * too when the payload provides them.
  */
-export const buildModelFromJson = (model: Model, input: StructuralModelDto) => {
-  const document = analysisTransportToDocumentSeed(input as unknown as AnalysisTransportInput)
+export const buildModelFromJson = (model: Model, input: StructuralModelDto | BuckleProjectFile) => {
+  // Buckle project files carry the organizational collections (selection sets,
+  // groups, parametric objects, grids, levels) under a separate top-level key;
+  // plain backend transport JSON keeps working unchanged.
+  const document = isBuckleProjectFile(input)
+    ? analysisTransportToDocumentSeedWithOrganizational(
+        input.model as unknown as AnalysisTransportInput,
+        input.organizational,
+      )
+    : analysisTransportToDocumentSeed(input as unknown as AnalysisTransportInput)
   model.executeCommand({
     commandId: crypto.randomUUID(),
     type: 'ImportModel',

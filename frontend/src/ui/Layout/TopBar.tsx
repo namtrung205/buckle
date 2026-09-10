@@ -27,7 +27,7 @@ import { runInAction } from 'mobx';
 import Node from '../../model/Elements/Node/Node';
 import ElasticBeamColumnClass from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import Shell from '../../model/Elements/Shell/Shell';
-import { exportModelJson, buildModelFromJson } from '../../helpers';
+import { exportProjectJson, buildModelFromJson } from '../../helpers';
 import * as THREE from 'three';
 import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
@@ -310,10 +310,12 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   };
 
   const download = () => {
-    // Export through the single source of truth: converts the three.js (Y-up)
-    // scene to the Z-up JSON/OpenSees schema at this boundary only. The file
-    // can be re-uploaded (Z-up -> three.js) or sent straight to the backend.
-    const modelData = exportModelJson(model);
+    // Export the full Buckle project: the Z-up JSON/OpenSees analysis transport
+    // plus the organizational document collections (selection sets, groups,
+    // parametric objects, grids, levels) that the transport omits. The saved
+    // file can be re-opened unchanged or sent straight to the backend for
+    // analysis (the transport subset is `model`).
+    const modelData = exportProjectJson(model);
 
     const dataStr = JSON.stringify(modelData, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
@@ -321,7 +323,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `fem-model-${new Date().toISOString().split('T')[0]}.json`;
+    link.download = `buckle-project-${new Date().toISOString().split('T')[0]}.json`;
     
     document.body.appendChild(link);
     link.click();
