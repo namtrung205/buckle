@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Typography,
@@ -155,6 +155,9 @@ const Settings = ({open, onClose}) => {
       fullWidth={false}
       draggable
       title='Settings'
+      // Fixed frame: size never changes when switching tabs — content that
+      // overflows scrolls inside the body instead of resizing the dialog.
+      PaperProps={{ sx: { width: 440, height: 500, maxWidth: 'calc(100vw - 32px)' } }}
     >
       <Tabs
         value={tab}

@@ -66,6 +66,15 @@ The UI uses Material-UI (MUI) components with a dark theme and is organized into
 
 Components access the model via the `useModel()` or `useAppContext()` hooks defined in `src/model/Context.ts`.
 
+### Dialog & Panel Sizing Rules (UI — mandatory)
+
+Apply to every dialog / floating panel, including the shared `src/components/Dialog/Dialog.tsx`:
+
+- **Fixed dimensions.** Give the dialog an explicit fixed `width` and `height` (via `PaperProps.sx`, e.g. `width: 440, height: 500`) instead of letting it auto-size to its content. Cap with `maxWidth: 'calc(100vw - 32px)'` (and `maxHeight` if needed) so it still fits small screens.
+- **Scroll, don't grow.** Content taller/wider than the fixed frame must scroll *inside* the body (`DialogContent` already has `overflowY: 'auto'`). Never let the dialog grow or shrink with its content.
+- **Stable size across state changes.** Switching tabs, toggling checkboxes, expanding sections, or validation messages must NOT change the dialog's size — that causes a jarring "jump". Size the frame for the largest tab; leave the surplus as empty space on smaller tabs.
+- The shared `Dialog` component merges caller `PaperProps.sx` over its defaults, so always pass size overrides there rather than bypassing the component.
+
 
 ### Import/Export System
 
