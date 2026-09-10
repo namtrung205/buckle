@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { observer } from 'mobx-react-lite';
-import { Box, Typography, IconButton, TextField, Button, Tooltip } from '@mui/material';
+import { Box, Typography, IconButton, TextField, Button, Tooltip, Menu, MenuItem, ListItemIcon, ListItemText } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
   ChevronRight as ChevronRightIcon,
@@ -15,6 +15,11 @@ import {
   Polyline as MemberIcon,
   GridView as ShellIcon,
   PlaylistRemove as RemoveFromSetIcon,
+  Visibility as ShowIcon,
+  VisibilityOff as HideIcon,
+  CenterFocusStrong as IsolateIcon,
+  ZoomIn as ZoomIcon,
+  SelectAll as SelectAllIcon,
 } from '@mui/icons-material';
 import { colors, fontFamily } from '../../theme';
 import { useModel } from '../../model/Context';
@@ -27,6 +32,13 @@ interface SelectionSetsProps {
 
 type PendingCreate = { kind: SelectionSetKind; parentId: number | null } | null;
 
+export type ContextMenuItem = {
+  label: string;
+  icon: React.ReactNode;
+  action: () => void;
+  danger?: boolean;
+};
+
 /** Navisworks-style selection-set tree: folders and leaf sets nested without a
  *  depth limit. Only members and shells live inside a set (enforced by the
  *  canonical StructuralDocument validation). */
@@ -34,6 +46,7 @@ const SelectionSets = observer(({ disabled = false }: SelectionSetsProps) => {
   const model = useModel();
   const [pending, setPending] = useState<PendingCreate>(null);
   const [draftName, setDraftName] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
 
   // Keep assign buttons reactive to viewport member/shell picks.
   void model.workspaceSelectionRevision;
@@ -43,6 +56,16 @@ const SelectionSets = observer(({ disabled = false }: SelectionSetsProps) => {
   const roots = model.selectionSetChildren(null);
 
   const give = (value: string) => setDraftName(value);
+
+  /** Open the floating context menu at the pointer (stopPropagation so the row
+   *  click handlers don't fire on right-click). */
+  const openContextMenu = (event: React.MouseEvent, items: ContextMenuItem[]) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ x: event.clientX, y: event.clientY, items });
+  };
+
+  const closeContextMenu = () => setContextMenu(null);
 
   const beginCreate = (kind: SelectionSetKind, parentId: number | null) => {
     setPending({ kind, parentId });
@@ -70,6 +93,7 @@ const SelectionSets = observer(({ disabled = false }: SelectionSetsProps) => {
     onCancelCreate: cancelCreate,
     beginCreate,
     assignableCount,
+    openContextMenu,
   };
 
   return (
@@ -128,6 +152,38 @@ const SelectionSets = observer(({ disabled = false }: SelectionSetsProps) => {
           {...nodeProps}
         />
       ))}
+
+      {/* Floating context menu (right-click on folder / set / entity rows) */}
+      <Menu
+        open={contextMenu !== null}
+        onClose={closeContextMenu}
+        onContextMenu={(event) => event.preventDefault()}
+        anchorReference="anchorPosition"
+        anchorPosition={contextMenu ? { top: contextMenu.y, left: contextMenu.x } : undefined}
+        sx={{
+          '& .MuiPaper-root': {
+            backgroundColor: colors.surface,
+            color: colors.text,
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+            minWidth: '210px',
+            py: 0.5,
+          },
+        }}
+      >
+        {contextMenu?.items.map(item => (
+          <MenuItem
+            key={item.label}
+            onClick={() => { item.action(); closeContextMenu(); }}
+            sx={{
+              minHeight: 30,
+              '&:hover': item.danger ? { backgroundColor: 'rgba(229, 72, 77, 0.18)' } : {},
+            }}
+          >
+            <ListItemIcon sx={{ color: item.danger ? colors.danger : colors.text, minWidth: '30px' }}>{item.icon}</ListItemIcon>
+            <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: '0.8rem', color: item.danger ? colors.danger : undefined }} />
+          </MenuItem>
+        ))}
+      </Menu>
     </Box>
   );
 });
@@ -175,6 +231,7 @@ interface SelectionSetNodeProps {
   onCancelCreate: () => void;
   beginCreate: (kind: SelectionSetKind, parentId: number | null) => void;
   assignableCount: number;
+  openContextMenu: (event: React.MouseEvent, items: ContextMenuItem[]) => void;
 }
 
 const SelectionSetNode = observer(({
@@ -188,6 +245,7 @@ const SelectionSetNode = observer(({
   onCancelCreate,
   beginCreate,
   assignableCount,
+  openContextMenu,
 }: SelectionSetNodeProps) => {
   const model = useModel();
   const [expanded, setExpanded] = useState(true);
@@ -212,12 +270,70 @@ const SelectionSetNode = observer(({
     model.assignSelectionToSelectionSet(node.id, refs);
   };
 
+  /** Members/shells this row affects: folder → recursive subtree; set → itself. */
+  const scopeRefs = isFolder ? model.selectionSetSubtreeRefs(node.id) : node.entityRefs;
+
+  const nodeMenuItems = (): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [
+      {
+        label: isFolder ? 'Select all in folder' : 'Select set',
+        icon: <SelectAllIcon sx={{ fontSize: 16 }} />,
+        action: () => { if (isFolder) model.selectSelectionSetSubtree(node.id); else model.selectFromSelectionSet(node.id); },
+      },
+      {
+        label: 'Show',
+        icon: <ShowIcon sx={{ fontSize: 16 }} />,
+        action: () => model.setRefsHidden(scopeRefs, false),
+      },
+      {
+        label: 'Hide',
+        icon: <HideIcon sx={{ fontSize: 16 }} />,
+        action: () => model.setRefsHidden(scopeRefs, true),
+      },
+      {
+        label: 'Isolate (hide others)',
+        icon: <IsolateIcon sx={{ fontSize: 16 }} />,
+        action: () => model.isolateRefs(scopeRefs),
+      },
+      {
+        label: 'Zoom to',
+        icon: <ZoomIcon sx={{ fontSize: 16 }} />,
+        action: () => model.zoomToRefs(scopeRefs),
+      },
+    ];
+    if (isFolder) {
+      items.push({
+        label: 'New selection set here',
+        icon: <SelectionSetIcon sx={{ fontSize: 16 }} />,
+        action: () => beginCreate('set', node.id),
+      });
+      items.push({
+        label: 'New subfolder',
+        icon: <NewFolderIcon sx={{ fontSize: 16 }} />,
+        action: () => beginCreate('folder', node.id),
+      });
+    }
+    items.push({
+      label: 'Rename',
+      icon: <EditIcon sx={{ fontSize: 16 }} />,
+      action: () => { setNameDraft(node.name); setRenaming(true); },
+    });
+    items.push({
+      label: isFolder ? 'Delete folder (with contents)' : 'Delete selection set',
+      icon: <DeleteIcon sx={{ fontSize: 16 }} />,
+      danger: true,
+      action: () => { if (window.confirm(`Delete ${isFolder ? 'folder' : 'selection set'} “${node.name}”?`)) model.deleteSelectionSet(node.id); },
+    });
+    return items;
+  };
+
   return (
     <Box>
       {/* Row */}
       <Box
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
+        onContextMenu={(event) => openContextMenu(event, nodeMenuItems())}
         sx={{
           display: 'flex',
           alignItems: 'center',
@@ -230,7 +346,10 @@ const SelectionSetNode = observer(({
         }}
       >
         <Box
-          onClick={() => { if (isFolder) setExpanded(prev => !prev); else model.selectFromSelectionSet(node.id); }}
+          onClick={() => {
+            if (isFolder) model.selectSelectionSetSubtree(node.id);
+            else model.selectFromSelectionSet(node.id);
+          }}
           sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, flex: 1 }}
         >
           {expandable ? (
@@ -391,6 +510,7 @@ const SelectionSetNode = observer(({
               onCancelCreate={onCancelCreate}
               beginCreate={beginCreate}
               assignableCount={assignableCount}
+              openContextMenu={openContextMenu}
             />
           ))}
           {!isFolder && node.entityRefs.map(ref => (
@@ -400,6 +520,7 @@ const SelectionSetNode = observer(({
               entityRef={ref}
               depth={depth + 1}
               disabled={disabled}
+              openContextMenu={openContextMenu}
             />
           ))}
         </>
@@ -413,11 +534,13 @@ interface SelectionSetEntityRowProps {
   entityRef: EntityReference;
   depth: number;
   disabled: boolean;
+  openContextMenu: (event: React.MouseEvent, items: ContextMenuItem[]) => void;
 }
 
 /** Leaf row inside a selection set: a member or shell stored in the set.
- *  Click selects it in the viewport; hover offers Remove-from-set. */
-const SelectionSetEntityRow = ({ setId, entityRef: ref, depth, disabled }: SelectionSetEntityRowProps) => {
+ *  Click selects it in the viewport; hover offers Remove-from-set; a right-click
+ *  opens Show / Hide / Isolate / Zoom-to. */
+const SelectionSetEntityRow = ({ setId, entityRef: ref, depth, disabled, openContextMenu }: SelectionSetEntityRowProps) => {
   const model = useModel();
   const [hovered, setHovered] = useState(false);
 
@@ -428,10 +551,40 @@ const SelectionSetEntityRow = ({ setId, entityRef: ref, depth, disabled }: Selec
     ? (member?.label || `Member ${ref.id}`)
     : (shell?.name || `Shell ${ref.id}`);
 
+  const entityMenuItems = (): ContextMenuItem[] => [
+    {
+      label: 'Show',
+      icon: <ShowIcon sx={{ fontSize: 16 }} />,
+      action: () => model.setRefsHidden([ref], false),
+    },
+    {
+      label: 'Hide',
+      icon: <HideIcon sx={{ fontSize: 16 }} />,
+      action: () => model.setRefsHidden([ref], true),
+    },
+    {
+      label: 'Isolate (hide others)',
+      icon: <IsolateIcon sx={{ fontSize: 16 }} />,
+      action: () => model.isolateRefs([ref]),
+    },
+    {
+      label: 'Zoom to',
+      icon: <ZoomIcon sx={{ fontSize: 16 }} />,
+      action: () => model.zoomToRefs([ref]),
+    },
+    {
+      label: 'Remove from set',
+      icon: <RemoveFromSetIcon sx={{ fontSize: 16 }} />,
+      danger: true,
+      action: () => model.removeEntityFromSelectionSet(setId, ref),
+    },
+  ];
+
   return (
     <Box
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onContextMenu={(event) => openContextMenu(event, entityMenuItems())}
       onClick={() => model.selectEntity(ref)}
       sx={{
         display: 'flex',

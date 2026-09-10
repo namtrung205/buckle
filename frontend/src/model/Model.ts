@@ -47,6 +47,7 @@ import {
   type CommandEnvelope,
   type CommandGatewayContext,
   type CommandResult,
+  type CommandTransactionOperation,
   type EntityReference,
   type SelectionSetKind,
   type SelectionSetRecord,
@@ -1332,13 +1333,113 @@ export class Model {
   /** Select a single entity (member/shell) in the viewport — used by the
    *  entity rows nested inside a selection-set node. */
   selectEntity = (ref: EntityReference) => {
-    if (ref.collection !== 'members' && ref.collection !== 'shells') return
-    if (!this.structuralDocument[ref.collection].has(ref.id)) return
+    this.selectEntityRefs([ref])
+  }
+
+  /** Select a list of members/shells in the viewport (open + dwell). Resolves
+   *  straight from the canonical document so dead refs drop silently. */
+  selectEntityRefs = (refs: readonly EntityReference[]) => {
+    const entities = refs.filter(ref =>
+      (ref.collection === 'members' || ref.collection === 'shells') &&
+      this.structuralDocument[ref.collection].has(ref.id),
+    )
+    if (!entities.length) return
     this.executeCommand({
       commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
       modelRevision: this.structuralDocument.revision, source: 'ui',
-      payload: { entities: [ref] },
+      payload: { entities },
     })
+  }
+
+  /** Show / hide arbitrary members / shells in one undoable transaction. */
+  setRefsHidden = (refs: readonly EntityReference[], hidden: boolean) => {
+    const entities = refs.filter(ref =>
+      (ref.collection === 'members' || ref.collection === 'shells') &&
+      this.structuralDocument[ref.collection].has(ref.id),
+    )
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [hidden
+        ? { type: 'HideEntities', payload: { entities } }
+        : { type: 'ShowEntities', payload: { entities } },
+      ] },
+    })
+  }
+
+  /** Isolate entities: reveal [refs] and hide every other member/shell. */
+  isolateRefs = (refs: readonly EntityReference[]) => {
+    const keep = new Set(refs.filter(ref =>
+      (ref.collection === 'members' || ref.collection === 'shells') &&
+      this.structuralDocument[ref.collection].has(ref.id),
+    ).map(ref => `${ref.collection}:${ref.id}`))
+    if (!keep.size) return
+    const show: EntityReference[] = []
+    for (const key of keep) {
+      const [collection, rawId] = key.split(':') as ['members' | 'shells', string]
+      show.push({ collection, id: Number(rawId) })
+    }
+    const hide: EntityReference[] = [
+      ...[...this.structuralDocument.members.values()].map(member => ({ collection: 'members' as const, id: member.id })),
+      ...[...this.structuralDocument.shells.values()].map(shell => ({ collection: 'shells' as const, id: shell.id })),
+    ].filter(ref => !keep.has(`${ref.collection}:${ref.id}`))
+    const hideOperations: CommandTransactionOperation[] = hide.length
+      ? [{ type: 'HideEntities', payload: { entities: hide } }]
+      : []
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'ShowEntities', payload: { entities: show } },
+        ...hideOperations,
+      ] },
+    })
+  }
+
+  /** Frame the camera to a set of members/shells (union of world bounds). */
+  zoomToRefs = (refs: readonly EntityReference[]) => {
+    const box = new THREE.Box3()
+    for (const ref of refs) {
+      if (ref.collection === 'members') {
+        const member = this.members.find(m => m.id === ref.id)
+        if (!member) continue
+        for (const endpoint of member.nodes) box.expandByPoint(new THREE.Vector3(endpoint.x, endpoint.y, endpoint.z))
+      } else if (ref.collection === 'shells') {
+        const shell = this.shells.find(s => s.id === ref.id)
+        if (!shell) continue
+        for (const node of shell.nodes) box.expandByPoint(new THREE.Vector3(node.x, node.y, node.z))
+      }
+    }
+    if (!box.isEmpty()) this.camera.fitBoxToView(box)
+  }
+
+  /** Whether the entity ref (members/shells) is currently hidden in the
+   *  workspace. Reads the hidden revision so observers re-render on change. */
+  isRefHidden = (ref: EntityReference) => {
+    const revision = this.workspaceHiddenRevision
+    return revision >= 0 && this.workspaceContext.hiddenEntityRefs.has(`${ref.collection}:${ref.id}`)
+  }
+
+  /** Collect the entity refs of every member / shell set that lives under the
+   *  folder `folderId` (children + grandchildren + …). A set that is itself a
+   *  child is included; the folder node (kind='folder') contributes nothing. */
+  selectionSetSubtreeRefs = (folderId: number): EntityReference[] => {
+    const refs: EntityReference[] = []
+    const visit = (id: number | null) => {
+      for (const node of this.selectionSetChildren(id)) {
+        if (node.kind === 'folder') visit(node.id)
+        else refs.push(...node.entityRefs)
+      }
+    }
+    visit(folderId)
+    return refs
+  }
+
+  /** Select all entities under a folder (recursively) in the viewport —
+   *  folder click behaviour. */
+  selectSelectionSetSubtree = (folderId: number) => {
+    this.selectEntityRefs(this.selectionSetSubtreeRefs(folderId))
   }
 
   /** Execute one validated canonical command and refresh renderer projections. */
@@ -1681,6 +1782,11 @@ export class Model {
       if (member.line) member.line.mesh.visible = !useDataDriven && entityVisible && (this.visibility?.members ?? true)
     }
     for (const node of this.nodes) if (node.mesh) node.mesh.visible = !useDataDriven && (this.visibility?.nodes ?? true)
+    // 2D shell elements keep their own legacy meshes — gate them by the shared
+    // workspace hidden set so the tree / context menu Show/Hide works for shells.
+    for (const shell of this.shells) {
+      if (shell.mesh) shell.mesh.visible = !useDataDriven && !this.workspaceContext.hiddenEntityRefs.has(`shells:${shell.id}`)
+    }
     // Loads intentionally remain true 3D geometry in every structural render
     // mode. Only their numeric text is emitted by the GPU annotation stream.
     // Loads render through ONE instanced batch (3 draw calls total); the whole
