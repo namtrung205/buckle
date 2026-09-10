@@ -11,6 +11,7 @@ import type {
   LevelRecord,
   ParametricObjectRecord,
   SectionRecord,
+SelectionSetRecord,
   Shell2DRecord,
   StructuralChangeSet,
   StructuralDocumentSeed,
@@ -45,6 +46,8 @@ export type StructuralCommandOperation =
   | { type: 'CreateOrUpdateLevels'; payload: { levels: readonly Creatable<LevelRecord>[] } }
   | { type: 'DeleteLevels'; payload: { ids: readonly LocalReference[] } }
   | { type: 'CreateOrUpdateGroups'; payload: { groups: readonly Creatable<GroupRecord>[] } }
+| { type: 'CreateOrUpdateSelectionSets'; payload: { selectionSets: readonly Creatable<SelectionSetRecord>[] } }
+  | { type: 'DeleteSelectionSets'; payload: { ids: readonly LocalReference[] } }
   | { type: 'DeleteGroups'; payload: { ids: readonly LocalReference[] } }
   | { type: 'CreateOrUpdateParametricObjects'; payload: { parametricObjects: readonly Creatable<ParametricObjectRecord>[] } }
   | { type: 'DeleteParametricObjects'; payload: { ids: readonly LocalReference[] } }

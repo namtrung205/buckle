@@ -612,6 +612,19 @@ export class CommandGateway {
         draft = snapshotToSeed(candidate.getSnapshot())
         break
       }
+case 'CreateOrUpdateSelectionSets':
+        for (const raw of operation.payload.selectionSets) {
+          const id = identifyUpsert('selectionSets', raw)
+          const record = stripAlias(raw)
+          upsert('selectionSets', { ...record, id })
+        }
+        break
+      case 'DeleteSelectionSets': {
+        const candidate = new StructuralDocument(draft)
+        for (const ref of operation.payload.ids) candidate.deleteSelectionSet(resolve(ref))
+        draft = snapshotToSeed(candidate.getSnapshot())
+        break
+      }
       case 'CreateOrUpdateParametricObjects':
         for (const raw of operation.payload.parametricObjects) {
           const id = identifyUpsert('parametricObjects', raw)

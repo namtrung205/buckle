@@ -1,4 +1,4 @@
-import { Box, Typography, Collapse, IconButton } from '@mui/material';
+import { Box, Typography, Collapse, IconButton, Tabs, Tab } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
   ChevronRight as ChevronRightIcon,
@@ -34,6 +34,7 @@ import AddOrEditLevel from '../Model/Levels/AddOrEdit';
 import { Level } from '../../types';
 import ElasticBeamColumn from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
+import SelectionSets from './SelectionSets';
 interface LeftBarProps {
   isCollapsed?: boolean;
 }
@@ -148,6 +149,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
   const model = useModel();
   // Results lock: while locked, every tree editing action is disabled
   const isLocked = model?.isLocked ?? false;
+  /** Left panel tab: 0 = model Definition tree (unchanged), 1 = Selection Sets. */
+  const [activeTab, setActiveTab] = useState(0);
   const [addOrEditNode, setAddOrEditNode] = useState(false);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
@@ -182,6 +185,26 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
         pointerEvents: isCollapsed ? 'none' : 'auto',
       }}
     >
+      {/* Left panel tabs: the existing model tree becomes the "Definition" tab;
+          the Navisworks-style Selection Sets tab lives right beside it. */}
+      <Box
+        sx={{
+          px: 1,
+          pt: 0.5,
+          borderBottom: '1px solid ' + colors.border,
+          backgroundColor: colors.surface,
+        }}
+      >
+        <Tabs
+          value={activeTab}
+          onChange={(_event, value: number) => setActiveTab(value === 1 ? 1 : 0)}
+          sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, px: 1 } }}
+        >
+          <Tab label="Definition" value={0} />
+          <Tab label="Selection Sets" value={1} />
+        </Tabs>
+      </Box>
+
       {/* Tree View */}
       <Box
         sx={{
@@ -203,6 +226,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           },
         }}
       >
+        {activeTab === 0 ? (
+        <>
         {/* Materials */}
         <TreeItem
           id="materials"
@@ -799,7 +824,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               </Box>
             </Box>
           ))}
-        </TreeItem>
+          </TreeItem>
+        </>
+        ) : (
+          <SelectionSets disabled={isLocked} />
+        )}
       </Box>
 
       <AddOrEditNode

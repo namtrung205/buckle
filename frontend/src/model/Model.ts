@@ -47,6 +47,10 @@ import {
   type CommandEnvelope,
   type CommandGatewayContext,
   type CommandResult,
+  type EntityReference,
+  type SelectionSetKind,
+  type SelectionSetRecord,
+  type StructuralDocumentSeed,
 } from "../core/structural";
 import { StructuralDocumentBridge } from "./Rendering/StructuralDocumentBridge";
 import { legacyModelToDocumentSeed } from "./Structural/legacyStructuralDocumentAdapter";
@@ -215,6 +219,10 @@ export class Model {
    *  their undo). Tree rows read it to refresh show/hide icons without
    *  observable Sets. */
   workspaceHiddenRevision = 0;
+  /** Incremented after every commit that changes the `selectionSets` collection
+   *  (including undo/redo). The Selection Sets left-panel tab reads it as a MobX
+   *  dependency and re-renders the folder tree from the plain Maps. */
+  selectionSetRevision = 0;
   /** True while the right dock is bound to the live viewport selection: every
    *  entity dock and draft follows later selection changes (node/member docks
    *  rebind, support/load targets restage). clearFocus resets it. */
@@ -1183,7 +1191,7 @@ export class Model {
     for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
       previousFlags.set(this.structuralSceneDB.memberIds[index], this.structuralSceneDB.memberFlags[index])
     }
-    this.structuralDocument.reconcile(legacyModelToDocumentSeed(this))
+    this.structuralDocument.reconcile(this.legacyDocumentSeedPreservingOrganizationalState())
     this.selector.selectedCenterlineIds = this.selector.selectedCenterlineIds.filter(id =>
       this.structuralSceneDB.memberIndexById.has(id),
     )
@@ -1218,8 +1226,96 @@ export class Model {
   }
 
   reconcileStructuralDocument() {
-    this.structuralDocument.reconcile(legacyModelToDocumentSeed(this))
+    this.structuralDocument.reconcile(this.legacyDocumentSeedPreservingOrganizationalState())
     return this.structuralDocument
+  }
+
+  /** The legacy adapter only knows the editor entity arrays; reconciling with it
+   *  alone would silently drop the canonical organizational collections
+   *  (groups, parametric objects, selection sets, grids, levels). Merge them in
+   *  from the current document so they survive Analyse / scene resyncs. */
+  private legacyDocumentSeedPreservingOrganizationalState = (): StructuralDocumentSeed => ({
+    ...legacyModelToDocumentSeed(this),
+    groups: [...this.structuralDocument.groups.values()],
+    parametricObjects: [...this.structuralDocument.parametricObjects.values()],
+    selectionSets: [...this.structuralDocument.selectionSets.values()],
+    ...(this.structuralDocument.grids.size ? { grids: [...this.structuralDocument.grids.values()] } : {}),
+    ...(this.structuralDocument.levels.size ? { levels: [...this.structuralDocument.levels.values()] } : {}),
+  })
+
+  /** Root/child folders and sets, sorted by id (deterministic tree order). The
+   *  revision read keeps the Selection Sets tab reactive to commits/undo. */
+  selectionSetChildren = (parentId: number | null): SelectionSetRecord[] => {
+    void this.selectionSetRevision
+    return [...this.structuralDocument.selectionSets.values()]
+      .filter(item => item.parentId === parentId)
+      .sort((a, b) => a.id - b.id)
+  }
+
+  createSelectionSet = (name: string, kind: SelectionSetKind, parentId: number | null, entityRefs: readonly EntityReference[] = []) => {
+    const ids = [...this.structuralDocument.selectionSets.keys()]
+    const id = ids.length ? Math.max(...ids) + 1 : 1
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateSelectionSets', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: {
+        selectionSets: [{
+          id,
+          name: name.trim() || (kind === 'folder' ? `Folder ${id}` : `Selection Set ${id}`),
+          kind,
+          parentId,
+          entityRefs,
+        }],
+      },
+    })
+    return id
+  }
+
+  updateSelectionSet = (id: number, patch: Partial<Omit<SelectionSetRecord, 'id'>>) => {
+    const current = this.structuralDocument.selectionSets.get(id)
+    if (!current) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateSelectionSets', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { selectionSets: [{ ...current, ...patch }] },
+    })
+  }
+
+  deleteSelectionSet = (id: number) => {
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteSelectionSets', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { ids: [id] },
+    })
+  }
+
+  /** Merge the current viewport members/shells into a set (idempotent union). */
+  assignSelectionToSelectionSet = (setId: number, refs: readonly EntityReference[]) => {
+    const current = this.structuralDocument.selectionSets.get(setId)
+    if (!current || current.kind !== 'set') return
+    const merged = new Map<string, EntityReference>()
+    for (const ref of [...current.entityRefs, ...refs]) {
+      if (ref.collection !== 'members' && ref.collection !== 'shells') continue
+      merged.set(`${ref.collection}:${ref.id}`, ref)
+    }
+    this.updateSelectionSet(setId, { entityRefs: [...merged.values()] })
+  }
+
+  /** Select the entities stored in a set in the viewport (resolving straight
+   *  from the canonical document, so stale refs are dropped silently). */
+  selectFromSelectionSet = (setId: number) => {
+    const current = this.structuralDocument.selectionSets.get(setId)
+    if (!current || current.kind !== 'set') return
+    const entities = current.entityRefs.filter(ref =>
+      (ref.collection === 'members' || ref.collection === 'shells') &&
+      this.structuralDocument[ref.collection].has(ref.id),
+    )
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { entities },
+    })
   }
 
   /** Execute one validated canonical command and refresh renderer projections. */
@@ -1278,6 +1374,10 @@ export class Model {
           this.invalidateResults()
           applyStructuralChangeToLegacy(this, this.structuralDocument, result.changes)
           this.refreshCommandRenderProjection()
+          const selectionSetsChanges = result.changes.changes.selectionSets
+          if (selectionSetsChanges.created.length || selectionSetsChanges.updated.length || selectionSetsChanges.deleted.length) {
+            this.selectionSetRevision++
+          }
         } else {
           this.refreshWorkspaceRenderProjection()
         }

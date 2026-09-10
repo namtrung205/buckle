@@ -7,6 +7,7 @@ export type Vector3Record = readonly [number, number, number]
 export const ENTITY_COLLECTIONS = [
   'nodes', 'materials', 'sections', 'members', 'shells', 'loads',
   'boundaryConditions', 'grids', 'levels', 'groups', 'parametricObjects',
+  'selectionSets',
 ] as const
 export type EntityCollection = (typeof ENTITY_COLLECTIONS)[number]
 export type EntityReference = Readonly<{ collection: EntityCollection; id: EntityId }>
@@ -122,6 +123,20 @@ export type GroupRecord = EntityMetadata & {
   entityRefs: readonly EntityReference[]
 }
 
+/** Navisworks-style saved selection container. A `selectionSets` collection is
+ *  deliberately independent from `groups` (which the AI/copilot layer exposes):
+ *  this tab holds folders (`folder`) and leaf selection sets (`set`), nested an
+ *  unlimited number of levels, and is allowed to reference only members/shells. */
+export type SelectionSetKind = 'folder' | 'set'
+export type SelectionSetRecord = EntityMetadata & {
+  id: EntityId
+  name: string
+  kind: SelectionSetKind
+  /** null = root level. Must point at an existing `folder` node. */
+  parentId: EntityId | null
+  /** Only `set` nodes carry members/shell references; folders are empty. */
+  entityRefs: readonly EntityReference[]
+}
 export type ParametricObjectRecord = {
   id: EntityId
   kind: string
@@ -156,6 +171,7 @@ export type StructuralDocumentSeed = {
   levels?: readonly LevelRecord[]
   groups?: readonly GroupRecord[]
   parametricObjects?: readonly ParametricObjectRecord[]
+  selectionSets?: readonly SelectionSetRecord[]
   metadata?: Readonly<Record<string, unknown>>
 }
 

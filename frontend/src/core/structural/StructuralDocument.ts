@@ -17,6 +17,7 @@ import {
   type NodeRecord,
   type ParametricObjectRecord,
   type SectionRecord,
+  type SelectionSetRecord,
   type Shell2DRecord,
   type StructuralChangeSet,
   type StructuralDocumentSeed,
@@ -50,6 +51,7 @@ const normalizeRecord = <T extends EntityRecord>(value: T, collection: string): 
   if (collection === 'loads') record.targetIds = sortIds(record.targetIds)
   if (collection === 'boundaryConditions') record.targetNodeIds = sortIds(record.targetNodeIds)
   if (collection === 'groups') record.entityRefs = sortRefs(record.entityRefs)
+  if (collection === 'selectionSets') record.entityRefs = sortRefs(record.entityRefs)
   if (collection === 'parametricObjects') record.ownedEntityRefs = sortRefs(record.ownedEntityRefs)
   if (collection === 'parametricObjects' && record.roleBindings) {
     record.roleBindings = Object.fromEntries(Object.entries(record.roleBindings).sort(([left], [right]) => left.localeCompare(right)))
@@ -84,6 +86,7 @@ export class StructuralDocument {
   readonly grids = new Map<EntityId, GridRecord>()
   readonly levels = new Map<EntityId, LevelRecord>()
   readonly groups = new Map<EntityId, GroupRecord>()
+  readonly selectionSets = new Map<EntityId, SelectionSetRecord>()
   readonly parametricObjects = new Map<EntityId, ParametricObjectRecord>()
   readonly memberIdsByNodeId = new Map<EntityId, Set<EntityId>>()
   readonly memberIdsBySectionId = new Map<EntityId, Set<EntityId>>()
@@ -206,6 +209,10 @@ export class StructuralDocument {
   updateLevel(id: EntityId, patch: Partial<Omit<LevelRecord, 'id'>>) { this.patchCollection('levels', id, patch) }
   addGroup(record: GroupRecord) { this.mutateCollection('groups', record, false) }
   updateGroup(id: EntityId, patch: Partial<Omit<GroupRecord, 'id'>>) { this.patchCollection('groups', id, patch) }
+  addSelectionSet(record: SelectionSetRecord) { this.mutateCollection('selectionSets', record, false) }
+  updateSelectionSet(id: EntityId, patch: Partial<Omit<SelectionSetRecord, 'id'>>) {
+    this.patchCollection('selectionSets', id, patch)
+  }
   addParametricObject(record: ParametricObjectRecord) { this.mutateCollection('parametricObjects', record, false) }
   updateParametricObject(id: EntityId, patch: Partial<Omit<ParametricObjectRecord, 'id'>>) {
     this.patchCollection('parametricObjects', id, patch)
@@ -223,6 +230,25 @@ export class StructuralDocument {
   deleteGrid(id: EntityId) { this.deleteFromSeed('grids', id, () => undefined) }
   deleteLevel(id: EntityId) { this.deleteFromSeed('levels', id, () => undefined) }
   deleteGroup(id: EntityId) { this.deleteFromSeed('groups', id, () => undefined) }
+  /** Delete a selection-set node AND the whole folder subtree rooted at it
+   *  (children are folded into the same single document revision). */
+  deleteSelectionSet(id: EntityId) {
+    this.deleteFromSeed('selectionSets', id, seed => {
+      const descendants = new Set<EntityId>()
+      const collect = (parentId: EntityId) => {
+        for (const candidate of seed.selectionSets ?? []) {
+          if (candidate.parentId === parentId && !descendants.has(candidate.id)) {
+            descendants.add(candidate.id)
+            collect(candidate.id)
+          }
+        }
+      }
+      collect(id)
+      if (descendants.size) {
+        seed.selectionSets = (seed.selectionSets ?? []).filter(candidate => !descendants.has(candidate.id))
+      }
+    })
+  }
   deleteParametricObject(id: EntityId) { this.deleteFromSeed('parametricObjects', id, () => undefined) }
 
   deleteMaterial(id: EntityId) {
@@ -306,6 +332,7 @@ export class StructuralDocument {
       grids: sorted(this.grids.values()).map(cloneRecord),
       levels: sorted(this.levels.values()).map(cloneRecord),
       groups: sorted(this.groups.values()).map(cloneRecord),
+      selectionSets: sorted(this.selectionSets.values()).map(cloneRecord),
       parametricObjects: sorted(this.parametricObjects.values()).map(cloneRecord),
       metadata: cloneRecord(this.metadata),
     }
@@ -408,6 +435,7 @@ export class StructuralDocument {
     const keys = new Set(removed.map(ref => `${ref.collection}:${ref.id}`))
     const keep = (ref: EntityReference) => !keys.has(`${ref.collection}:${ref.id}`)
     seed.groups = seed.groups?.map(group => ({ ...group, entityRefs: group.entityRefs.filter(keep) }))
+    seed.selectionSets = seed.selectionSets?.map(set => ({ ...set, entityRefs: set.entityRefs.filter(keep) }))
     seed.parametricObjects = seed.parametricObjects?.map(object => ({
       ...object,
       ownedEntityRefs: object.ownedEntityRefs.filter(keep),
@@ -477,6 +505,34 @@ export class StructuralDocument {
     }
     for (const group of this.groups.values()) {
       for (const ref of group.entityRefs) this.validateEntityReference(ref, `Group ${group.id}`)
+    }
+    for (const record of this.selectionSets.values()) {
+      if (!record.name.trim()) throw new Error(`Selection set ${record.id} requires a name`)
+      if (record.kind === 'folder') {
+        if (record.entityRefs.length) {
+          throw new Error(`Selection folder ${record.id} cannot hold entity references`)
+        }
+      }
+      if (record.parentId !== null) {
+        const parent = this.selectionSets.get(record.parentId)
+        if (!parent) throw new Error(`SelectionSet ${record.id} references unknown parent ${record.parentId}`)
+        if (parent.kind !== 'folder') throw new Error(`SelectionSet ${record.id} parent ${record.parentId} is not a folder`)
+      }
+      for (const ref of record.entityRefs) {
+        if (ref.collection !== 'members' && ref.collection !== 'shells') {
+          throw new Error(`SelectionSet ${record.id} may only reference members or shells`)
+        }
+        this.validateEntityReference(ref, `SelectionSet ${record.id}`)
+      }
+    }
+    for (const record of this.selectionSets.values()) {
+      const visited = new Set<EntityId>()
+      let cursor: EntityId | null = record.id
+      while (cursor !== null) {
+        if (visited.has(cursor)) throw new Error(`SelectionSet folder cycle detected at ${cursor}`)
+        visited.add(cursor)
+        cursor = this.selectionSets.get(cursor)?.parentId ?? null
+      }
     }
     const ownerByEntity = new Map<string, EntityId>()
     for (const object of this.parametricObjects.values()) {
