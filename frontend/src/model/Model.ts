@@ -1703,14 +1703,20 @@ export class Model {
   /** Rebuild the compact support-symbol stream. Other structural symbol kinds
    * use this same renderer as their data paths are migrated. */
   syncGpuAnnotations() {
-    const symbols: import('./Rendering/GpuAnnotations').SymbolCandidate[] = this.boundaryConditions.flatMap((condition) =>
-      condition.targets.flatMap((target) => {
-        const node = this.nodes.find(item => item.id === target)
-        const dofs = [condition.dx, condition.dy, condition.dz, condition.rx, condition.ry, condition.rz]
-        const state = dofs.reduce<number>((mask, value, index) => mask | (value ? 1 << index : 0), 0)
-        return node ? [{ anchor: [node.x, node.y, node.z] as const, kind: 0, state, color: [0.08, 0.82, 0.28] as const }] : []
-      }),
-    )
+    // Support glyphs honour the Settings → Boundary → Supports toggle;
+    // reactions and local-axis triads below are analysis feedback rather than
+    // model content, so they stay visible regardless of this flag.
+    const symbols: import('./Rendering/GpuAnnotations').SymbolCandidate[] = []
+    if (this.visibility?.supports ?? true) {
+      symbols.push(...this.boundaryConditions.flatMap((condition) =>
+        condition.targets.flatMap((target) => {
+          const node = this.nodes.find(item => item.id === target)
+          const dofs = [condition.dx, condition.dy, condition.dz, condition.rx, condition.ry, condition.rz]
+          const state = dofs.reduce<number>((mask, value, index) => mask | (value ? 1 << index : 0), 0)
+          return node ? [{ anchor: [node.x, node.y, node.z] as const, kind: 0, state, color: [0.08, 0.82, 0.28] as const }] : []
+        }),
+      ))
+    }
     const labels: import('./Rendering/GpuAnnotations').WorldLabelCandidate[] = []
     if (this.visibility?.loads ?? true) for (const load of this.loads) {
       for (const target of load.targets) {

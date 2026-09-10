@@ -11,9 +11,12 @@ class Visibility {
   sections : boolean = true
   loads : boolean = true
   // Startup defaults: structural axis grids and the level datum set stay
-  // HIDDEN until enabled in Settings → Visibility. GridSystem / LevelVisual
+  // HIDDEN until enabled in Settings → Level. GridSystem / LevelVisual
   // read these flags when they are created, so the 3D view and this dialog
   // always start in sync.
+  /** Support glyphs (fixed / pinned DOF markers) share the symbol batch;
+   *  toggling this just rebuilds the stream without them. */
+  supports : boolean = true
   /** Member release pins (green GPU circles). Always part of the shared
    *  symbol batch — toggling this just rebuilds the stream without it. */
   releases : boolean = true
@@ -85,12 +88,20 @@ class Visibility {
     this.model.syncGpuAnnotations()
   }
 
-  /** Show/hide every structural axis grid (Settings → Visibility). */
+  /** Show/hide every structural axis grid (Settings → Level). */
   showOrHideGrids(visible : boolean){
     this.grids = visible
     this.model.grids.forEach((grid) => {
       grid.setVisible(visible)
     })
+  }
+
+  /** Show/hide the support glyphs (Settings → Boundary → Supports). */
+  showOrHideSupports(visible : boolean){
+    this.supports = visible
+    // Supports live in the shared instanced symbol batch; rebuilding the
+    // stream is the cheapest toggle and costs zero extra draw calls.
+    this.model.syncGpuAnnotations()
   }
 
   /** Show/hide the member release pins (Settings → Visibility → Releases). */
