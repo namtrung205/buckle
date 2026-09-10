@@ -14,6 +14,9 @@ class Visibility {
   // HIDDEN until enabled in Settings → Visibility. GridSystem / LevelVisual
   // read these flags when they are created, so the 3D view and this dialog
   // always start in sync.
+  /** Member release pins (green GPU circles). Always part of the shared
+   *  symbol batch — toggling this just rebuilds the stream without it. */
+  releases : boolean = true
   grids : boolean = false
   levels : boolean = false
   
@@ -88,6 +91,14 @@ class Visibility {
     this.model.grids.forEach((grid) => {
       grid.setVisible(visible)
     })
+  }
+
+  /** Show/hide the member release pins (Settings → Visibility → Releases). */
+  showOrHideReleases(visible : boolean){
+    this.releases = visible
+    // Release pins live in the shared instanced symbol batch; rebuilding the
+    // stream is the cheapest toggle and costs zero extra draw calls.
+    this.model.syncGpuAnnotations()
   }
 
   /** Show/hide the level datum set (3D datums + their text labels). */

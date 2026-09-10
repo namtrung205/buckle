@@ -31,6 +31,7 @@ const Settings = ({open, onClose}) => {
     memberLabels : { label: 'Member Labels', value: 'memberLabels', },
     sections: { label: 'Sections', value: 'sections' },
     loads: { label: 'Loads', value: 'loads' },
+    releases: { label: 'Releases', value: 'releases' },
     grids: { label: 'Grids', value: 'grids' },
     levels: { label: 'Levels', value: 'levels' }
   }
@@ -76,6 +77,9 @@ const Settings = ({open, onClose}) => {
         break;
       case 'loads':
         model.visibility.showOrHideLoads(checked)
+        break;
+      case 'releases':
+        model.visibility.showOrHideReleases(checked)
         break;
       case 'grids':
         model.visibility.showOrHideGrids(checked)

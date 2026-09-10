@@ -65,7 +65,7 @@ import ThinShellRenderer from "./Rendering/ThinShellRenderer";
 import StructuralGpuPicker from "./Rendering/StructuralGpuPicker";
 import ResultStore, { type ResultBinding } from "./Rendering/ResultStore";
 import DiagramRenderer from "./Rendering/DiagramRenderer";
-import GpuAnnotations from "./Rendering/GpuAnnotations";
+import GpuAnnotations, { releaseEnds, SYMBOL_KIND_RELEASE, type SymbolCandidate as GpuSymbolCandidate } from "./Rendering/GpuAnnotations";
 import { estimateSolidTriangles, shouldEvictSolidResources } from "./Rendering/solidResourcePolicy";
 import { computeMemberFrame } from "./Rendering/memberFrame";
 import type { AnalysisOutput } from '../contracts/structuralModel';
@@ -1223,6 +1223,10 @@ export class Model {
     this.diagramRenderer.upload(this.structuralSceneDB)
     this.structuralPicker.upload(this.structuralSceneDB)
     this.structuralPicker.warmup(this.camera.cam)
+    // Member release pins are derived from the canonical document; rebuilding
+    // here keeps them reactive to every committed model edit (release change,
+    // node drag, member split…) while adding zero extra draw calls.
+    this.syncGpuAnnotations()
     return this.structuralSceneDB
   }
 
@@ -1545,6 +1549,10 @@ export class Model {
     this.diagramRenderer.upload(this.structuralSceneDB)
     this.structuralPicker.upload(this.structuralSceneDB)
     this.applyRenderModeVisibility()
+    // Release pins rest on the same single instanced GPU symbol batch; refresh
+    // them whenever a document command was committed (release edits, member
+    // moves, splits...) so they stay in sync at zero extra draw calls.
+    this.syncGpuAnnotations()
   }
 
   /** Selection/visibility commands do not alter topology or geometry. Update
@@ -1762,7 +1770,46 @@ export class Model {
         { anchor, direction: frame.z, kind: 6, color: [.2, .5, 1] },
       )
     }
+    // Member release pins ride the same single instanced GPU symbol batch.
+    this.collectReleaseSymbols(symbols)
     this.gpuAnnotations.setData(symbols, labels)
+  }
+
+  /** Collect the release pin glyphs (small green circles) for every member end
+   *  flagged as released ("pinned"). Pure assembly from the canonical document —
+   *  positions are resolved through the render database so a single instanced
+   *  GPU batch paints all pins with zero extra draw calls. */
+  private collectReleaseSymbols = (symbols: GpuSymbolCandidate[]) => {
+    if (!(this.visibility?.releases ?? true)) return
+    const green: readonly [number, number, number] = [0.16, 0.92, 0.36]
+    for (const member of this.structuralDocument.members.values()) {
+      const { start, end } = releaseEnds(member.release)
+      if (!start && !end) continue
+      const index = this.structuralSceneDB.memberIndexById.get(member.id)
+      if (index === undefined) continue
+      const o = index * 6
+      const begin: readonly [number, number, number] = [
+        this.structuralSceneDB.memberEndpoints[o],
+        this.structuralSceneDB.memberEndpoints[o + 1],
+        this.structuralSceneDB.memberEndpoints[o + 2],
+      ]
+      const finish: readonly [number, number, number] = [
+        this.structuralSceneDB.memberEndpoints[o + 3],
+        this.structuralSceneDB.memberEndpoints[o + 4],
+        this.structuralSceneDB.memberEndpoints[o + 5],
+      ]
+      // Offset the pin a short distance *into* the member so the glyph clearly
+      // belongs to this member instead of overlapping the shared node.
+      const dx = finish[0] - begin[0], dy = finish[1] - begin[1], dz = finish[2] - begin[2]
+      const length = Math.hypot(dx, dy, dz) || 1
+      // ~12% of the member length, clamped to sane absolute bounds (SI metres).
+      const inset = Math.min(Math.max(length * 0.12, 0.05), 0.4)
+      const ux = dx / length, uy = dy / length, uz = dz / length
+      const along = (from: readonly [number, number, number], sign: number): readonly [number, number, number] =>
+        [from[0] + ux * inset * sign, from[1] + uy * inset * sign, from[2] + uz * inset * sign]
+      if (start) symbols.push({ anchor: along(begin, + 0.75), kind: SYMBOL_KIND_RELEASE, color: green })
+      if (end) symbols.push({ anchor: along(finish, - 0.75), kind: SYMBOL_KIND_RELEASE, color: green })
+    }
   }
 
   isStructuralMemberVisible(entityId: number) {
