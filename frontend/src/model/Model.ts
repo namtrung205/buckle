@@ -72,6 +72,7 @@ import { computeMemberFrame } from "./Rendering/memberFrame";
 import type { AnalysisOutput } from '../contracts/structuralModel';
 import { AiToolExecutor, type AgentBudget, type ParametricGeneratorBinding } from '../core/ai';
 import { PluginEventBus, type PluginCommandServices } from '../core/plugins';
+import { ModelViewportInteractions } from './Geometry/Helpers/ModelViewportInteractions';
 export type PointerCoords = {
   x: number;
   y: number;
@@ -202,6 +203,9 @@ export class Model {
   gui : GUI | null = null
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
+  /** Model-backed viewport interaction host (Goal 3) — created lazily so it
+   *  never participates in the Model bootstrap order. */
+  private viewportInteractions : ModelViewportInteractions | undefined
   visibility : Visibility
   contextMenu = {
     visible: false,
@@ -1508,6 +1512,9 @@ export class Model {
       querySnapshot: () => this.structuralDocument.getSnapshot(),
       getWorkspaceState: () => this.workspaceContext.getCommandState(),
       execute: (command, options) => this.executeCommand(command, options),
+      // Host-owned viewport interaction backs (Goal 3): the Model owns the
+      // canvas, Snapper and GPU picker; plugins only get broker surfaces.
+      interactions: (this.viewportInteractions ??= new ModelViewportInteractions(this)).pluginViewportInteractions(),
     };
   }
 

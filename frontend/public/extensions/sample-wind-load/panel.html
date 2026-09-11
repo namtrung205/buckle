@@ -66,11 +66,72 @@
     <input id="pressure" type="number" value="1.20" step="0.05" disabled />
   </div>
   <div class="note">
-    Sandbox status: <code id="origin"></code>
+    Sandbox status: <code id="origin"></code><br />
+    Model (via sandboxed RPC): <code id="counts">connecting…</code>
+    <button id="refresh" type="button" style="margin-top:8px;">Refresh counts</button>
+    <button id="notify" type="button" style="margin-left:6px;">Send test notify</button>
   </div>
   <script>
-    document.getElementById('origin').textContent =
-      location.origin === 'null' ? 'opaque origin — no host access' : location.origin;
+    // Minimal RPC client for the sandboxed panel runtime (Goal 4). The iframe's
+    // origin is opaque, so the host authenticates this window's identity; calls
+    // go through the closed method table and the broker's permission gate.
+    (function () {
+      var origin = document.getElementById('origin');
+      var counts = document.getElementById('counts');
+      origin.textContent = location.origin === 'null' ? 'opaque origin — no host access' : location.origin;
+      var nextId = 1;
+      var pending = new Map();
+      window.addEventListener('message', function (event) {
+        var data = event.data;
+        if (!data || data.v !== 1 || typeof data.id !== 'string') return;
+        var resolve = pending.get(data.id);
+        if (!resolve) return;
+        pending.delete(data.id);
+        resolve(data);
+      });
+      // One attempt: post the envelope, settle with the matching reply.
+      function attempt(method, params, id) {
+        return new Promise(function (resolve) {
+          var timer = setTimeout(function () {
+            pending.delete(id);
+            resolve(null);
+          }, 800);
+          pending.set(id, function (reply) {
+            clearTimeout(timer);
+            resolve(reply);
+          });
+          window.parent.postMessage(
+            params === undefined ? { v: 1, id: id, method: method } : { v: 1, id: id, method: method, params: params },
+            '*'
+          );
+        });
+      }
+      // The bridge attaches after the host mounts — retry until the first reply.
+      function rpc(method, params) {
+        var id = 'p' + nextId++;
+        var first = attempt(method, params, id);
+        var retries = 0;
+        function loop(previous) {
+          if (previous !== null || retries >= 9) return Promise.resolve(previous);
+          retries += 1;
+          return attempt(method, params, id + '_' + retries).then(loop);
+        }
+        return first.then(loop);
+      }
+      function refresh() {
+        rpc('model.query').then(function (reply) {
+          if (!reply || !reply.ok) { counts.textContent = reply ? 'error: ' + reply.error.code : 'no host reply'; return; }
+          counts.textContent =
+            (reply.value.nodes ? reply.value.nodes.length : 0) + ' nodes / ' +
+            (reply.value.members ? reply.value.members.length : 0) + ' members';
+        });
+      }
+      document.getElementById('refresh').addEventListener('click', refresh);
+      document.getElementById('notify').addEventListener('click', function () {
+        rpc('ui.notify', { message: 'Hello from the sandboxed wind panel', kind: 'info' });
+      });
+      refresh();
+    })();
   </script>
 </body>
 </html>

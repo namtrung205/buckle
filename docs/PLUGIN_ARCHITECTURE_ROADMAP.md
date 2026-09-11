@@ -184,8 +184,8 @@ v2 instead of expanding exact-version guards throughout the application.
 | 0. Core boundary | Completed (2026-09-11) | Actor provenance, capability/risk policy, runtime validation and lock enforcement |
 | 1. Contribution registry | Completed (2026-09-11) | Built-in and plugin ribbon/menu/panel contributions share one registry |
 | 2. Host API and command broker | Completed (2026-09-11) | Authorized query/preview/execute and audited plugin mutations |
-| 3. Viewport interaction API | Planned | Host-owned pick, snap and draw sessions |
-| 4. Sandboxed runtime | Planned | Manifest lifecycle, Worker/iframe RPC and crash recovery |
+| 3. Viewport interaction API | Completed (2026-09-11) | Single-owner session, broker `viewport.*`, gesture drivers, Model adapter and the Draw Member sample |
+| 4. Sandboxed runtime | Completed (2026-09-11) | Manifest validation, closed RPC surface/budgets, Worker + panel sandbox runtimes, live panel bridge and PluginManager lifecycle with safe mode |
 | 5. SDK and persistence | Planned | SDK, CLI/test harness, project storage and sample plugins |
 | 6. External beta hardening | Planned | Integrity, CSP, permission UX, telemetry, revocation and threat tests |
 
@@ -335,6 +335,110 @@ Exit gate:
 
 ### Goal 3 - Viewport interaction API
 
+Implementation record (2026-09-11):
+
+- added a pure-TypeScript `InteractionSession` core (`src/core/interaction/`) — the
+  single-owner coordinator behind every viewport interaction. It is host-agnostic
+  (services injected like `PluginCommandServices`) and testable without React,
+  THREE or the canvas;
+- a module-level single-owner gate enforces "only one interaction session can own
+  the viewport" **for every path** (plugin broker, built-in tool or future module);
+  a second `begin()` fails with a structured `VIEWPORT_BUSY` carrying the current
+  owner, and `VIEWPORT_LOCKED` gates model-locked hosts;
+- lifecycle is an explicit state machine (`idle → active → completed | cancelled`)
+  with deterministic end reasons (`user` Escape, `owner` release, `timeout`
+  budget, `conflict`); sessions are single-use and `begin()` cannot run twice
+  (`ALREADY_STARTED`);
+- cancellation guarantees: every registered cleanup runs exactly **once** on any
+  terminal transition (complete, cancel, timeout, conflict), a late `addCleanup`
+  after termination runs immediately so a late binding can never leak, and a
+  faulty cleanup never prevents the remaining cleanups (first error surfaces
+  after all ran);
+- injected-clock budget: `checkBudget()`/`remainingMs` implement a wall-clock
+  `sessionMs` budget (default 120 s) that cancels deterministically with the
+  `timeout` reason — host event loops (canvas mousemove / gesture tick) drive it
+  so the core needs no timers;
+- keyboard routing: `handleKey()` defers to the host `onKey` hook and otherwise
+  treats Escape as user cancellation; Enter stays a no-op until the completable
+  pick/draw drivers arrive;
+- public contract for the plugin API: `PickEntitiesSpec` / `PickPointSpec` /
+  `DrawPolylineSpec` specs and `InteractionResult` payloads plus an
+  `INVALID_SPEC` fail-closed validator for untrusted plugin payloads (unknown
+  collections, planes, snap options, min/max and minVertices contradictions);
+- gate result: 12/12 new `InteractionSession` tests pass (single ownership,
+  lock gate, duplicate-start, Escape/cleanup-once semantics, deterministic
+  timeout, key routing, spec validation, cleanup fault tolerance) and the full
+  211-test fixture suite passes with no regressions (199 existing + 12 new).
+
+Slice 3.2 (broker surfaces + gesture drivers):
+
+- added the plugin-facing `viewport.*` surfaces on `PluginCommandBroker`:
+  `pickEntities`, `pickPoint`, `drawPolyline` (async, structured outcomes) and
+  `zoomTo`, permission-gated per family (`viewport.pick`, `viewport.draw`,
+  `viewport.zoomTo`) enforced by the broker itself like the ui surfaces;
+- every viewport payload is validated fail-closed (`INVALID_SPEC`) before it
+  reaches the host driver; every failure is mapped to a structured outcome
+  (`PERMISSION_DENIED`, `INVALID_SPEC`, `UNAVAILABLE`, `CANCELLED`,
+  `VIEWPORT_BUSY`, `VIEWPORT_LOCKED`, `REJECTED`) exactly like the command
+  outcome codes; the plugin's id/version travels with every request;
+- added `PluginViewportInteractions` as an optional `PluginCommandServices`
+  back (host-injected), so the broker stays pure TypeScript and testable;
+- added a pure `resolveViewportPoint` (no THREE) encoding the host Snapper
+  rules: workplane mode prefers on-plane node/member captures, then grid, then
+  the free raycast point (only under host defaults); true-3D mode accepts only
+  existing geometry; the `snap` option list restricts the families; endpoint
+  counts as a node family;
+- added the generic `ViewportDriver` (pure gesture state machine over an
+  injected `ViewportDriverHost`): click/window entity picking with dedupe and
+  min/max, single-click point picking with snap provenance, polyline vertex
+  accumulation; Enter/right-click finish when the minimum is met, Escape and
+  budget expiry cancel; every outcome tears the viewport binding down exactly
+  once through the session's cleanup contract
+  (`createDriverSession` wires the session host onto the driver host);
+- gate result: 236/236 fixture tests pass — 12 session + 7 point-resolution +
+  11 driver + 7 new broker viewport tests (13+7 broker totals) — no
+  regressions on the existing 211.
+
+Slice 3.3 (2026-09-11) — host adapter and the Draw Member sample:
+
+- added `ModelViewportInteractions` (`model/Geometry/Helpers`), the Model-backed
+  `ViewportDriverHost` adapter: real canvas listeners (NDC normalization
+  identical to `getMouseLocation`), click/right-click/Escape gestures, forced
+  Snapper enable + guaranteed restore, status prompts through the host Console
+  (fixed prompt id) and the cursor through `document.body` — every session
+  restores host state exactly once via a session-level cleanup plus a finally
+  guard; sessions resolve to null on structured cancellation (Escape, timeout,
+  busy, lock);
+- point resolution delegates to the pure kernel from the live Snapper state:
+  `snappedEndpoint`/`snappedMemberPoint`/`snappedGrid` provenance fields were
+  added to `Snapper` (reset on update/disable), the plane raycast comes from
+  `model.worldPlane` + active camera, and `model.hasActiveWorkPlane` selects
+  workplane vs true-3D mode;
+- entity picking reuses `StructuralGpuPicker.pick` (click) and
+  `StructuralWindowSelector.select/selectNodes` (window) — one code path with
+  the host's own hover/select; `viewport.zoomTo` maps selection/entities/point
+  onto `Model.zoomToSelected` / `zoomToRefs` / `camera.fitBoxToView`;
+- the adapter is exposed through `Model.pluginCommandServices().interactions`
+  (created lazily, never part of the Model bootstrap order);
+- `drawPolyline` results now carry per-vertex snap provenance
+  (`PolylineVertex.position` + optional `snappedNodeId`), so a vertex snapped
+  to an existing node reuses it instead of creating a duplicate;
+- added `extensions/sampleDrawMember` (`com.buckle.samples.drawmember`, grants:
+  model.read/write.nodes/write.members/write.materials/write.sections,
+  viewport.draw, viewport.zoomTo): two ribbon commands — plan drawing on the
+  active workplane (node/endpoint/member/grid snaps) and 3D node-to-node
+  (existing-geometry snaps only); the drawn chain becomes one previewed
+  Transaction (CreateNodes for new points only + CreateMembers reusing snapped
+  nodes and an existing section when present) → one undo step, then
+  `viewport.zoomTo` frames the result;
+- gate result: 237/237 fixture tests pass (one new driver test for vertex snap
+  provenance), full-project `tsc --noEmit` clean.
+
+Status: completed — the Goal 3 exit gates are met (sample works on the active
+workplane and node-to-node in 3D; the single-owner gate is enforced by the
+coordinator; Escape/timeout/unmount restore listeners, cursor, prompt and snap
+mode). Session enable/disable and external package loading stay with Goal 4.
+
 Deliverables:
 
 - one interaction coordinator owns canvas gestures;
@@ -363,6 +467,68 @@ Exit gate:
 - plugin code cannot read host DOM, storage, tokens or raw model objects;
 - malformed and unknown RPC requests fail closed;
 - faulty plugins cannot prevent Buckle from starting.
+
+Implementation record (2026-09-11):
+
+- added `core/plugins/manifest.ts`, a versioned, fail-closed manifest validator:
+  `id` (namespace pattern), `name`, semver `version`, `apiVersion` negotiation
+  (exact `1.x` supported, others rejected), entrypoint/permission/contribution
+  validation (commands, ribbon tabs, ribbon buttons, panels with the panel
+  pattern, unknown keys and non-`<ownerId>.*` contribution ids rejected), and
+  permission filtering against the known host permission set (`UNKNOWN_PERMISSION`
+  fails closed, `PLUGIN_PERMISSIONS` ∪ surface permissions);
+- added `core/plugins/rpc.ts` — schema-validated MessageChannel envelopes:
+  parse-time validation (`VALIDATION` on any malformed request/result, unknown
+  method or param shape), `version` negotiation (`UNSUPPORTED_VERSION`), a
+  message-size cap and a token-bucket rate budget (`Budget.check` →
+  `allowed | size | rate`), plus typed `call` helpers with timeout/reject
+  semantics for both sides of the channel;
+- added `core/plugins/sandbox.ts` — the host side of the two runtimes: a
+  blob-URL Worker bridge (`createWorkerBridge`, origin-trusted by construction)
+  and a panel iframe bridge whose `postMessage` target is authenticated by
+  source-window identity (the sandboxed panel can only reach the host that
+  embedded it); messages are enveloped, budgeted and validated before dispatch,
+  and `dispose` terminates the worker and closes the port exactly once;
+- added `core/plugins/PluginManager.ts` — install/uninstall/enable/disable with
+  a user decision gate for the permission prompt, per-plugin session creation
+  on enable and disposal on disable, a crash-loop detector (≥3 errors inside
+  the window → `quarantined`), and `recoverAll` for safe mode; a faulty plugin
+  can never block startup: `PluginManager.create` first puts every plugin
+  through `enablePlugin` inside try/catch and flips the failing one to
+  `error`/quarantine while the rest start normally;
+- the Goal 2 sample session (`com.buckle.samples.windload`) stays broker-driven;
+- added `core/plugins/WorkerRuntime.ts` — a dedicated-worker transport bound to
+  the same `SandboxDispatcher`: injected `WorkerLike` surface (app spawns a real
+  `new Worker(url, { type: 'module' })`), structured result envelopes back to
+  the worker, per-call timeout, a violation cap that terminates the sandbox
+  after repeated fail-closed protocol violations, and an idempotent `terminate`
+  that detaches the listener and feeds `PluginManager.reportCrash`;
+- added `core/plugins/PanelRpcBridge.ts` + `PluginSessionRegistry.ts` and wired
+  the runtime live: samples register their broker session in the app-wide
+  registry (`pluginSessions`); `ContributionPanelHost` resolves the owning
+  session per namespaced panel id, attaches one `PanelRpcBridge` (source-window
+  authenticated, broker-bound handlers via `brokerRpcHandlers`) and closes it
+  when the panel unmounts; `public/extensions/sample-wind-load/panel.html` is
+  now a real RPC client (selection read + previewed assignment through
+  `model.query`/`model.execute`) instead of a display-only page, while the
+  sandboxed iframe keeps `allow-scripts` only (no same-origin, no referrer);
+- removed the orphaned `panelRpcRegistry.ts` (superseded by
+  `PluginSessionRegistry`);
+- development URL loading and external package fetch stay with Goal 5's
+  developer tooling (`buckle-plugin dev`);
+- gate result: 283/283 fixture tests pass — 10 manifest + 10 rpc + 7 PluginManager
+  + 10 sandbox + 4 panel-bridge + 5 worker-runtime new tests (sandbox includes
+  the DOM-free crash-loop and source-authenticated panel-trust suites) — no
+  regressions on the existing 237; full-project `tsc --noEmit` clean; focused
+  plugin-folder lint clean.
+
+Status: completed — the Goal 4 exit gates are met (plugin code only ever sees
+the closed method table — no DOM, storage, token or raw-model accessor exists
+on it, and the iframe/Worker sandboxes cannot reach the host document;
+malformed and unknown RPC requests fail closed before any handler runs; a
+faulty plugin is quarantined by the crash-loop detector and
+`PluginManager.create` starts the remaining plugins normally, so nothing can
+block startup). External package loading / dev URLs are deferred to Goal 5.
 
 ### Goal 5 - SDK and persistence
 

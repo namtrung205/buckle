@@ -1,7 +1,8 @@
-import { useLayoutEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo } from 'react';
 import { toast } from 'react-toastify';
 import { useContributions, useModel } from '../../model/Context';
 import { createPluginCommandBroker } from '../../core/plugins';
+import { pluginSessions } from '../../core/plugins/PluginSessionRegistry';
 import type { ContributionBundle, ContributionOwner, PluginCommandBroker } from '../../core/plugins';
 
 /**
@@ -179,6 +180,8 @@ const SampleWindLoad = () => {
   const model = useModel();
   const contributions = useContributions();
   useLayoutEffect(() => contributions.register(owner, bundle), [contributions]);
+  // Publish the live session so the panel host can attach its RPC bridge.
+  useEffect(() => () => { pluginSessions.set(owner.id, null); }, []);
   useMemo(() => {
     session = model
       ? createPluginCommandBroker({
@@ -195,6 +198,7 @@ const SampleWindLoad = () => {
         approver: info => window.confirm(`${info.message}\n\nAllow the sample plugin to proceed?`),
       }, owner, GRANTS)
       : null;
+    if (session) pluginSessions.set(owner.id, session);
   }, [model, contributions]);
   return null;
 };

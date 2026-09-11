@@ -4,6 +4,9 @@ import { CommandGateway, StructuralDocument } from '../structural/index.ts'
 import type { CommandWorkspaceState } from '../structural/index.ts'
 import { createPluginCommandBroker, PluginHostError, PluginEventBus } from './index.ts'
 import type { PluginCommandServices, PluginMutationRequest, PluginHostEvent } from './index.ts'
+import { InteractionBusyError } from '../interaction/index.ts'
+import type { InteractionResult } from '../interaction/index.ts'
+import type { PluginSessionPermission, PluginViewportInteractions, ViewportZoomTarget } from './index.ts'
 
 const seed = () => new StructuralDocument({
   nodes: [
@@ -286,6 +289,104 @@ test('session event subscription coalesces bursts, filters by kind and stops on 
 test('session event subscription fails when the host bus is not wired', () => {
   const { broker } = harness()
   assert.throws(() => broker.subscribe(() => undefined), PluginHostError)
+})
+
+const viewportHarness = (options: {
+  grants?: readonly string[]
+  result?: InteractionResult | null
+  throws?: unknown
+  zoomBacking?: boolean
+} = {}) => {
+  const base = harness()
+  const picked: string[] = []
+  const zoomed: ViewportZoomTarget[] = []
+  const backing = async () => {
+    if (options.throws) throw options.throws
+    return options.result ?? null
+  }
+  const interactions: PluginViewportInteractions = {
+    pickEntities: sessionOwner => { picked.push(sessionOwner.id); return backing() },
+    pickPoint: sessionOwner => { picked.push(sessionOwner.id); return backing() },
+    drawPolyline: sessionOwner => { picked.push(sessionOwner.id); return backing() },
+    zoomTo: (options.zoomBacking ?? true) ? target => { zoomed.push(target) } : undefined,
+  }
+  const broker = createPluginCommandBroker(
+    { ...base.services, interactions },
+    owner,
+    (options.grants ?? ['viewport.pick', 'viewport.draw', 'viewport.zoomTo']) as readonly PluginSessionPermission[],
+  )
+  return { ...base, picked, zoomed, broker }
+}
+
+test('viewport picking requires the viewport.pick grant and fails closed', async () => {
+  const { broker } = viewportHarness({ grants: ['model.read'] })
+  const outcome = await broker.pickEntities({ kind: 'pickEntities', collections: ['members'], mode: 'click' })
+  assert.equal(outcome.ok, false)
+  if (outcome.ok) return
+  assert.equal(outcome.code, 'PERMISSION_DENIED')
+})
+
+test('viewport specs are validated fail-closed before reaching the host', async () => {
+  const { broker, picked } = viewportHarness()
+  const outcome = await broker.pickEntities({ kind: 'pickEntities', collections: [], mode: 'click' })
+  assert.equal(outcome.ok, false)
+  if (outcome.ok) return
+  assert.equal(outcome.code, 'INVALID_SPEC')
+  assert.equal(picked.length, 0)
+})
+
+test('a user-cancelled interaction maps to the CANCELLED outcome', async () => {
+  const { broker, picked } = viewportHarness()
+  const outcome = await broker.pickPoint({ kind: 'pickPoint', plane: 'activeWorkplane' })
+  assert.equal(outcome.ok, false)
+  if (outcome.ok) return
+  assert.equal(outcome.code, 'CANCELLED')
+  assert.deepEqual(picked, [owner.id])
+})
+
+test('host interaction errors map to structured VIEWPORT_BUSY outcomes', async () => {
+  const { broker } = viewportHarness({ throws: new InteractionBusyError(owner) })
+  const outcome = await broker.pickPoint({ kind: 'pickPoint', plane: 'activeWorkplane' })
+  assert.equal(outcome.ok, false)
+  if (outcome.ok) return
+  assert.equal(outcome.code, 'VIEWPORT_BUSY')
+})
+
+test('a completed viewport interaction resolves ok with the result', async () => {
+  const result: InteractionResult = { kind: 'pickEntities', entities: [{ collection: 'members', id: 10 }] }
+  const { broker } = viewportHarness({ result })
+  const outcome = await broker.drawPolyline({ kind: 'drawPolyline', plane: 'world', minVertices: 2 })
+  assert.equal(outcome.ok, true)
+  if (!outcome.ok) return
+  assert.equal(outcome.result, result)
+})
+
+test('missing viewport backing fails closed with UNAVAILABLE', async () => {
+  const base = harness()
+  const broker = createPluginCommandBroker(base.services, owner, ['viewport.pick'])
+  const outcome = await broker.pickEntities({ kind: 'pickEntities', collections: ['nodes'], mode: 'click' })
+  assert.equal(outcome.ok, false)
+  if (outcome.ok) return
+  assert.equal(outcome.code, 'UNAVAILABLE')
+})
+
+test('viewport.zoomTo is gated, delegates and fails closed without backing', () => {
+  const { broker, zoomed } = viewportHarness()
+  broker.zoomTo({ kind: 'selection' })
+  broker.zoomTo({ kind: 'point', position: [1, 2, 3] })
+  assert.equal(zoomed.length, 2)
+
+  const gated = viewportHarness({ grants: ['model.read'] })
+  assert.throws(
+    () => gated.broker.zoomTo({ kind: 'selection' }),
+    (err: unknown) => err instanceof PluginHostError && err.code === 'PERMISSION_DENIED',
+  )
+
+  const noBacking = viewportHarness({ zoomBacking: false })
+  assert.throws(
+    () => noBacking.broker.zoomTo({ kind: 'selection' }),
+    (err: unknown) => err instanceof PluginHostError && err.code === 'UNAVAILABLE',
+  )
 })
 
 

@@ -14,6 +14,7 @@ import ContextMenu from './ContextMenu';
 import CopilotPanel from '../Copilot/CopilotPanel';
 import ContributionPanelHost from './ContributionPanelHost';
 import SampleWindLoad from '../../extensions/sampleWindLoad';
+import SampleDrawMember from '../../extensions/sampleDrawMember';
 
 interface LayoutProps {
   children: ReactNode;
@@ -43,6 +44,7 @@ const Layout = observer(({ children }: LayoutProps) => {
       {/* Built-in sample extension — contributes its own ribbon tab/button and
           dock panel through the contribution registry without touching TopBar. */}
       <SampleWindLoad />
+      <SampleDrawMember />
 
       {/* Main content area with left bar */}
       <Box

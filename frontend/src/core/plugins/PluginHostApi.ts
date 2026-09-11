@@ -9,9 +9,16 @@ import { CommandConflictError, CommandValidationError } from '../structural/Comm
 import type { CommandWorkspaceState } from '../structural/CommandGateway.ts'
 import { CommandPolicyError, PLUGIN_PERMISSIONS } from '../structural/CommandPolicy.ts'
 import type { PluginPermission } from '../structural/CommandPolicy.ts'
-import type { EntityReference } from '../structural/types.ts'
+import type { EntityReference, Vector3Record } from '../structural/types.ts'
 import type { ContributionOwner } from './types.ts'
 import type { PluginEventBus, PluginEventFilter, PluginHostEvent } from './PluginEventBus.ts'
+import { InteractionError, InteractionBusyError, InteractionLockedError, validateInteractionSpec } from '../interaction/index.ts'
+import type {
+  DrawPolylineSpec,
+  InteractionResult,
+  PickEntitiesSpec,
+  PickPointSpec,
+} from '../interaction/index.ts'
 
 const pluginIdPattern = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/
 const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
@@ -20,7 +27,9 @@ const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
  * maps mutations, so queries and UI surfaces are gated here per the roadmap
  * permission families. */
 export const PLUGIN_SURFACE_PERMISSIONS = [
-  'model.read', 'workspace.readSelection', 'ui.panel', 'ui.notify',
+  'model.read', 'workspace.readSelection', 'workspace.writeSelection',
+  'ui.panel', 'ui.notify',
+  'viewport.pick', 'viewport.draw', 'viewport.zoomTo',
 ] as const
 export type PluginSurfacePermission = (typeof PLUGIN_SURFACE_PERMISSIONS)[number]
 export type PluginSessionPermission = PluginPermission | PluginSurfacePermission
@@ -54,6 +63,8 @@ export type PluginCommandServices = Readonly<{
   /** Host-side approval prompt for destructive commits. Called once when the
    * policy demands approval; returning true re-dispatches with approval. */
   approver?: (info: { code: string; message: string }) => boolean
+  /** Host viewport interaction backs (Goal 3 slice 3.2). */
+  interactions?: PluginViewportInteractions
 }>
 
 /** A plugin mutation request. The plugin never supplies an envelope: the broker
@@ -78,6 +89,31 @@ export type PluginCommandOutcome = Readonly<
     actualRevision?: number
   }
 >
+
+/** Target of a host-owned zoom (roadmap `viewport.zoomTo`). */
+export type ViewportZoomTarget = Readonly<
+  | { kind: 'selection' }
+  | { kind: 'entities'; entities: readonly EntityReference[] }
+  | { kind: 'point'; position: Vector3Record }
+>
+
+/** Outcome of one host-owned viewport interaction (Goal 3). */
+export type ViewportInteractionOutcome = Readonly<
+  | { ok: true; result: InteractionResult }
+  | { ok: false; code: string; message: string }
+>
+
+/** Host viewport interaction backs (Goal 3). Each function runs exactly one
+ *  interaction session. It resolves with the pick/point/polyline result, with
+ *  null/throw meaning the interaction ended without a result (Escape, timeout,
+ *  owner release). Session ownership, permissions and revocation stay host-side
+ *  (roadmap design rule 4). */
+export type PluginViewportInteractions = Readonly<{
+  pickEntities?: (sessionOwner: ContributionOwner, spec: PickEntitiesSpec) => Promise<InteractionResult | null> | InteractionResult | null
+  pickPoint?: (sessionOwner: ContributionOwner, spec: PickPointSpec) => Promise<InteractionResult | null> | InteractionResult | null
+  drawPolyline?: (sessionOwner: ContributionOwner, spec: DrawPolylineSpec) => Promise<InteractionResult | null> | InteractionResult | null
+  zoomTo?: (target: ViewportZoomTarget) => void
+}>
 
 /**
  * One plugin's authorized view of the host (Goal 2). Identity and permission
@@ -175,6 +211,78 @@ export class PluginCommandBroker {
       throw new PluginHostError('UNAVAILABLE', 'This session has no host event bus wired in')
     }
     return this.services.events.subscribe(listener, filter)
+  }
+
+  /** Run one host-owned entity pick session (Goal 3). Permission-gated with
+   * `viewport.pick`; the spec is validated fail-closed before it reaches the
+   * host driver. */
+  pickEntities(spec: PickEntitiesSpec): Promise<ViewportInteractionOutcome> {
+    const outcome = this.gateSurface('viewport.pick', 'viewport.pickEntities', spec)
+    if (outcome) return Promise.resolve(outcome)
+    const run = this.services.interactions?.pickEntities
+    if (!run) return Promise.resolve({ ok: false, code: 'UNAVAILABLE', message: 'This session has no viewport picking backing' })
+    return this.runViewportInteraction(() => run(this.owner, spec))
+  }
+
+  /** Run one host-owned point pick session (Goal 3). */
+  pickPoint(spec: PickPointSpec): Promise<ViewportInteractionOutcome> {
+    const outcome = this.gateSurface('viewport.pick', 'viewport.pickPoint', spec)
+    if (outcome) return Promise.resolve(outcome)
+    const run = this.services.interactions?.pickPoint
+    if (!run) return Promise.resolve({ ok: false, code: 'UNAVAILABLE', message: 'This session has no viewport point picking backing' })
+    return this.runViewportInteraction(() => run(this.owner, spec))
+  }
+
+  /** Run one host-owned polyline drawing session (Goal 3). */
+  drawPolyline(spec: DrawPolylineSpec): Promise<ViewportInteractionOutcome> {
+    const outcome = this.gateSurface('viewport.draw', 'viewport.drawPolyline', spec)
+    if (outcome) return Promise.resolve(outcome)
+    const run = this.services.interactions?.drawPolyline
+    if (!run) return Promise.resolve({ ok: false, code: 'UNAVAILABLE', message: 'This session has no viewport drawing backing' })
+    return this.runViewportInteraction(() => run(this.owner, spec))
+  }
+
+  /** Zoom the host viewport (Goal 3). Throws `PERMISSION_DENIED` /
+   * `UNAVAILABLE` exactly like the ui surfaces. */
+  zoomTo(target: ViewportZoomTarget) {
+    this.assertSurface('viewport.zoomTo', 'viewport.zoomTo')
+    const zoom = this.services.interactions?.zoomTo
+    if (!zoom) throw new PluginHostError('UNAVAILABLE', 'This session has no viewport zoom backing')
+    zoom(target)
+  }
+
+  private gateSurface(
+    permission: PluginSessionPermission,
+    action: string,
+    spec: unknown,
+  ): ViewportInteractionOutcome | null {
+    try {
+      this.assertSurface(permission, action)
+    } catch (error) {
+      return { ok: false, code: error instanceof PluginHostError ? error.code : 'PERMISSION_DENIED', message: error instanceof Error ? error.message : String(error) }
+    }
+    try {
+      validateInteractionSpec(spec)
+    } catch (error) {
+      return { ok: false, code: error instanceof InteractionError ? error.code : 'INVALID_SPEC', message: error instanceof Error ? error.message : String(error) }
+    }
+    return null
+  }
+
+  /** Await one host interaction and map every failure to a structured outcome. */
+  private async runViewportInteraction(
+    run: () => Promise<InteractionResult | null> | InteractionResult | null,
+  ): Promise<ViewportInteractionOutcome> {
+    try {
+      const result = await run()
+      if (result === null) return { ok: false, code: 'CANCELLED', message: 'Interaction was cancelled' }
+      return { ok: true, result }
+    } catch (error) {
+      if (error instanceof InteractionBusyError || error instanceof InteractionLockedError || error instanceof InteractionError) {
+        return { ok: false, code: error.code, message: error.message }
+      }
+      return { ok: false, code: 'REJECTED', message: error instanceof Error ? error.message : String(error) }
+    }
   }
 
   private assertSurface(permission: PluginSessionPermission, action: string) {

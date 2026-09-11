@@ -36,6 +36,13 @@ class Snapper {
   snappedNode : Node | undefined
   snappedMemberPoint : SnappedMemberPoint | undefined
   model : Model  
+  /** Endpoint snap provenance for the viewport interaction adapter (Goal 3):
+   *  the snapped node id plus the (possibly plane-projected) position. `exact`
+   *  mirrors the 1e-4 on-plane rule — only an exact on-plane node keeps its
+   *  identity when a plugin interaction reuses it. */
+  snappedEndpoint : { id : number, position : THREE.Vector3, exact : boolean } | undefined
+  /** Grid snap position when the current pointer snapped to the grid. */
+  snappedGrid : THREE.Vector3 | undefined
   threshold : number = 0.1
   /** Max perpendicular distance (m) a node/point may sit from the active working
    *  plane to still count as "on the plane" — tighter than the endpoint screen
@@ -131,6 +138,8 @@ class Snapper {
     this.snappedCoords = null
     this.snappedScreenCoords = null
 
+    this.snappedEndpoint = undefined
+    this.snappedGrid = undefined
     if(this.onNode && snappedEndPoint){
       const node = this.model?.nodes?.find((n) => n.id === elementId)
         ?? findNodeAtPosition(this.model.nodes, snappedEndPoint)
@@ -156,6 +165,11 @@ class Snapper {
       }
 
       if (this.snappedCoords) {
+        if (this.snappedNode !== undefined) {
+          this.snappedEndpoint = { id: this.snappedNode.id, position: this.snappedCoords.clone(), exact: true }
+        } else if (node) {
+          this.snappedEndpoint = { id: node.id, position: this.snappedCoords.clone(), exact: false }
+        }
         this.model?.labeler?.batchUpdateOrCreate([{
           id: 'endPointSnap',
           position: this.snappedCoords,
@@ -174,6 +188,7 @@ class Snapper {
         type : 'gridSnap'
       }])
       this.snappedCoords = snappedGrid
+      this.snappedGrid = snappedGrid.clone()
       const projected = this.snappedCoords.clone().project(this.model.camera.cam)
       this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
     }
@@ -326,6 +341,8 @@ class Snapper {
     this.model.labeler?.deleteOne('gridSnap')
     this.model.labeler?.deleteOne('endPointSnap')
     this.enabled = false
+    this.snappedEndpoint = undefined
+    this.snappedGrid = undefined
   }
 
   enable() {

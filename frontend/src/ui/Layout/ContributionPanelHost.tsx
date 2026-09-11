@@ -1,14 +1,37 @@
 import { Box, IconButton, Typography } from '@mui/material';
 import { Close as CloseIcon, Extension as ExtensionIcon } from '@mui/icons-material';
-import { useSyncExternalStore } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 import { useContributions } from '../../model/Context';
 import { colors } from '../../theme';
+import { PanelRpcBridge, brokerRpcHandlers } from '../../core/plugins/PanelRpcBridge';
+import { pluginSessions } from '../../core/plugins/PluginSessionRegistry';
 
-/** Render an already-authorized rich panel in an origin-opaque iframe. */
+/** Render an already-authorized rich panel in an origin-opaque iframe and, when
+ *  the owning plugin session is live, attach the host-side RPC bridge (Goal 4):
+ *  the sandboxed panel can only reach the closed method table through its
+ *  owner's broker — every call still passes the broker's permission gate. */
 const ContributionPanelHost = () => {
   const contributions = useContributions();
   useSyncExternalStore(contributions.subscribe, contributions.getSnapshot, contributions.getSnapshot);
   const panel = contributions.getActivePanel();
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+
+  useEffect(() => {
+    const session = panel ? pluginSessions.resolveByPrefix(panel.id) : undefined;
+    const frame = frameRef.current;
+    if (!panel || !session || !frame?.contentWindow) return;
+    const bridge = new PanelRpcBridge({
+      panel: frame.contentWindow,
+      handlers: brokerRpcHandlers(session),
+      subscribe: listener => {
+        window.addEventListener('message', listener);
+        return () => window.removeEventListener('message', listener);
+      },
+      onViolation: (code, message) => console.warn(`[plugin panel] ${code}: ${message}`),
+    });
+    return () => bridge.close();
+  }, [panel?.id]);
+
   if (!panel) return null;
 
   return (
@@ -42,6 +65,7 @@ const ContributionPanelHost = () => {
         src={panel.entry}
         sandbox="allow-scripts"
         referrerPolicy="no-referrer"
+        ref={frameRef}
         sx={{ flex: 1, width: '100%', border: 0, backgroundColor: colors.surface }}
       />
     </Box>
