@@ -11,7 +11,8 @@ import Model from './model/Model';
 import { threeToJson, jsonToThree } from './utils/axis';
 import { runInAction } from 'mobx';
 import type { StructuralModelDto } from './contracts/structuralModel';
-import { isBuckleProjectFile, PROJECT_FILE_KIND, PROJECT_FILE_VERSION, type BuckleProjectFile } from './contracts/projectFile';
+import { isBuckleProjectFile, migrateProjectFile, PROJECT_FILE_KIND, PROJECT_FILE_VERSION, type BuckleProjectFile } from './contracts/projectFile';
+import { pluginStorage } from './core/plugins/PluginStorage';
 import { analysisTransportToDocumentSeed, analysisTransportToDocumentSeedWithOrganizational, type AnalysisTransportInput } from './core/structural';
 
 /**
@@ -54,6 +55,8 @@ export const exportProjectJson = (model: Model): BuckleProjectFile => {
       grids: snapshot.grids,
       levels: snapshot.levels,
     },
+    // Namespaced plugin state (Goal 5) — opaque to the host, restored on open.
+    extensions: pluginStorage.serializeProject(),
   };
 };
 
@@ -73,6 +76,10 @@ export const buildModelFromJson = (model: Model, input: StructuralModelDto | Buc
         input.organizational,
       )
     : analysisTransportToDocumentSeed(input as unknown as AnalysisTransportInput)
+  // Plugin storage restore (Goal 5): migrate v1 → v2 (empty extensions), then
+  // take only well-formed namespaces — untrusted file, fail closed per entry.
+  const project = migrateProjectFile(input)
+  if (project) pluginStorage.restoreProject(project.extensions)
   model.executeCommand({
     commandId: crypto.randomUUID(),
     type: 'ImportModel',

@@ -5,6 +5,7 @@ import { useContributions } from '../../model/Context';
 import { colors } from '../../theme';
 import { PanelRpcBridge, brokerRpcHandlers } from '../../core/plugins/PanelRpcBridge';
 import { pluginSessions } from '../../core/plugins/PluginSessionRegistry';
+import { pluginStorage } from '../../core/plugins/PluginStorage';
 
 /** Render an already-authorized rich panel in an origin-opaque iframe and, when
  *  the owning plugin session is live, attach the host-side RPC bridge (Goal 4):
@@ -22,7 +23,7 @@ const ContributionPanelHost = () => {
     if (!panel || !session || !frame?.contentWindow) return;
     const bridge = new PanelRpcBridge({
       panel: frame.contentWindow,
-      handlers: brokerRpcHandlers(session),
+      handlers: brokerRpcHandlers(session, pluginStorage),
       subscribe: listener => {
         window.addEventListener('message', listener);
         return () => window.removeEventListener('message', listener);

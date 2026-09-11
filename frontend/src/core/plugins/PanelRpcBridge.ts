@@ -2,6 +2,8 @@ import { RpcProtocolError } from './rpc.ts'
 import type { RpcMethod } from './rpc.ts'
 import { SandboxDispatcher, isTrustedPanelSource } from './sandbox.ts'
 import type { SandboxHandler } from './sandbox.ts'
+import { PluginStorageQuotaError, isPluginStorageScope } from './PluginStorage.ts'
+import type { PluginStorage } from './PluginStorage.ts'
 import type { PluginCommandBroker, PluginMutationRequest } from './PluginHostApi.ts'
 import type { StructuralCommand } from '../structural/commands.ts'
 
@@ -85,7 +87,10 @@ const NOTIFICATION_KINDS = ['info', 'success', 'error'] as const
  * goes through the broker's own permission gate, so a sandbox panel can never
  * reach anything its manifest does not grant (fail closed at both layers).
  */
-export const brokerRpcHandlers = (session: PluginCommandBroker): Partial<Record<RpcMethod, SandboxHandler>> => ({
+export const brokerRpcHandlers = (
+  session: PluginCommandBroker,
+  storage?: PluginStorage,
+): Partial<Record<RpcMethod, SandboxHandler>> => ({
   'model.query': () => session.query(),
   'model.execute': ({ params }) => {
     if (!isRecord(params) || !isRecord(params.command) || typeof params.command.type !== 'string') {
@@ -115,4 +120,80 @@ export const brokerRpcHandlers = (session: PluginCommandBroker): Partial<Record<
     session.openPanel(params.panelId)
     return undefined
   },
+  // Namespaced extension storage (Goal 5). The namespace is the broker owner's
+  // plugin id — a panel can never read or write another plugin's keys; each
+  // scope also requires its own manifest grant (`storage.project` /
+  // `storage.local`), and without a host storage backing everything fails
+  // closed.
+  'storage.get': ({ params }) => {
+    const { scope, key } = requireStorageParams(params)
+    requireStorageGrant(session, scope)
+    return requireStorage(storage).get(session.ownerId, scope, key)
+  },
+  'storage.set': ({ params }) => {
+    const { scope, key } = requireStorageParams(params)
+    requireStorageGrant(session, scope)
+    if (!('value' in (params as Record<string, unknown>))) {
+      throw new RpcProtocolError('INVALID_PARAMS', 'storage.set requires { scope, key, value }')
+    }
+    try {
+      requireStorage(storage).set(session.ownerId, scope, key, (params as Record<string, unknown>).value)
+    } catch (error) {
+      if (error instanceof PluginStorageQuotaError) throw new RpcProtocolError(error.code, error.message)
+      throw error
+    }
+    return undefined
+  },
+  'storage.delete': ({ params }) => {
+    const { scope, key } = requireStorageParams(params)
+    requireStorageGrant(session, scope)
+    return requireStorage(storage).delete(session.ownerId, scope, key)
+  },
+  'storage.keys': ({ params }) => {
+    const { scope } = requireStorageScope(params)
+    requireStorageGrant(session, scope)
+    return requireStorage(storage).keys(session.ownerId, scope)
+  },
 })
+
+const STORAGE_PERMISSION_BY_SCOPE = {
+  project: 'storage.project',
+  local: 'storage.local',
+} as const
+
+/** Fail closed: reading/writing a storage scope requires the matching grant. */
+const requireStorageGrant = (session: PluginCommandBroker, scope: 'project' | 'local') => {
+  const permission = STORAGE_PERMISSION_BY_SCOPE[scope]
+  if (!session.grants.includes(permission)) {
+    throw new RpcProtocolError('PERMISSION_DENIED', `storage ${scope} access requires the ${permission} permission`)
+  }
+}
+
+const requireStorage = (storage: PluginStorage | undefined): PluginStorage => {
+  if (!storage) throw new RpcProtocolError('UNAVAILABLE', 'This session has no extension storage backing')
+  return storage
+}
+
+/** Validate { scope, key } storage params; scope defaults to 'project'. */
+const requireStorageParams = (params: unknown): { scope: 'project' | 'local'; key: string } => {
+  if (!isRecord(params) || typeof params.key !== 'string') {
+    throw new RpcProtocolError('INVALID_PARAMS', 'storage methods require { key, scope? }')
+  }
+  const scope = params.scope === undefined ? 'project' : params.scope
+  if (!isPluginStorageScope(scope)) {
+    throw new RpcProtocolError('INVALID_PARAMS', 'storage scope must be "project" or "local"')
+  }
+  return { scope, key: params.key }
+}
+
+/** Validate { scope? } params for storage.keys — listing needs no key. */
+const requireStorageScope = (params: unknown): { scope: 'project' | 'local' } => {
+  if (!isRecord(params)) {
+    throw new RpcProtocolError('INVALID_PARAMS', 'storage.keys requires { scope? }')
+  }
+  const scope = params.scope === undefined ? 'project' : params.scope
+  if (!isPluginStorageScope(scope)) {
+    throw new RpcProtocolError('INVALID_PARAMS', 'storage scope must be "project" or "local"')
+  }
+  return { scope }
+}

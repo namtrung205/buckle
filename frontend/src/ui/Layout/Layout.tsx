@@ -15,6 +15,8 @@ import CopilotPanel from '../Copilot/CopilotPanel';
 import ContributionPanelHost from './ContributionPanelHost';
 import SampleWindLoad from '../../extensions/sampleWindLoad';
 import SampleDrawMember from '../../extensions/sampleDrawMember';
+import SampleParametricTruss from '../../extensions/sampleParametricTruss';
+import PluginSecurityCenter from './PluginSecurityCenter';
 
 interface LayoutProps {
   children: ReactNode;
@@ -45,6 +47,9 @@ const Layout = observer(({ children }: LayoutProps) => {
           dock panel through the contribution registry without touching TopBar. */}
       <SampleWindLoad />
       <SampleDrawMember />
+      <SampleParametricTruss />
+      {/* Goal 6: live plugin audit, metrics and the emergency kill switch. */}
+      <PluginSecurityCenter />
 
       {/* Main content area with left bar */}
       <Box

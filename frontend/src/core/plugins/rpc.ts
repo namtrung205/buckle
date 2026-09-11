@@ -41,6 +41,10 @@ export const RPC_METHODS = {
   'model.execute': { params: { kind: 'object', optional: false, maxBytes: MAX_RPC_MESSAGE_BYTES } },
   'ui.notify': { params: { kind: 'object', optional: false, maxBytes: 4096 } },
   'ui.openPanel': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
+  'storage.get': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
+  'storage.set': { params: { kind: 'object', optional: false, maxBytes: MAX_RPC_MESSAGE_BYTES } },
+  'storage.delete': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
+  'storage.keys': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
 } as const
 
 export type RpcMethod = keyof typeof RPC_METHODS

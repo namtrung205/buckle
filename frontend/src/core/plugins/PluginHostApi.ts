@@ -30,6 +30,7 @@ export const PLUGIN_SURFACE_PERMISSIONS = [
   'model.read', 'workspace.readSelection', 'workspace.writeSelection',
   'ui.panel', 'ui.notify',
   'viewport.pick', 'viewport.draw', 'viewport.zoomTo',
+  'storage.project', 'storage.local',
 ] as const
 export type PluginSurfacePermission = (typeof PLUGIN_SURFACE_PERMISSIONS)[number]
 export type PluginSessionPermission = PluginPermission | PluginSurfacePermission
@@ -192,6 +193,12 @@ export class PluginCommandBroker {
       throw new PluginHostError('UNKNOWN_PANEL', `Unknown contribution panel ${panelId}`)
     }
     this.services.openPanel?.(panelId)
+  }
+
+  /** Identity of the plugin that owns this session — used by RPC bridges for
+   *  namespacing (storage keys) and audit provenance. */
+  get ownerId(): string {
+    return this.owner.id
   }
 
   notify(message: string, kind: 'info' | 'success' | 'error' = 'info') {

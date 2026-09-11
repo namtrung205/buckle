@@ -57,15 +57,20 @@ app = FastAPI(
     lifespan=lambda app: mcp_server.session_manager.run()
 )
 
-# Configurer CORS
-origins = ["*"]
+# Configure CORS: explicit allow-list (never "*") so credentialed requests stay
+# safe. Override per environment with CORS_ORIGINS="https://host,https://host2".
+_origins = os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173",
+)
+origins = [origin.strip() for origin in _origins.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 

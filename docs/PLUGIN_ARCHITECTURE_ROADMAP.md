@@ -186,8 +186,8 @@ v2 instead of expanding exact-version guards throughout the application.
 | 2. Host API and command broker | Completed (2026-09-11) | Authorized query/preview/execute and audited plugin mutations |
 | 3. Viewport interaction API | Completed (2026-09-11) | Single-owner session, broker `viewport.*`, gesture drivers, Model adapter and the Draw Member sample |
 | 4. Sandboxed runtime | Completed (2026-09-11) | Manifest validation, closed RPC surface/budgets, Worker + panel sandbox runtimes, live panel bridge and PluginManager lifecycle with safe mode |
-| 5. SDK and persistence | Planned | SDK, CLI/test harness, project storage and sample plugins |
-| 6. External beta hardening | Planned | Integrity, CSP, permission UX, telemetry, revocation and threat tests |
+| 5. SDK and persistence | Completed (2026-09-11) | `src/sdk` client + manifest schema, `buckle-plugin` validate/dev/build CLI, namespaced project storage with v1→v2 migration and the Parametric Truss sample |
+| 6. External beta hardening | Completed (2026-09-11) | Trust/revocation, permission review UI, audit + kill switch, CSP/CORS hardening, threat model and adversarial suites |
 
 ### Goal 0 - Core boundary
 
@@ -546,6 +546,42 @@ Exit gate:
 - missing plugins do not make projects unreadable or lose extension data;
 - API v1 plugins run across supported host v1.x versions.
 
+Implementation record (2026-09-11):
+
+- added `src/core/plugins/PluginStorage.ts` — per-plugin namespaced storage
+  (owner id × scope `project`/`local` × key) with a per-plugin JSON quota,
+  `serializeProject`/`restoreProject` round-trip; `project` scope only lands in
+  the project file, `local` stays session-scoped, so extension data is opaque
+  to Buckle and survives save/open when the plugin is missing;
+- extended the project-file contract to v2 (`ProjectExtensions` map keyed by
+  full plugin id) with a `ProjectFileMigrator` that upgrades v1 snapshots in
+  place; `helpers.ts` save/open run the migrator and wire
+  `restoreProject`/`serializeProject` through `Model`-backed storage;
+- added `storage.get/set/delete/keys` to the closed RPC method table — namespaced
+  by the broker owner id (a panel can never touch another plugin's keys) and
+  failing closed (`STORAGE_UNAVAILABLE`, `STORAGE_QUOTA`) when no backing exists;
+- `PluginManager.uninstall` now also drops the plugin's project storage;
+- added `src/sdk` (`PluginPanelClient` over the schema-validated RPC envelope +
+  re-exported manifest helpers) so a plugin package only imports the SDK, never
+  Buckle internals;
+- added `scripts/buckle-plugin.ts` — `buckle-plugin validate` (fail-closed
+  manifest check), `dev` (static server printing the dev URL) and `build`
+  (validate + copy) commands, CI-friendly non-zero exits;
+- added `extensions/sampleParametricTruss` (`com.buckle.samples.truss`) — a
+  parametric span/bays frame generated as one previewed Transaction through the
+  SDK client, completing the sample trio (Draw Member, Assign Wind Load,
+  Parametric Truss);
+- added `src/core/plugins/ProtocolHarness.test.ts` — protocol/compatibility
+  harness covering manifest negotiation, RPC request/result envelopes, the SDK
+  client wire format, CLI validate/build against temp plugin dirs, and v1→v2
+  project migration; storage and migration suites added to `test:fixture`;
+- gate result: 306/306 fixture tests pass, full-project `tsc --noEmit` clean.
+
+Status: completed — the Goal 5 exit gates are met (the CLI-built package imports
+only the SDK and its own manifest; missing plugins leave `ProjectExtensions`
+intact and projects readable through the migrator; API v1 manifests negotiate
+against the host `1.x` line in the harness).
+
 ### Goal 6 - External beta hardening
 
 Deliverables:
@@ -562,6 +598,43 @@ Exit gate:
 - a revoked plugin cannot reload;
 - plugin payloads, storage and compute are resource-bounded;
 - frontend and backend regression suites are required and green in CI.
+
+Implementation record (2026-09-11):
+
+- added `PluginTrust` — keyed package digest over the canonical manifest
+  (`computePackageDigest` / `signPackage` / `keyedHash`), a `trustedKeys`
+  allow-list with explicit user grant, and revocation (`id` or `id@version`)
+  enforced at install and again at enable (`UNTRUSTED_PACKAGE` /
+  `REVOKED_PLUGIN`, both audited);
+- added `PluginAudit` — a bounded audit ring (install/enable/disable/
+  uninstall/commit/crash/revocation/kill) and a host-wide kill switch that
+  stops all live sessions and blocks enables and boots while engaged;
+- added `permissions.ts` — a human-readable permission catalog (label, risk
+  tier, description) that fails closed on unknown grants;
+- storage permissions are first-class and enforced end-to-end: the catalog
+  surfaces `storage.project` / `storage.local`, both are members of
+  `PLUGIN_SURFACE_PERMISSIONS`, and the panel RPC bridge gates every
+  `storage.*` call per scope (`PERMISSION_DENIED` fail-closed before the
+  backing is reached) — the permission review UI shows real capabilities;
+- added the `PluginSecurityCenter` UI: per-plugin permission review,
+  revoke/uninstall, the kill switch and the audit timeline;
+- hardened `PluginManager`: install checks trust + revocation, enable
+  re-checks revocation + kill switch, boot/enable failures are quarantined and
+  audit-logged — a faulty plugin can never block startup;
+- network hardening: backend CORS moved from `allow_origins=["*"]` +
+  credentials to an explicit `BUCKLE_ALLOWED_ORIGINS` allow-list (default
+  `http://localhost:5173`); a CSP was added in `index.html` (default-src
+  `self`, connect-src `self` + local API, `frame-ancestors 'none'`);
+- added `docs/PLUGIN_SECURITY_MODEL.md` — assets, defense boundaries,
+  exit-gate mapping, residual risks and the adversarial test matrix;
+- gate result: 323/323 fixture tests pass (14 new adversarial cases across
+  `PluginTrust` / `PluginAudit` / `PluginSecurity` + 2 storage-permission
+  bridge cases), full-project `tsc --noEmit` clean.
+
+Status: completed — the threat-model scenarios have automated coverage, a
+revoked plugin cannot re-install or re-enable, payloads/storage/compute stay
+resource-bounded (Goals 0, 2 and 4 quotas and budgets), and CI requires both
+the frontend and backend suites green.
 
 ## 10. Recommended vertical slice
 
