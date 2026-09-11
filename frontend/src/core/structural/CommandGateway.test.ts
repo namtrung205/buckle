@@ -4,6 +4,7 @@ import {
   COMMAND_SCHEMA_VERSION,
   CommandConflictError,
   CommandGateway,
+  CommandPolicyError,
   CommandValidationError,
   StructuralDocument,
   type CommandEnvelope,
@@ -19,6 +20,16 @@ const envelope = (document: StructuralDocument, commandId: string, command: Stru
   modelRevision: document.revision,
   payload: command.payload,
   source: 'ui',
+}) as CommandEnvelope
+
+const pluginEnvelope = (document: StructuralDocument, commandId: string, command: StructuralCommand): CommandEnvelope => ({
+  commandId,
+  type: command.type,
+  schemaVersion: COMMAND_SCHEMA_VERSION,
+  modelRevision: document.revision,
+  payload: command.payload,
+  source: 'plugin',
+  actor: { kind: 'plugin', pluginId: 'com.example.fixture', pluginVersion: '1.0.0' },
 }) as CommandEnvelope
 
 const baseDocument = () => new StructuralDocument({
@@ -304,4 +315,109 @@ test('invalid workspace references do not create history or audit', () => {
   })), /Unknown workspace nodes id 999/)
   assert.equal(gateway.auditLog.length, 0)
   assert.equal(gateway.canUndo, false)
+})
+
+test('runtime boundary rejects malformed payloads without side effects', () => {
+  const document = new StructuralDocument()
+  const gateway = new CommandGateway(document)
+  const malformed = {
+    ...envelope(document, 'malformed', { type: 'CreateNodes', payload: { nodes: [] } }),
+    payload: { nodes: {}, injected: true },
+  } as unknown as CommandEnvelope
+
+  assert.throws(() => gateway.execute(malformed), /injected is not allowed|nodes must be an array/)
+  assert.equal(document.revision, 0)
+  assert.equal(document.nodes.size, 0)
+  assert.equal(gateway.auditLog.length, 0)
+  assert.equal(gateway.canUndo, false)
+})
+
+test('plugin commands require valid immutable actor provenance', () => {
+  const document = new StructuralDocument()
+  const gateway = new CommandGateway(document)
+  const command = pluginEnvelope(document, 'plugin-node', {
+    type: 'CreateNodes', payload: { nodes: [{ id: 1, position: [0, 0, 0] }] },
+  })
+
+  assert.throws(() => gateway.execute({ ...command, actor: undefined } as CommandEnvelope), /actor is required/)
+  assert.throws(() => gateway.execute({ ...command, source: 'ui' } as CommandEnvelope), /requires source=plugin/)
+  assert.throws(() => gateway.execute({
+    ...command, actor: { kind: 'plugin', pluginId: 'COM Example', pluginVersion: 'latest' },
+  } as CommandEnvelope), /pluginId is invalid|semantic version/)
+  assert.equal(document.revision, 0)
+  assert.equal(gateway.auditLog.length, 0)
+})
+
+test('plugin permissions are operation-scoped and audit the exact actor', () => {
+  const document = new StructuralDocument({ nodes: [{ id: 1, position: [0, 0, 0] }] })
+  const gateway = new CommandGateway(document)
+  const load = pluginEnvelope(document, 'plugin-load', {
+    type: 'CreateOrUpdateLoads',
+    payload: { loads: [{ id: 1, type: 'nodal', targetIds: [1], value: [0, 0, -5] }] },
+  })
+
+  assert.throws(() => gateway.execute(load, {
+    policy: { pluginPermissions: ['model.write.nodes'] },
+  }), (error: unknown) => error instanceof CommandPolicyError && error.code === 'PLUGIN_PERMISSION_DENIED')
+  assert.equal(document.loads.size, 0)
+  assert.equal(gateway.auditLog.length, 0)
+
+  gateway.execute(load, { policy: { pluginPermissions: ['model.write.loads'] } })
+  assert.equal(document.loads.size, 1)
+  assert.deepEqual(gateway.auditLog[0].actor, {
+    kind: 'plugin', pluginId: 'com.example.fixture', pluginVersion: '1.0.0',
+  })
+})
+
+test('locked policy allows workspace selection but rejects engineering mutation', () => {
+  const document = new StructuralDocument({ nodes: [{ id: 1, position: [0, 0, 0] }] })
+  const gateway = new CommandGateway(document)
+  const workspace = workspaceContext()
+
+  gateway.execute(envelope(document, 'locked-select', {
+    type: 'SetSelection', payload: { entities: [{ collection: 'nodes', id: 1 }] },
+  }), { ...workspace.context, policy: { modelLocked: true } })
+  assert.equal(workspace.state.selection.length, 1)
+
+  assert.throws(() => gateway.execute(envelope(document, 'locked-create', {
+    type: 'CreateNodes', payload: { nodes: [{ id: 2, position: [1, 0, 0] }] },
+  }), { policy: { modelLocked: true } }), (error: unknown) =>
+    error instanceof CommandPolicyError && error.code === 'MODEL_LOCKED')
+  assert.equal(document.nodes.has(2), false)
+  assert.equal(gateway.auditLog.length, 1)
+})
+
+test('plugin destructive changes require permission and explicit host approval', () => {
+  const document = new StructuralDocument({ nodes: [{ id: 1, position: [0, 0, 0] }] })
+  const gateway = new CommandGateway(document)
+  const deletion = pluginEnvelope(document, 'plugin-delete', {
+    type: 'DeleteNodes', payload: { ids: [1], cascade: true },
+  })
+
+  assert.throws(() => gateway.execute(deletion, {
+    policy: { pluginPermissions: ['model.delete.nodes'] },
+  }), (error: unknown) => error instanceof CommandPolicyError && error.code === 'PLUGIN_APPROVAL_REQUIRED')
+  assert.equal(document.nodes.has(1), true)
+
+  gateway.execute(deletion, {
+    policy: { pluginPermissions: ['model.delete.nodes'], allowPluginDestructive: true },
+  })
+  assert.equal(document.nodes.has(1), false)
+})
+
+test('command policy rejects entity and operation quota overflow before commit', () => {
+  const document = new StructuralDocument()
+  const gateway = new CommandGateway(document)
+  const command = envelope(document, 'quota', {
+    type: 'CreateNodes', payload: { nodes: [
+      { id: 1, position: [0, 0, 0] },
+      { id: 2, position: [1, 0, 0] },
+    ] },
+  })
+
+  assert.throws(() => gateway.execute(command, {
+    policy: { maxEntitiesPerOperation: 1 },
+  }), (error: unknown) => error instanceof CommandPolicyError && error.code === 'ENTITY_LIMIT')
+  assert.equal(document.nodes.size, 0)
+  assert.equal(gateway.auditLog.length, 0)
 })

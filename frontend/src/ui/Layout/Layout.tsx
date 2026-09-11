@@ -12,6 +12,8 @@ import FpsOverlay from './FpsOverlay';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
 import CopilotPanel from '../Copilot/CopilotPanel';
+import ContributionPanelHost from './ContributionPanelHost';
+import SampleWindLoad from '../../extensions/sampleWindLoad';
 
 interface LayoutProps {
   children: ReactNode;
@@ -38,6 +40,9 @@ const Layout = observer(({ children }: LayoutProps) => {
     >
       {/* Top Bar (Ribbon) */}
       <TopBar onMenuClick={handleMenuClick} />
+      {/* Built-in sample extension — contributes its own ribbon tab/button and
+          dock panel through the contribution registry without touching TopBar. */}
+      <SampleWindLoad />
 
       {/* Main content area with left bar */}
       <Box
@@ -74,6 +79,7 @@ const Layout = observer(({ children }: LayoutProps) => {
 
         {/* Right dock panel — inline properties for the focused entity, Results, or Draw */}
         {(model?.hasFocus() || model?.activeDialog === 'results' || model?.activeDialog === 'reactions' || model?.activeDialog === 'draw') && <RightPanel />}
+        <ContributionPanelHost />
       </Box>
 
       {/* Bottom Status Bar */}

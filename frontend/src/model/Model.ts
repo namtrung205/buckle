@@ -45,6 +45,7 @@ import {
   StructuralDocument,
   type AnalysisSnapshot,
   type CommandEnvelope,
+  type PluginPermission,
   type CommandGatewayContext,
   type CommandResult,
   type CommandTransactionOperation,
@@ -70,6 +71,7 @@ import { estimateSolidTriangles, shouldEvictSolidResources } from "./Rendering/s
 import { computeMemberFrame } from "./Rendering/memberFrame";
 import type { AnalysisOutput } from '../contracts/structuralModel';
 import { AiToolExecutor, type AgentBudget, type ParametricGeneratorBinding } from '../core/ai';
+import { PluginEventBus, type PluginCommandServices } from '../core/plugins';
 export type PointerCoords = {
   x: number;
   y: number;
@@ -119,6 +121,9 @@ export class Model {
   structuralSceneDB = new StructuralSceneDB()
   structuralDocumentBridge = new StructuralDocumentBridge(this.structuralDocument, this.structuralSceneDB)
   workspaceContext = new WorkspaceContext()
+  /** Host event bus for plugin sessions — publishes coalesced document and
+   *  workspace events; excluded from MobX observability on purpose. */
+  pluginEvents = new PluginEventBus()
   analysisRevision: number | null = null
   analysisSnapshotHash: string | null = null
   resultStore = new ResultStore()
@@ -1085,6 +1090,7 @@ export class Model {
       structuralSceneDB: false,
       structuralDocumentBridge: false,
       workspaceContext: false,
+      pluginEvents: false,
       resultStore: false,
       structuralSceneDBBuildMs: false,
       structuralSceneSyncScheduled: false,
@@ -1462,8 +1468,14 @@ export class Model {
   }
 
   /** Execute one validated canonical command and refresh renderer projections. */
-  executeCommand(command: CommandEnvelope, options: { allowDestructive?: boolean } = {}): CommandResult {
-    return this.commandGateway.execute(command, this.commandContext(options.allowDestructive === true))
+  executeCommand(command: CommandEnvelope, options: {
+    allowDestructive?: boolean
+    pluginPermissions?: readonly PluginPermission[]
+  } = {}): CommandResult {
+    return this.commandGateway.execute(command, this.commandContext(
+      options.allowDestructive === true,
+      options.pluginPermissions,
+    ))
   }
 
   /** Create a provider-neutral AI tool session wired to the live viewport projection. */
@@ -1488,7 +1500,23 @@ export class Model {
     return this.commandGateway.redo(this.commandContext(false))
   }
 
-  private commandContext(allowDestructive: boolean): CommandGatewayContext {
+  /** Model-backed services for plugin command sessions (Goal 2 broker bridge).
+   *  Pure reads plus the already policy-gated executeCommand path. */
+  pluginCommandServices(): PluginCommandServices {
+    return {
+      getRevision: () => this.structuralDocument.revision,
+      querySnapshot: () => this.structuralDocument.getSnapshot(),
+      getWorkspaceState: () => this.workspaceContext.getCommandState(),
+      execute: (command, options) => this.executeCommand(command, options),
+    };
+  }
+
+  /** Host event bus backing plugin session subscriptions (Goal 2). */
+  pluginEventBus(): PluginEventBus {
+    return this.pluginEvents;
+  }
+
+  private commandContext(allowDestructive: boolean, pluginPermissions?: readonly PluginPermission[]): CommandGatewayContext {
     return {
       getWorkspaceState: () => this.workspaceContext.getCommandState(),
       applyWorkspaceState: state => {
@@ -1507,11 +1535,27 @@ export class Model {
         if (beforeSelection !== afterSelection) {
           this.workspaceSelectionRevision++
           this.syncSelectionLinkedPanel()
+          this.pluginEvents.publish({ kind: 'workspace', revision: this.structuralDocument.revision })
         }
-        if (beforeHidden !== afterHidden) this.workspaceHiddenRevision++
+        if (beforeHidden !== afterHidden) {
+          this.workspaceHiddenRevision++
+          this.pluginEvents.publish({ kind: 'workspace', revision: this.structuralDocument.revision })
+        }
       },
       allowDestructive: () => allowDestructive,
+      policy: {
+        modelLocked: this.isLocked,
+        pluginPermissions,
+        allowPluginDestructive: allowDestructive,
+      },
       onCommitted: result => {
+        if (result.changed) {
+          this.pluginEvents.publish({
+            kind: 'document',
+            revision: result.revision,
+            snapshotHash: result.snapshotHash,
+          })
+        }
         if (!result.changed) return
         if (result.changes) {
           this.invalidateResults()

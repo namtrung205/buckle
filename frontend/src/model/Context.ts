@@ -1,8 +1,10 @@
 import { createContext, useContext } from 'react';
 import { Model } from './Model';
+import { ContributionRegistry } from '../core/plugins';
 
 type AppContextType = {
   model: Model;
+  contributions: ContributionRegistry;
 };
 
 export const useAppContext = () => {
@@ -13,5 +15,5 @@ export const useAppContext = () => {
   return context;
 };
 export const AppContext = createContext<AppContextType | undefined>(undefined);
-export const store = () => useAppContext();
 export const useModel = () => useAppContext().model;
+export const useContributions = () => useAppContext().contributions;

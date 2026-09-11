@@ -20,7 +20,13 @@ SelectionSetRecord,
 
 export const COMMAND_SCHEMA_VERSION = '1.0' as const
 
-export type CommandSource = 'ui' | 'ai' | 'mcp' | 'script' | 'system'
+export type CommandSource = 'ui' | 'ai' | 'mcp' | 'plugin' | 'script' | 'system'
+export type PluginCommandActor = Readonly<{
+  kind: 'plugin'
+  pluginId: string
+  pluginVersion: string
+}>
+export type CommandActor = PluginCommandActor
 export type LocalReference = EntityId | Readonly<{ alias: string }>
 export type Creatable<T> = Omit<T, 'id'> & { id?: EntityId; alias?: string }
 
@@ -73,6 +79,8 @@ export type CommandEnvelope<TCommand extends StructuralCommand = StructuralComma
   expectedModelRevision?: number
   payload: TCommand['payload']
   source: CommandSource
+  /** Immutable provenance stamped by the host. Required when source=plugin. */
+  actor?: CommandActor
   dryRun?: boolean
   transactionId?: string
 }>
@@ -95,6 +103,7 @@ export type CommandAuditEntry = Readonly<{
   transactionId?: string
   type: StructuralCommand['type'] | 'Undo' | 'Redo'
   source: CommandSource
+  actor?: CommandActor
   previousRevision: number
   revision: number
   timestamp: number

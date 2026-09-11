@@ -18,6 +18,8 @@ import {
   type StructuralDocumentSeed,
   type StructuralDocumentSnapshot,
 } from './types.ts'
+import { assertCommandEnvelope } from './CommandBoundary.ts'
+import { assertCommandAuthorized, type CommandPolicyContext } from './CommandPolicy.ts'
 
 export type CommandWorkspaceState = {
   selection: EntityReference[]
@@ -29,6 +31,8 @@ export type CommandGatewayContext = {
   applyWorkspaceState?: (state: CommandWorkspaceState) => void
   allowDestructive?: (operation: 'ImportModel' | 'ClearModel') => boolean
   onCommitted?: (result: CommandResult) => void
+  /** Host policy context. Plugin commands fail closed when grants are omitted. */
+  policy?: CommandPolicyContext
 }
 
 export type CommandGatewayOptions = {
@@ -122,6 +126,8 @@ export class CommandGateway {
   get canRedo() { return this.redoStack.length > 0 }
 
   execute(command: CommandEnvelope, context: CommandGatewayContext = {}): CommandResult {
+    assertCommandEnvelope(command)
+    assertCommandAuthorized(command, context.policy)
     validateCommandId(command.commandId)
     if (command.schemaVersion !== COMMAND_SCHEMA_VERSION) {
       throw new CommandValidationError(`Unsupported command schemaVersion ${String(command.schemaVersion)}`)
@@ -227,6 +233,7 @@ export class CommandGateway {
       ...(command.transactionId ? { transactionId: command.transactionId } : {}),
       type: command.type,
       source: command.source,
+      ...(command.actor ? { actor: clone(command.actor) } : {}),
       previousRevision: beforeSnapshot.revision,
       revision: this.document.revision,
       timestamp: Date.now(),
@@ -378,6 +385,7 @@ export class CommandGateway {
       ...(command.transactionId ? { transactionId: command.transactionId } : {}),
       type: command.type,
       source: command.source,
+      ...(command.actor ? { actor: clone(command.actor) } : {}),
       previousRevision: this.document.revision,
       revision: this.document.revision,
       timestamp: Date.now(),
