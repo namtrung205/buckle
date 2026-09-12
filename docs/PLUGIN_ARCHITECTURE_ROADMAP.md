@@ -188,6 +188,7 @@ v2 instead of expanding exact-version guards throughout the application.
 | 4. Sandboxed runtime | Completed (2026-09-11) | Manifest validation, closed RPC surface/budgets, Worker + panel sandbox runtimes, live panel bridge and PluginManager lifecycle with safe mode |
 | 5. SDK and persistence | Completed (2026-09-11) | `src/sdk` client + manifest schema, `buckle-plugin` validate/dev/build CLI, namespaced project storage with v1→v2 migration and the Parametric Truss sample |
 | 6. External beta hardening | Completed (2026-09-11) | Trust/revocation, permission review UI, audit + kill switch, CSP/CORS hardening, threat model and adversarial suites |
+| 7. Client-side bundle loader | In progress (2026-09-11) | Developer preview: upload `.zip`/worker `.js` from the client, validate fail-closed, run in the Worker/panel sandbox with contributions, session-only |
 
 ### Goal 0 - Core boundary
 
@@ -635,6 +636,51 @@ Status: completed — the threat-model scenarios have automated coverage, a
 revoked plugin cannot re-install or re-enable, payloads/storage/compute stay
 resource-bounded (Goals 0, 2 and 4 quotas and budgets), and CI requires both
 the frontend and backend suites green.
+
+### Goal 7 - Client-side bundle loader (developer preview)
+
+Deliverables:
+
+- upload a `.zip` package or a single compiled `.js`/`.mjs` worker file from
+  the client (no server round-trip, no persistence);
+- install/enable are one action: manifest validation → broker session →
+  Worker/panel sandbox → contributions registered in the app registry;
+- fail-closed bundle rules: size/file-count/extension limits, path-traversal
+  and remote-entry rejection, unknown permissions refused;
+- audit + one-click unload.
+
+Implementation record (2026-09-11):
+
+- added `core/plugins/PluginBundleLoader.ts` — `parseWorkerFile` (single-file
+  worker-only manifest from a filename slug, `com.plugins.*` id, fail-closed
+  zero grants by default), `parseZipBundle` (unzip via `fflate`, manifest
+  discovery + `validateManifest`, build-output subfolder rebase, entrypoint
+  presence + `https:` rejection), `isSelfContainedHtml` (panels from a zip
+  must inline scripts/styles so a single blob URL can render them) and
+  `launchBundledPlugin`, which creates the broker session from the manifest
+  grants, wraps the compiled worker in the blob-module `WorkerRuntime` with
+  `brokerRpcHandlers` + budgets + violation cap, builds contribution commands/
+  ribbon/panels (panel entries point at `blob:` URLs) and returns a
+  `LoadedPluginHandle` whose idempotent `stop()` terminates the worker, revokes
+  blob URLs, unregisters contributions and clears the session — every launch is
+  audited (`install`/`enable`, `disable` on unload);
+- added `ui/Layout/PluginLoader.tsx` — a floating "Plugin loader" box (bottom-
+  left): **Install** (`.zip,.js,.mjs` file picker), **Demo** (inline worker
+  reads `model.query` and toasts the node/member counts) and per-plugin unload,
+  wired to the real Model services, contribution registry, `pluginSessions`
+  and `pluginStorage` singletons;
+- CSP: `frame-src` widened from `'self'` to `'self' blob:` so self-contained
+  panel zips render in the origin-opaque iframes;
+- added `examples/hello-plugin` — shaded manifest + self-contained worker with
+  ribbon contributions, validated by the `buckle-plugin` CLI;
+- gate result (first slice): 338/338 fixture tests pass (15 new loader tests:
+  zip-slip, forbidden files, missing/remote entries, unknown permissions,
+  launch wiring + atomic-failure behavior), full-project `tsc --noEmit` clean,
+  `vite build` green.
+
+Status: in progress — the session-only loader works end-to-end; next steps are
+persisted installs (IndexedDB), package signing at install (`PluginTrust`),
+remote dev-URL loading and the third-party SDK parity pass.
 
 ## 10. Recommended vertical slice
 

@@ -17,6 +17,7 @@ import SampleWindLoad from '../../extensions/sampleWindLoad';
 import SampleDrawMember from '../../extensions/sampleDrawMember';
 import SampleParametricTruss from '../../extensions/sampleParametricTruss';
 import PluginSecurityCenter from './PluginSecurityCenter';
+import PluginLoader from './PluginLoader';
 
 interface LayoutProps {
   children: ReactNode;
@@ -50,6 +51,8 @@ const Layout = observer(({ children }: LayoutProps) => {
       <SampleParametricTruss />
       {/* Goal 6: live plugin audit, metrics and the emergency kill switch. */}
       <PluginSecurityCenter />
+      {/* Developer preview: load external .zip / worker .js bundles from the client. */}
+      <PluginLoader />
 
       {/* Main content area with left bar */}
       <Box

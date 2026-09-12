@@ -14,4 +14,5 @@ export * from './PluginManager.ts'
 export * from './PluginTrust.ts'
 export * from './PluginAudit.ts'
 export * from './permissions.ts'
+export * from './PluginBundleLoader.ts'
 
