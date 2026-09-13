@@ -14,6 +14,7 @@ import {
   Height as HeightIcon,
   CellTower as CellTowerIcon,
   ZoomIn as ZoomInIcon,
+  Extension as ExtensionIcon,
 } from '@mui/icons-material';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import Settings from '../Settings/Settings';
@@ -44,7 +45,7 @@ type BuiltinRibbonAction =
   | 'open' | 'save' | 'materials' | 'sections' | 'loads' | 'supports'
   | 'draw' | 'move' | 'zoomSelected' | 'warehouse' | 'tower' | 'grid'
   | 'level' | 'workplane' | 'settings' | 'runAnalysis' | 'unlock'
-  | 'results' | 'reactions' | 'downloadResults';
+  | 'results' | 'reactions' | 'downloadResults' | 'plugins';
 
 const builtinOwner = { kind: 'builtin', id: 'buckle.ribbon', version: APP_VERSION } as const;
 
@@ -67,7 +68,7 @@ const builtinRibbonBundle = (invoke: (action: BuiltinRibbonAction) => void | Pro
       command('workplane', 'Set the active drawing plane'), command('settings', 'Settings'),
       command('runAnalysis', 'Run Analysis'), command('unlock', 'Lock or unlock analysis results'),
       command('results', 'View results'), command('reactions', 'View support reactions'),
-      command('downloadResults', 'Download analysis results'),
+      command('downloadResults', 'Download analysis results'), command('plugins', 'Manage plugins'),
     ],
     ribbonTabs: [
       { id: 'file', label: 'File', order: 10 },
@@ -79,6 +80,7 @@ const builtinRibbonBundle = (invoke: (action: BuiltinRibbonAction) => void | Pro
     ribbon: [
       { id: 'builtin.ribbon.open', tabId: 'file', groupId: 'file', groupLabel: 'File', commandId: 'builtin.open', label: 'Open', order: 10, icon: host('open') },
       { id: 'builtin.ribbon.save', tabId: 'file', groupId: 'file', groupLabel: 'File', commandId: 'builtin.save', label: 'Save', order: 20, icon: host('save') },
+      { id: 'builtin.ribbon.plugins', tabId: 'file', groupId: 'plugins', groupLabel: 'Plugins', commandId: 'builtin.plugins', label: 'Manage plugins', title: 'Install and manage plugins', order: 10, icon: host('plugins') },
       { id: 'builtin.ribbon.materials', tabId: 'model', groupId: 'define', groupLabel: 'Define', groupOrder: 10, commandId: 'builtin.materials', label: 'Materials', order: 10, icon: asset('/construction.png', 'Materials'), enabledWhen: ['modelUnlocked'] },
       { id: 'builtin.ribbon.sections', tabId: 'model', groupId: 'define', groupLabel: 'Define', groupOrder: 10, commandId: 'builtin.sections', label: 'Sections', order: 20, icon: asset('/sections.png', 'Sections'), enabledWhen: ['modelUnlocked'] },
       { id: 'builtin.ribbon.loads', tabId: 'model', groupId: 'assign', groupLabel: 'Assign', groupOrder: 20, commandId: 'builtin.loads', label: 'Loads', order: 10, icon: asset('/loads.png', 'Loads'), enabledWhen: ['modelUnlocked'] },
@@ -103,6 +105,7 @@ const builtinRibbonBundle = (invoke: (action: BuiltinRibbonAction) => void | Pro
 
 interface TopBarProps {
   onMenuClick?: () => void;
+  onPluginsClick?: () => void;
 }
 
 interface RibbonButtonProps {
@@ -221,6 +224,7 @@ const hostIcon = (name: string, locked: boolean) => {
     case 'level': return <HeightIcon sx={sx} />;
     case 'workplane': return <LayersIcon sx={sx} />;
     case 'download': return <DownloadIcon sx={sx} />;
+    case 'plugins': return <ExtensionIcon sx={sx} />;
     case 'lock': return locked ? <LockIcon sx={sx} /> : <LockOpenIcon sx={sx} />;
     default: return null;
   }
@@ -238,7 +242,7 @@ const conditionalText = (
   return fallback;
 };
 
-const TopBar = observer(({ onMenuClick }: TopBarProps) => {
+const TopBar = observer(({ onMenuClick, onPluginsClick }: TopBarProps) => {
   const model = useModel();
   const contributions = useContributions();
   const actionsRef = useRef<Partial<Record<BuiltinRibbonAction, () => void | Promise<void>>>>({});
@@ -533,6 +537,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     results: () => open('results'),
     reactions: () => open('reactions'),
     downloadResults,
+    plugins: () => onPluginsClick?.(),
   };
 
   useLayoutEffect(() => contributions.register(

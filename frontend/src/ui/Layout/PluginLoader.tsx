@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Box, Button, Chip, IconButton, Typography } from '@mui/material';
-import { Add as AddIcon, Delete as DeleteIcon, Extension as ExtensionIcon, Science as ScienceIcon } from '@mui/icons-material';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Autocomplete, Box, Button, Chip, IconButton, TextField, Typography } from '@mui/material';
+import { Add as AddIcon, Delete as DeleteIcon, Extension as ExtensionIcon } from '@mui/icons-material';
 import { toast } from 'react-toastify';
 import { colors } from '../../theme';
 import { useContributions, useModel } from '../../model/Context';
@@ -10,47 +10,25 @@ import {
   parseWorkerFile,
   parseZipBundle,
   PluginLoadError,
+  PLUGIN_SURFACE_PERMISSIONS,
 } from '../../core/plugins';
+import { PLUGIN_PERMISSIONS } from '../../core/structural/CommandPolicy';
 import type { PluginLaunchDeps, PluginSessionPermission } from '../../core/plugins';
 import { pluginSessions } from '../../core/plugins/PluginSessionRegistry';
 import { pluginStorage } from '../../core/plugins/PluginStorage';
 import { pluginAudit } from '../../core/plugins/PluginAudit';
+import { pluginKillSwitch } from '../../core/plugins/PluginAudit';
 import type { WorkerLike } from '../../core/plugins/WorkerRuntime';
+import Dialog from '../../components/Dialog/Dialog';
+import PluginSecurityCenter from './PluginSecurityCenter';
 
 /**
- * Developer preview: load an external plugin bundle straight from the client —
+ * Load an external plugin bundle straight from the client —
  * a `.zip` package (manifest + worker/panel files) or a single compiled
  * `.js`/`.mjs` worker file. Nothing persists across reloads; every launch is
  * audited and can be stopped in one click. The sandbox runtimes, broker gates
  * and RPC budgets are the exact ones used by the built-in samples.
  */
-
-const DEMO_WORKER_SOURCE = `
-"use strict";
-var V = 1, nextId = 0, pending = new Map();
-self.onmessage = function (event) {
-  var msg = event.data;
-  if (msg && msg.v === V && msg.id && pending.has(msg.id)) {
-    var entry = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.ok) entry.resolve(msg.value);
-    else entry.reject(new Error((msg.error && msg.error.message) || "rpc error"));
-  }
-};
-function call(method, params) {
-  return new Promise(function (resolve, reject) {
-    var id = "demo-" + (++nextId);
-    pending.set(id, { resolve: resolve, reject: reject });
-    self.postMessage(params === undefined ? { v: V, id: id, method: method } : { v: V, id: id, method: method, params: params });
-  });
-}
-call("model.query").then(function (snapshot) {
-  var count = function (kind) { return Array.isArray(snapshot && snapshot[kind]) ? snapshot[kind].length : 0; };
-  return call("ui.notify", { message: "Demo worker: " + count("nodes") + " nodes, " + count("members") + " members, " + count("loads") + " loads", kind: "success" });
-}).catch(function (error) {
-  return call("ui.notify", { message: "Demo worker failed: " + (error && error.message), kind: "error" }).catch(function () {});
-});
-`.trim();
 
 type LoadedEntry = Readonly<{
   id: string;
@@ -62,12 +40,34 @@ type LoadedEntry = Readonly<{
   stop: () => void;
 }>;
 
-const PluginLoader = () => {
+const permissionOptions: PluginSessionPermission[] = [...new Set([...PLUGIN_SURFACE_PERMISSIONS, ...PLUGIN_PERMISSIONS])];
+
+interface PluginLoaderProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+const PluginLoader = ({ open, onClose }: PluginLoaderProps) => {
   const model = useModel();
   const contributions = useContributions();
   const [loaded, setLoaded] = useState<LoadedEntry[]>([]);
   const [log, setLog] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [jsGrants, setJsGrants] = useState<PluginSessionPermission[]>([]);
+  const killSwitch = useSyncExternalStore(pluginKillSwitch.subscribe, () => pluginKillSwitch.snapshot, () => pluginKillSwitch.snapshot);
+  const loadedRef = useRef(loaded);
+  loadedRef.current = loaded;
+
+  useEffect(() => {
+    if (!killSwitch.engaged || loaded.length === 0) return;
+    for (const entry of loaded) entry.stop();
+    setLoaded([]);
+    setLog(prev => [...prev.slice(-39), 'All plugins stopped by the kill switch']);
+  }, [killSwitch.engaged, loaded]);
+
+  useEffect(() => () => {
+    for (const entry of loadedRef.current) entry.stop();
+  }, []);
 
   const pushLog = useCallback((line: string) => {
     setLog(prev => [...prev.slice(-39), line]);
@@ -95,7 +95,19 @@ const PluginLoader = () => {
       ),
       spawnWorker: (bytes: Uint8Array): WorkerLike => {
         const url = URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' }));
-        return new Worker(url, { type: 'module' }) as unknown as WorkerLike;
+        let worker: Worker;
+        try {
+          worker = new Worker(url, { type: 'module' });
+        } catch (error) {
+          URL.revokeObjectURL(url);
+          throw error;
+        }
+        return {
+          postMessage: message => worker.postMessage(message),
+          terminate: () => { worker.terminate(); URL.revokeObjectURL(url); },
+          addEventListener: (type, listener) => worker.addEventListener(type, listener),
+          removeEventListener: (type, listener) => worker.removeEventListener(type, listener),
+        };
       },
       createPanelUrl: (bytes: Uint8Array): string => URL.createObjectURL(new Blob([bytes], { type: 'text/html' })),
       revokeUrl: url => URL.revokeObjectURL(url),
@@ -114,6 +126,10 @@ const PluginLoader = () => {
     grants?: readonly PluginSessionPermission[],
   ) => {
     if (!deps) return;
+    if (pluginKillSwitch.snapshot.engaged) {
+      pushLog(`Rejected ${filename} — release the kill switch before installing plugins`);
+      return;
+    }
     setBusy(true);
     try {
       const bundled = kind === 'zip' ? parseZipBundle(bytes, filename) : parseWorkerFile(filename, bytes, grants);
@@ -124,6 +140,10 @@ const PluginLoader = () => {
         setLoaded(prev => prev.filter(entry => entry.id !== id));
       }
       const handle = await launchBundledPlugin(bundled, deps);
+      if (pluginKillSwitch.snapshot.engaged) {
+        handle.stop();
+        throw new PluginLoadError('KILL_SWITCH_ENGAGED', 'plugin activation was stopped by the kill switch');
+      }
       setLoaded(prev => [...prev, {
         id,
         name: bundled.manifest.name,
@@ -153,41 +173,40 @@ const PluginLoader = () => {
       const file = (event.target as HTMLInputElement).files?.[0];
       if (!file) return;
       void file.arrayBuffer().then(buffer =>
-        activate(new Uint8Array(buffer), file.name, /\.zip$/i.test(file.name) ? 'zip' : 'worker'));
+        activate(new Uint8Array(buffer), file.name, /\.zip$/i.test(file.name) ? 'zip' : 'worker', jsGrants))
+        .catch(error => pushLog(`Could not read ${file.name}: ${error instanceof Error ? error.message : String(error)}`));
     };
     document.body.appendChild(input);
     input.click();
   };
 
-  const loadDemo = () => {
-    void activate(new TextEncoder().encode(DEMO_WORKER_SOURCE), 'demo-worker.js', 'worker', ['model.read', 'ui.notify']);
-  };
-
   return (
-    <Box
-      data-plugin-loader
-      sx={{
-        position: 'fixed', left: 12, bottom: 12, zIndex: 1300,
-        width: 300, maxHeight: 340, overflow: 'hidden', display: 'flex', flexDirection: 'column',
-        backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 1.5,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
-      }}
-    >
+    <Dialog open={open} onClose={onClose} title="Manage plugins" maxWidth="sm"
+      PaperProps={{ sx: { width: 560, maxWidth: 'calc(100vw - 32px)' } }}>
+    <Box data-plugin-loader sx={{ overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderBottom: `1px solid ${colors.divider}` }}>
         <ExtensionIcon sx={{ fontSize: 16, color: colors.accentSoft }} />
         <Typography sx={{ fontSize: '0.8rem', fontWeight: 600, color: colors.text, flex: 1 }}>Plugin loader</Typography>
-        <Button size="small" variant="outlined" color="primary" onClick={loadDemo} disabled={busy} sx={{ minWidth: 0, px: 1, fontSize: '0.65rem' }}>
-          <ScienceIcon sx={{ fontSize: 14, mr: 0.5 }} /> Demo
-        </Button>
-        <Button size="small" variant="contained" onClick={pickFile} disabled={busy} sx={{ minWidth: 0, px: 1, fontSize: '0.65rem' }}>
+        <Button size="small" variant="contained" onClick={pickFile} disabled={busy || killSwitch.engaged || !deps} sx={{ minWidth: 0, px: 1, fontSize: '0.65rem' }}>
           <AddIcon sx={{ fontSize: 14, mr: 0.5 }} /> Install
         </Button>
+      </Box>
+
+      <Box sx={{ px: 1.5, py: 1, borderBottom: `1px solid ${colors.divider}` }}>
+        <Typography sx={{ fontSize: '0.7rem', color: colors.textDim, mb: 0.75 }}>
+          Permissions for single-file JS only. ZIP bundles declare permissions in their manifest.
+        </Typography>
+        <Autocomplete multiple size="small" options={permissionOptions} value={jsGrants}
+          onChange={(_, value) => setJsGrants(value)}
+          renderInput={params => <TextField {...params} label="JS permissions" placeholder={jsGrants.length ? '' : 'No host access'} />}
+          sx={{ '& .MuiInputBase-root': { color: colors.text }, '& .MuiInputLabel-root': { color: colors.textDim } }}
+        />
       </Box>
 
       <Box sx={{ px: 1.5, py: 0.75, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
         {loaded.length === 0 && (
           <Typography sx={{ fontSize: '0.72rem', color: colors.textDim }}>
-            Upload a .zip bundle or a compiled worker .js to run it in the sandbox.
+            Install a .zip bundle with buckle.plugin.json, or a compiled .js/.mjs Worker. Plugins run for this session only.
           </Typography>
         )}
         {loaded.map(entry => (
@@ -215,7 +234,7 @@ const PluginLoader = () => {
           <Box sx={{ px: 1.5, py: 1, borderTop: `1px solid ${colors.divider}` }}>
             <Typography sx={{ fontSize: '0.68rem', color: colors.textDim }}>Log</Typography>
           </Box>
-          <Box sx={{ flex: 1, overflowY: 'auto', px: 1.5, pb: 1 }}>
+          <Box sx={{ maxHeight: 120, overflowY: 'auto', px: 1.5, pb: 1 }}>
             {log.map((line, index) => (
               <Typography key={`${index}-${line}`} sx={{ fontSize: '0.62rem', color: colors.textDim, lineHeight: 1.5 }}>
                 {line}
@@ -224,7 +243,9 @@ const PluginLoader = () => {
           </Box>
         </>
       )}
+      <PluginSecurityCenter />
     </Box>
+    </Dialog>
   );
 };
 

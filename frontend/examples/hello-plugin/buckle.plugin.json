@@ -1,13 +1,14 @@
 {
   "id": "com.buckle.examples.hello",
   "name": "Hello Buckle",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": 1,
   "permissions": ["model.read", "ui.notify"],
   "entrypoints": { "worker": "./worker.js" },
   "contributions": {
-    "commands": [{ "id": "com.buckle.examples.hello.run", "title": "Say hello from the sample plugin" }],
+    "commands": [{ "id": "com.buckle.examples.hello.run", "title": "Open the sample plugin panel" }],
     "ribbonTabs": [{ "id": "com.buckle.examples.hello.tab", "label": "Examples", "order": 70 }],
+    "panels": [{ "id": "com.buckle.examples.hello.panel", "title": "Hello Buckle", "entry": "./panel.html" }],
     "ribbon": [
       {
         "id": "com.buckle.examples.hello.ribbon",
@@ -15,8 +16,8 @@
         "groupId": "hello",
         "groupLabel": "Hello",
         "commandId": "com.buckle.examples.hello.run",
-        "label": "Say hello",
-        "title": "Hello Buckle — zip-loaded sample plugin (worker sandbox)"
+        "label": "Open sample",
+        "title": "Open the Hello Buckle sample panel"
       }
     ]
   }

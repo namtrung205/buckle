@@ -37,10 +37,8 @@ const PluginSecurityCenter = () => {
     <Box
       data-plugin-security-center
       sx={{
-        position: 'fixed', right: 12, bottom: 12, zIndex: 1300,
-        width: 300, maxHeight: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column',
-        backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 1.5,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+        minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column',
+        borderTop: `1px solid ${colors.border}`,
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1.5, py: 1, borderBottom: `1px solid ${colors.divider}` }}>
@@ -76,7 +74,7 @@ const PluginSecurityCenter = () => {
       </Box>
 
       <Divider />
-      <Box sx={{ flex: 1, overflowY: 'auto', px: 1.5, py: 1 }}>
+      <Box sx={{ maxHeight: 180, overflowY: 'auto', px: 1.5, py: 1 }}>
         {auditEntries.slice(-AUDIT_PREVIEW).reverse().map((entry, index) => (
           <Box key={`${entry.at}-${index}`} sx={{ py: 0.4, borderBottom: index < AUDIT_PREVIEW - 1 ? `1px solid ${colors.divider}` : 'none' }}>
             <Chip size="small" label={entry.action} color={actionTone[entry.action] ?? 'default'} sx={{ fontSize: '0.6rem', height: 16, mr: 1 }} />

@@ -256,7 +256,9 @@ export const launchBundledPlugin = async (
       budget: new RpcBudget({ maxCalls: MAX_RPC_CALLS_PER_WINDOW, windowMs: RPC_RATE_WINDOW_MS }),
       callTimeoutMs: 5_000,
       maxViolations: 10,
-      onCrash: reason => deps.notify?.(`[${manifest.id}] worker ${reason}`, 'error'),
+      onCrash: reason => {
+        if (reason !== 'terminated') deps.notify?.(`[${manifest.id}] worker ${reason}`, 'error')
+      },
     })
     stopTasks.push(() => runtime.terminate())
   }

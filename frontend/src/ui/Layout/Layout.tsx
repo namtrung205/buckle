@@ -13,10 +13,6 @@ import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
 import CopilotPanel from '../Copilot/CopilotPanel';
 import ContributionPanelHost from './ContributionPanelHost';
-import SampleWindLoad from '../../extensions/sampleWindLoad';
-import SampleDrawMember from '../../extensions/sampleDrawMember';
-import SampleParametricTruss from '../../extensions/sampleParametricTruss';
-import PluginSecurityCenter from './PluginSecurityCenter';
 import PluginLoader from './PluginLoader';
 
 interface LayoutProps {
@@ -25,6 +21,7 @@ interface LayoutProps {
 
 const Layout = observer(({ children }: LayoutProps) => {
   const [isLeftBarCollapsed, setIsLeftBarCollapsed] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
   const model = useModel();
 
   const handleMenuClick = () => {
@@ -43,16 +40,8 @@ const Layout = observer(({ children }: LayoutProps) => {
       }}
     >
       {/* Top Bar (Ribbon) */}
-      <TopBar onMenuClick={handleMenuClick} />
-      {/* Built-in sample extension — contributes its own ribbon tab/button and
-          dock panel through the contribution registry without touching TopBar. */}
-      <SampleWindLoad />
-      <SampleDrawMember />
-      <SampleParametricTruss />
-      {/* Goal 6: live plugin audit, metrics and the emergency kill switch. */}
-      <PluginSecurityCenter />
-      {/* Developer preview: load external .zip / worker .js bundles from the client. */}
-      <PluginLoader />
+      <TopBar onMenuClick={handleMenuClick} onPluginsClick={() => setPluginsOpen(true)} />
+      <PluginLoader open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
 
       {/* Main content area with left bar */}
       <Box
