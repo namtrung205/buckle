@@ -70,6 +70,16 @@ const assignLoads = (memberIds: readonly number[]): PluginMutationRequest => ({
   },
 })
 
+test('ui.notify requires its own reviewed grant', () => {
+  const { broker, services, notices } = harness()
+  assert.throws(() => broker.notify('blocked'),
+    (error: unknown) => error instanceof PluginHostError && error.code === 'PERMISSION_DENIED')
+  assert.equal(notices.length, 0)
+  const granted = createPluginCommandBroker(services, owner, ['ui.notify'])
+  granted.notify('allowed', 'success')
+  assert.deepEqual(notices, [{ message: 'allowed', kind: 'success' }])
+})
+
 test('broker stamps plugin provenance and the whole transaction undoes in one host step', () => {
   const { document, gateway, broker } = harness()
   const outcome = broker.execute(assignLoads([10, 11]))

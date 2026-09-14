@@ -2,10 +2,9 @@ import { canonicalStringify, deterministicHash } from '../structural/canonical.t
 import type { PluginManifest } from './manifest.ts'
 
 /**
- * Package integrity, signature and revocation (Goal 6). Signatures are keyed
- * FNV-1a digests over the canonical manifest — deterministic, dependency-free
- * and enough for tamper detection in the beta distribution model. A revoked
- * plugin id (or id@version) can never be installed or re-enabled again.
+ * Legacy internal manifest trust helper. Its keyed FNV-1a digest is NOT a
+ * cryptographic publisher signature, covers the manifest only, and is not used
+ * by the live ZIP installer. Keep it out of public SDK trust claims.
  */
 
 export class PluginTrustError extends Error {

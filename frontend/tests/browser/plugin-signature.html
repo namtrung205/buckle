@@ -1,0 +1,15 @@
+<!doctype html><html><meta charset="utf-8"><title>Buckle Ed25519 browser probe</title>
+<pre id="result">running</pre><script>
+const fromBase64 = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
+const publicKey = fromBase64('ASMv2RGRIDwQLh/eMMF0YmFIUyLFoV6pKxXNg5RUnz8=');
+const signature = fromBase64('9xw0cOXg9OyhZCAGMak4ctYdhJ+rhb0P1WfWzqZeaPKlSFHwUiX7ueI8JZVsCjsBLhqckTnJqgmYwXTkQceaDQ==');
+const result = document.getElementById('result');
+(async () => {
+  const key = await crypto.subtle.importKey('raw', publicKey, 'Ed25519', false, ['verify']);
+  const message = new TextEncoder().encode('Buckle browser signature probe v1');
+  const valid = await crypto.subtle.verify('Ed25519', key, signature, message);
+  const tampered = await crypto.subtle.verify('Ed25519', key, signature,
+    new TextEncoder().encode('Buckle browser signature probe changed'));
+  result.textContent = JSON.stringify({ valid, tampered });
+})().catch(error => { result.textContent = JSON.stringify({ error: String(error) }); });
+</script></html>

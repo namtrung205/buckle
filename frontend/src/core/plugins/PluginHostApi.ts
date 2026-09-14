@@ -9,6 +9,8 @@ import { CommandConflictError, CommandValidationError } from '../structural/Comm
 import type { CommandWorkspaceState } from '../structural/CommandGateway.ts'
 import { CommandPolicyError, PLUGIN_PERMISSIONS } from '../structural/CommandPolicy.ts'
 import type { PluginPermission } from '../structural/CommandPolicy.ts'
+import { PLUGIN_SURFACE_PERMISSIONS } from '../../../packages/plugin-sdk/src/contract.ts'
+import type { PluginSurfacePermission, PluginSessionPermission } from '../../../packages/plugin-sdk/src/contract.ts'
 import type { EntityReference, Vector3Record } from '../structural/types.ts'
 import type { ContributionOwner } from './types.ts'
 import type { PluginEventBus, PluginEventFilter, PluginHostEvent } from './PluginEventBus.ts'
@@ -26,14 +28,8 @@ const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 /** Read/UI permissions enforced by the broker itself — the operation policy only
  * maps mutations, so queries and UI surfaces are gated here per the roadmap
  * permission families. */
-export const PLUGIN_SURFACE_PERMISSIONS = [
-  'model.read', 'workspace.readSelection', 'workspace.writeSelection',
-  'ui.panel', 'ui.notify',
-  'viewport.pick', 'viewport.draw', 'viewport.zoomTo',
-  'storage.project', 'storage.local',
-] as const
-export type PluginSurfacePermission = (typeof PLUGIN_SURFACE_PERMISSIONS)[number]
-export type PluginSessionPermission = PluginPermission | PluginSurfacePermission
+export { PLUGIN_SURFACE_PERMISSIONS }
+export type { PluginSurfacePermission, PluginSessionPermission }
 
 export class PluginHostError extends Error {
   readonly code: string
@@ -202,6 +198,7 @@ export class PluginCommandBroker {
   }
 
   notify(message: string, kind: 'info' | 'success' | 'error' = 'info') {
+    this.assertSurface('ui.notify', 'ui.notify')
     const now = Date.now()
     if (this.lastNotice && this.lastNotice.message === message && now - this.lastNotice.at < 500) return
     this.lastNotice = { message, at: now }

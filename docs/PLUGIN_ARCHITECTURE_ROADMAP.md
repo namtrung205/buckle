@@ -6,6 +6,10 @@
 - Core principle: plugins never receive direct access to `Model`, React, MobX,
   Three.js, the host DOM, authentication state, or the raw WebGL renderer.
 
+The completed goals below record internal architecture milestones. For the
+remaining work required to ship an installable **public third-party SDK**, use
+[`PUBLIC_PLUGIN_SDK_GOALS.md`](PUBLIC_PLUGIN_SDK_GOALS.md).
+
 ## 1. Outcome
 
 Buckle will support third-party plugins that can contribute ribbon buttons,

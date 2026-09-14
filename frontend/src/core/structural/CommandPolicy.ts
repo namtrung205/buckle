@@ -1,19 +1,10 @@
 import { assertCommandEnvelope } from './CommandBoundary.ts'
 import type { CommandEnvelope, StructuralCommandOperation } from './commands.ts'
+import { PLUGIN_PERMISSIONS } from '../../../packages/plugin-sdk/src/contract.ts'
+import type { PluginPermission } from '../../../packages/plugin-sdk/src/contract.ts'
 
-export const PLUGIN_PERMISSIONS = [
-  'model.write.nodes', 'model.write.members', 'model.write.shells',
-  'model.write.loads', 'model.write.supports', 'model.write.materials',
-  'model.write.sections', 'model.write.grids', 'model.write.levels',
-  'model.write.groups', 'model.write.selectionSets', 'model.write.parametric',
-  'model.delete.nodes', 'model.delete.members', 'model.delete.shells',
-  'model.delete.loads', 'model.delete.supports', 'model.delete.materials',
-  'model.delete.sections', 'model.delete.grids', 'model.delete.levels',
-  'model.delete.groups', 'model.delete.selectionSets', 'model.delete.parametric',
-  'workspace.writeSelection', 'workspace.visibility',
-] as const
-
-export type PluginPermission = (typeof PLUGIN_PERMISSIONS)[number]
+export { PLUGIN_PERMISSIONS }
+export type { PluginPermission }
 export type CommandRisk = 'low' | 'medium' | 'high' | 'critical'
 
 export type CommandPolicyContext = Readonly<{

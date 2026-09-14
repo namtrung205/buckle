@@ -140,7 +140,13 @@ const fakeDeps = () => {
   const spawned: string[] = []
   const revoked: string[] = []
   const sessions = new Map<string, PluginCommandBroker | undefined>()
-  const makeWorker = (): WorkerLike => ({ postMessage: () => {}, terminate: () => {}, addEventListener: () => {}, removeEventListener: () => {} })
+  const makeWorker = (): WorkerLike => ({
+    postMessage: () => {}, terminate: () => {},
+    addEventListener: (_type, listener) => {
+      queueMicrotask(() => listener({ data: { v: 1, kind: 'plugin.ready', commands: ['com.acme.loader.run'] } }))
+    },
+    removeEventListener: () => {},
+  })
   return {
     created, registered, unregistered, spawned, revoked, sessions,
     deps: {
@@ -209,7 +215,6 @@ test('launchBundledPlugin rejects a panel that references sibling files', async 
     'buckle.plugin.json': workerManifest({
       entrypoints: {},
       contributions: {
-        commands: [{ id: 'com.acme.loader.run', title: 'Run' }],
         panels: [{ id: 'com.acme.loader.panel', title: 'Loader', entry: './panel.html' }],
       },
     }),
@@ -237,4 +242,68 @@ test('parseZipBundle rejects a panel contribution whose entry is absent', () => 
     })),
     (error: unknown) => error instanceof PluginLoadError && error.code === 'ENTRY_MISSING',
   )
+})
+
+test('parseZipBundle rejects normalized duplicate paths before extraction', () => {
+  assert.throws(
+    () => parseZipBundle(zipOf({
+      'buckle.plugin.json': workerManifest(),
+      'worker.js': workerSource,
+      './worker.js': workerSource,
+    })),
+    (error: unknown) => error instanceof PluginLoadError && error.code === 'DUPLICATE_FILE',
+  )
+})
+
+test('parseZipBundle rejects an extreme compression ratio before extraction', () => {
+  const data = zipSync({
+    'buckle.plugin.json': strToU8(workerManifest()),
+    'worker.js': new Uint8Array(512 * 1024),
+  }, { level: 9 })
+  assert.throws(
+    () => parseZipBundle(data),
+    (error: unknown) => error instanceof PluginLoadError && error.code === 'SUSPICIOUS_COMPRESSION',
+  )
+})
+
+test('parseZipBundle counts directory entries toward the archive limit', () => {
+  const entries: Record<string, Uint8Array> = {
+    'buckle.plugin.json': strToU8(workerManifest({ entrypoints: {} })),
+  }
+  for (let index = 0; index < 200; index += 1) entries[`empty-${index}/`] = new Uint8Array()
+  assert.throws(() => parseZipBundle(zipSync(entries)),
+    (error: unknown) => error instanceof PluginLoadError && error.code === 'TOO_MANY_FILES')
+})
+
+test('a bundle with an unregistered Worker command rolls back the session', async () => {
+  const fakes = fakeDeps()
+  const bundled = parseZipBundle(zipOf({
+    'buckle.plugin.json': workerManifest({
+      contributions: { commands: [{ id: 'com.acme.loader.other', title: 'Other' }] },
+    }),
+    'worker.js': workerSource,
+  }))
+  await assert.rejects(launchBundledPlugin(bundled, fakes.deps),
+    (error: unknown) => error instanceof PluginLoadError && error.code === 'COMMAND_MISMATCH')
+  assert.equal(fakes.sessions.get('com.acme.loader'), undefined)
+  assert.equal(fakes.registered.length, 0)
+})
+
+test('rejects a bundle whose declared expanded size exceeds the limit', () => {
+  const files: Record<string, Uint8Array> = {
+    'buckle.plugin.json': strToU8(workerManifest({ entrypoints: {} })),
+  }
+  const block = new Uint8Array(64 * 1024)
+  let seed = 1
+  for (let index = 0; index < block.length; index += 1) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    block[index] = seed >>> 24
+  }
+  const part = new Uint8Array(1_000_000)
+  for (let offset = 0; offset < part.length; offset += block.length) {
+    part.set(block.subarray(0, Math.min(block.length, part.length - offset)), offset)
+  }
+  for (let index = 0; index < 17; index += 1) files[`part-${index}.txt`] = part
+  assert.throws(() => parseZipBundle(zipSync(files)),
+    (error: unknown) => error instanceof PluginLoadError && error.code === 'BUNDLE_TOO_LARGE')
 })

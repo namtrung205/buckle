@@ -1,0 +1,38 @@
+<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src 'self' blob: data:; frame-src 'self' blob:; connect-src 'self'"></head><body><pre id="result">running</pre><script>
+const endpoint = new URL('secret.txt', location.href).href;
+const workerSource = `fetch(${JSON.stringify(endpoint)}).then(r => r.text()).then(value => postMessage({read: value})).catch(error => postMessage({error: String(error)}))`;
+const report = { direct: null, isolated: null, events: [] };
+function finish() {
+  document.getElementById('result').textContent = JSON.stringify(report);
+}
+const directUrl = URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' }));
+const direct = new Worker(directUrl, { type: 'module' });
+direct.onmessage = event => { report.direct = event.data; direct.terminate(); URL.revokeObjectURL(directUrl); finish(); };
+direct.onerror = event => { report.direct = { error: event.message }; finish(); };
+const frame = document.createElement('iframe');
+frame.sandbox = 'allow-scripts';
+frame.style.display = 'none';
+frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="connect-src 'none'; script-src 'unsafe-inline' data: blob:; worker-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"><script>
+  let worker;
+  addEventListener('securitypolicyviolation', event => parent.postMessage({kind:'violation', directive:event.effectiveDirective, blocked:event.blockedURI}, '*'));
+  addEventListener('message', event => {
+    if (event.source !== parent || event.data?.kind !== 'start') return;
+    const url = URL.createObjectURL(new Blob([event.data.source], { type: 'text/javascript' }));
+    try {
+      worker = new Worker('data:text/javascript;base64,' + btoa(event.data.source), { type: 'module' });
+      worker.onmessage = result => parent.postMessage({kind:'worker.message', data:result.data}, '*');
+      worker.onerror = error => parent.postMessage({kind:'worker.error', error:error.message || 'worker error'}, '*');
+    } catch (error) { parent.postMessage({kind:'worker.error', error:String(error)}, '*'); }
+  });
+  parent.postMessage({kind:'frame.ready'}, '*');
+<\/script>`;
+window.addEventListener('message', event => {
+  if (event.source !== frame.contentWindow) return;
+  report.events.push(event.data);
+  if (event.data?.kind === 'frame.ready') frame.contentWindow.postMessage({kind:'start',source:workerSource}, '*');
+  if (event.data?.kind === 'worker.message') { report.isolated = event.data.data; finish(); }
+  if (event.data?.kind === 'worker.error') { report.isolated = {error:event.data.error}; finish(); }
+});
+document.body.appendChild(frame);
+setTimeout(() => { if (!report.direct) report.direct = {error:'timeout'}; if (!report.isolated) report.isolated = {error:'timeout'}; finish(); }, 5000);
+</script></body></html>

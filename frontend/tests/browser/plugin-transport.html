@@ -1,0 +1,38 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src 'self' blob: data:; frame-src 'self' blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'">
+</head><body><pre id="result">running</pre><script type="module">
+import { spawnSandboxedPluginWorker } from '/src/core/plugins/SandboxedPluginWorker.ts';
+const report = { ready: false, echo: false, networkBlocked: false, error: null, events: [] };
+window.addEventListener('message', event => { if (event.data?.kind) {
+  const frame = document.querySelector('iframe');
+  report.events.push({ kind: event.data.kind, tokenMatch: frame?.srcdoc.includes(event.data.token), sourceMatch: event.source === frame?.contentWindow });
+} });
+window.addEventListener('securitypolicyviolation', event => { report.events.push(`csp:${event.effectiveDirective}:${event.blockedURI}`); });
+const workerSource = `
+  addEventListener('message', event => postMessage({kind:'echo', value:event.data}));
+  postMessage({kind:'ready'});
+  fetch(${JSON.stringify(new URL('/index.html', location.href).href)})
+    .then(response => response.text())
+    .then(() => postMessage({kind:'network-readable'}))
+    .catch(() => postMessage({kind:'network-blocked'}));
+`;
+const worker = spawnSandboxedPluginWorker(new TextEncoder().encode(workerSource));
+worker.addEventListener('message', event => {
+  if (event.data?.kind === 'ready') report.ready = true;
+  if (event.data?.kind === 'echo' && event.data.value === 'ping') report.echo = true;
+  if (event.data?.kind === 'network-blocked') report.networkBlocked = true;
+  if (event.data?.kind === 'network-readable') report.error = 'same-origin fetch succeeded';
+  document.getElementById('result').textContent = JSON.stringify(report);
+  if (report.ready && report.echo && report.networkBlocked) worker.terminate();
+});
+worker.onError(reason => {
+  report.error = reason;
+  document.getElementById('result').textContent = JSON.stringify(report);
+});
+worker.postMessage('ping');
+setTimeout(() => {
+  if (!report.ready || !report.echo || !report.networkBlocked) report.error ??= 'timeout';
+  document.getElementById('result').textContent = JSON.stringify(report);
+  worker.terminate();
+}, 15000);
+</script></body></html>

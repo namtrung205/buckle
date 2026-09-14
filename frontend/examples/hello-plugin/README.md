@@ -1,28 +1,36 @@
-# Hello Buckle — plugin mẫu để cài từ file
+# Hello Buckle — plugin mẫu viết bằng SDK
 
-Mẫu gồm `buckle.plugin.json`, `worker.js` và `panel.html`. File ZIP đã đóng gói sẵn ở `frontend/examples/hello-buckle.zip`.
+Mã nguồn TypeScript ở `src/worker.ts` và `src/panel.ts` chỉ import
+`@buckle/plugin-sdk`. `npm run build` gộp các import thành `worker.js`, nhúng
+script/style của panel và tạo ZIP cài được. Bản build sẵn:
+[`../hello-buckle.zip`](../hello-buckle.zip).
 
-## Thử bundle ZIP
+## Build lại trong repo
 
-1. Chạy ứng dụng: từ thư mục `frontend`, dùng `npm run dev`.
-2. Mở tab **File** trên ribbon → **Manage plugins** → **Install**, chọn `frontend/examples/hello-buckle.zip`.
-3. Khi cài xong, Worker đọc model và hiện thông báo số node/member.
-4. Mở tab **Examples** trên ribbon → **Open sample**. Trong panel bên phải, nhấn **Read model** để đọc lại số node/member/load qua API plugin.
-5. Trong **Manage plugins**, nhấn biểu tượng thùng rác ở plugin **Hello Buckle** để gỡ. Tab **Examples** và panel sẽ biến mất.
+Từ `frontend/examples/hello-plugin`:
 
-Bundle xin hai quyền `model.read` và `ui.notify` trong manifest. Panel và Worker chỉ gọi những API được cấp quyền. Plugin chỉ tồn tại trong phiên hiện tại; tải lại trang sẽ gỡ plugin.
-
-## Thử file JS đơn lẻ
-
-Trong **Manage plugins**, chọn hai quyền **model.read** và **ui.notify** ở ô **JS permissions**, rồi nhấn **Install** và chọn `frontend/examples/hello-plugin/worker.js`. File JS đơn lẻ sẽ hiện thông báo khi chạy, nhưng không tạo tab/panel vì không có manifest. Nếu không chọn quyền, lời gọi API sẽ bị từ chối.
-
-## Sửa và đóng gói lại
-
-Từ thư mục `frontend`:
-
-```powershell
-node --experimental-strip-types scripts/buckle-plugin.ts validate examples/hello-plugin
-Compress-Archive -Path examples/hello-plugin/buckle.plugin.json,examples/hello-plugin/worker.js,examples/hello-plugin/panel.html -DestinationPath examples/hello-buckle.zip -Force
+```sh
+npm install
+npm run check
+npm run build
 ```
 
-Manifest phải nằm ở gốc ZIP. File HTML của panel phải tự chứa script/style; Worker JS phải là một file đã bundle, không import file khác. Loader từ chối đường dẫn không an toàn, loại file lạ và quyền không hợp lệ.
+ZIP mới nằm ở `dist/com.buckle.examples.hello-0.2.0.zip`. Dependency `file:`
+trong `package.json` chỉ dùng cho ví dụ nằm cùng repo; dự án bên thứ ba cài
+tarball SDK theo [hướng dẫn developer](../../../docs/PLUGIN_DEVELOPER_GUIDE.vi.md).
+
+## Cài và thử
+
+1. Chạy Buckle từ `frontend` bằng `npm run dev`.
+2. Mở **File → Manage plugins → Install** và chọn ZIP vừa build hoặc
+   `frontend/examples/hello-buckle.zip`. Duyệt ba quyền `model.read`,
+   `ui.notify`, `ui.panel`.
+3. Sau khi cài, thông báo **Hello Buckle** hiện số node/member của model.
+4. Mở tab **Examples** trên ribbon → **Open sample**. Trong panel, nhấn
+   **Read model** để đọc số node/member/load qua SDK.
+5. Tải lại trang: plugin đã bật được khôi phục. Trong **Manage plugins**, thử
+   Disable/Enable hoặc Uninstall; gỡ plugin sẽ xóa tab và panel của nó.
+
+Manifest `buckle.plugin.json` nằm ở gốc ZIP. Nút ribbon gọi handler trong
+Worker; handler gọi `api.openPanel`. Panel dùng `PluginPanelClient.forParentWindow()`
+để truy vấn model. Không cần viết envelope RPC bằng tay.

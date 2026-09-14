@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { WorkerRuntime } from './WorkerRuntime.ts'
 import type { WorkerRuntimeOptions } from './WorkerRuntime.ts'
+import { createWorkerPlugin } from '../../../packages/plugin-sdk/src/worker.ts'
+import type { WorkerPort } from '../../../packages/plugin-sdk/src/worker.ts'
 
 /** Minimal worker double: records posts/terminates, keeps listeners injectable. */
 class FakeWorker {
@@ -117,4 +119,48 @@ test('terminate() is idempotent and stops answering messages', () => {
   assert.equal(crashes.length, 1)
   emit({ v: 1, id: 'q3', method: 'model.query' })
   assert.equal(worker.posted.length, 0)
+})
+
+test('public SDK Worker registers a handler and ribbon invocation reaches it', async () => {
+  const hostListeners = new Set<(event: { data: unknown }) => void>()
+  const pluginListeners = new Set<(event: { data: unknown }) => void>()
+  const hostWorker = {
+    postMessage: (data: unknown) => { for (const listener of pluginListeners) listener({ data }) },
+    terminate: () => {},
+    addEventListener: (_type: 'message', listener: (event: { data: unknown }) => void) => { hostListeners.add(listener) },
+    removeEventListener: (_type: 'message', listener: (event: { data: unknown }) => void) => { hostListeners.delete(listener) },
+  }
+  const pluginPort: WorkerPort = {
+    postMessage: data => { for (const listener of hostListeners) listener({ data }) },
+    addEventListener: (_type, listener) => { pluginListeners.add(listener) },
+    removeEventListener: (_type, listener) => { pluginListeners.delete(listener) },
+  }
+  const notifications: string[] = []
+  const runtime = new WorkerRuntime({
+    spawn: () => hostWorker,
+    handlers: {
+      'model.query': () => ({ nodes: [{ id: 'n1' }] }),
+      'ui.notify': ({ params }) => { notifications.push((params as { message: string }).message) },
+    },
+  })
+  const plugin = createWorkerPlugin({
+    'com.example.plugin.run': async api => {
+      const snapshot = await api.query()
+      await api.notify(`${snapshot.nodes.length} nodes`)
+    },
+  }, pluginPort)
+  assert.deepEqual(await runtime.waitReady(), ['com.example.plugin.run'])
+  await runtime.invokeCommand('com.example.plugin.run')
+  assert.deepEqual(notifications, ['1 nodes'])
+  plugin.dispose()
+  runtime.terminate()
+})
+
+test('stopping a Worker rejects an in-flight plugin command', async () => {
+  const { runtime, emit } = harness()
+  emit({ v: 1, kind: 'plugin.ready', commands: ['com.example.run'] })
+  await runtime.waitReady()
+  const invocation = runtime.invokeCommand('com.example.run')
+  runtime.terminate()
+  await assert.rejects(invocation, /Worker terminated/)
 })

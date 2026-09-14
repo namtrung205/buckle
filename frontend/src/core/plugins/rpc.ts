@@ -1,11 +1,13 @@
 import { PLUGIN_API_VERSION } from './manifest.ts'
+import { MAX_RPC_MESSAGE_BYTES, RPC_METHODS } from '../../../packages/plugin-sdk/src/contract.ts'
+import type { RpcMethod } from '../../../packages/plugin-sdk/src/contract.ts'
 
 /** Schema-validated MessageChannel RPC wire protocol (Goal 4). Every message
  *  crossing the sandbox boundary is parsed and validated here — malformed
  *  envelopes, unknown methods and oversized/over-budget traffic fail closed. */
 
 export const RPC_VERSION = PLUGIN_API_VERSION
-export const MAX_RPC_MESSAGE_BYTES = 256 * 1024
+export { MAX_RPC_MESSAGE_BYTES, RPC_METHODS }
 export const MAX_RPC_CALLS_PER_WINDOW = 60
 export const RPC_RATE_WINDOW_MS = 1_000
 export const MAX_RPC_CALL_MS = 5_000
@@ -36,18 +38,7 @@ export type RpcParamSpec =
 
 /** The closed host API surface a sandbox may call (exit gate: no DOM, storage,
  *  token or raw-model accessors exist on this table). */
-export const RPC_METHODS = {
-  'model.query': { params: { kind: 'none' } },
-  'model.execute': { params: { kind: 'object', optional: false, maxBytes: MAX_RPC_MESSAGE_BYTES } },
-  'ui.notify': { params: { kind: 'object', optional: false, maxBytes: 4096 } },
-  'ui.openPanel': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
-  'storage.get': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
-  'storage.set': { params: { kind: 'object', optional: false, maxBytes: MAX_RPC_MESSAGE_BYTES } },
-  'storage.delete': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
-  'storage.keys': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
-} as const
-
-export type RpcMethod = keyof typeof RPC_METHODS
+export type { RpcMethod }
 
 const byteLength = (value: unknown): number => {
   try {

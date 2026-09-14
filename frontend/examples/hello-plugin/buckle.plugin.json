@@ -3,12 +3,12 @@
   "name": "Hello Buckle",
   "version": "0.2.0",
   "apiVersion": 1,
-  "permissions": ["model.read", "ui.notify"],
-  "entrypoints": { "worker": "./worker.js" },
+  "permissions": ["model.read", "ui.notify", "ui.panel"],
+  "entrypoints": { "worker": "worker.js" },
   "contributions": {
     "commands": [{ "id": "com.buckle.examples.hello.run", "title": "Open the sample plugin panel" }],
     "ribbonTabs": [{ "id": "com.buckle.examples.hello.tab", "label": "Examples", "order": 70 }],
-    "panels": [{ "id": "com.buckle.examples.hello.panel", "title": "Hello Buckle", "entry": "./panel.html" }],
+    "panels": [{ "id": "com.buckle.examples.hello.panel", "title": "Hello Buckle", "entry": "panel.html" }],
     "ribbon": [
       {
         "id": "com.buckle.examples.hello.ribbon",

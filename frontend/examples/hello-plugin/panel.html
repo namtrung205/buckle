@@ -3,46 +3,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hello Buckle</title>
-<style>
-  body { margin: 0; padding: 20px; background: #17202b; color: #eef3f8; font: 14px system-ui, sans-serif; }
-  h1 { font-size: 18px; margin: 0 0 10px; }
-  p { color: #b6c4d2; line-height: 1.5; }
-  button { border: 0; border-radius: 6px; background: #348ad1; color: white; padding: 9px 14px; cursor: pointer; }
-  button:hover { background: #4ca0e3; }
-  #result { margin-top: 16px; white-space: pre-wrap; }
-</style>
+<link rel="stylesheet" href="./panel.css">
 <h1>Hello Buckle</h1>
-<p>This panel came from an external ZIP plugin. Click below to query the current model through the permission-gated host API.</p>
+<p>This panel was built with the public SDK. Read the model through its permission-gated API.</p>
 <button id="read-model" type="button">Read model</button>
 <div id="result" role="status">Waiting for a query.</div>
-<script>
-  "use strict";
-  var nextId = 0;
-  var pending = new Map();
-  var result = document.getElementById("result");
-  window.addEventListener("message", function (event) {
-    var msg = event.data;
-    if (!msg || msg.v !== 1 || !pending.has(msg.id)) return;
-    var request = pending.get(msg.id);
-    pending.delete(msg.id);
-    if (msg.ok) request.resolve(msg.value);
-    else request.reject(new Error((msg.error && msg.error.message) || "RPC error"));
-  });
-  function call(method) {
-    return new Promise(function (resolve, reject) {
-      var id = "panel-" + (++nextId);
-      pending.set(id, { resolve: resolve, reject: reject });
-      parent.postMessage({ v: 1, id: id, method: method }, "*");
-    });
-  }
-  document.getElementById("read-model").addEventListener("click", function () {
-    result.textContent = "Reading model...";
-    call("model.query").then(function (snapshot) {
-      var count = function (key) { return Array.isArray(snapshot && snapshot[key]) ? snapshot[key].length : 0; };
-      result.textContent = "Nodes: " + count("nodes") + "\nMembers: " + count("members") + "\nLoads: " + count("loads");
-    }).catch(function (error) {
-      result.textContent = "Query failed: " + error.message;
-    });
-  });
-</script>
+<script type="module" src="./src/panel.ts"></script>
 </html>
