@@ -1,0 +1,30 @@
+{
+  "id": "com.buckle.examples.bulk-rename",
+  "name": "Bulk Rename",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "permissions": [
+    "model.read",
+    "workspace.readSelection",
+    "model.write.nodes",
+    "model.write.members",
+    "model.write.shells",
+    "ui.panel",
+    "ui.notify"
+  ],
+  "entrypoints": { "worker": "worker.js" },
+  "contributions": {
+    "commands": [{ "id": "com.buckle.examples.bulk-rename.open", "title": "Open Bulk Rename" }],
+    "ribbonTabs": [{ "id": "com.buckle.examples.bulk-rename.tab", "label": "Plugins", "order": 75 }],
+    "panels": [{ "id": "com.buckle.examples.bulk-rename.panel", "title": "Bulk Rename", "entry": "panel.html" }],
+    "ribbon": [{
+      "id": "com.buckle.examples.bulk-rename.ribbon",
+      "tabId": "com.buckle.examples.bulk-rename.tab",
+      "groupId": "rename",
+      "groupLabel": "Rename",
+      "commandId": "com.buckle.examples.bulk-rename.open",
+      "label": "Bulk Rename",
+      "title": "Rename nodes and elements in a side panel"
+    }]
+  }
+}

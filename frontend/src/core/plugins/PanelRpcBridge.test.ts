@@ -8,6 +8,7 @@ import { PluginStorage } from './PluginStorage.ts'
 /** Minimal broker double: the bridge only touches query/execute/notify. */
 const fakeSession = {
   query: () => ({ nodes: [{ id: 1 }], members: [] }),
+  getSelection: () => [{ collection: 'nodes', id: 1 }],
   execute: () => ({ ok: true, result: { revision: 3, previousRevision: 2 } }),
   notify: () => {},
   openPanel: () => {},
@@ -45,6 +46,21 @@ test('a trusted panel call is answered with a result envelope', async () => {
   await flush()
   assert.equal(posted.length, 1)
   assert.deepEqual(posted[0], { v: 1, id: 'q1', ok: true, value: { nodes: [{ id: 1 }], members: [] } })
+})
+
+test('workspace.getSelection returns broker selection and preserves its permission gate', async () => {
+  const { emit, posted } = harness()
+  emit({ v: 1, id: 'sel1', method: 'workspace.getSelection' })
+  await flush()
+  assert.deepEqual(posted[0], { v: 1, id: 'sel1', ok: true, value: [{ collection: 'nodes', id: 1 }] })
+
+  const denied = harness({ ...fakeSession, getSelection: () => { throw new Error('workspace.readSelection required') } } as unknown as PluginCommandBroker)
+  denied.emit({ v: 1, id: 'sel2', method: 'workspace.getSelection' })
+  await flush()
+  assert.deepEqual(denied.posted[0], {
+    v: 1, id: 'sel2', ok: false,
+    error: { code: 'REJECTED', message: 'workspace.readSelection required' },
+  })
 })
 
 test('model.execute passes through to the broker outcome', async () => {

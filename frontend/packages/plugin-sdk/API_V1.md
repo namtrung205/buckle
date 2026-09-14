@@ -41,6 +41,7 @@ for updates; Buckle does not yet provide an independent publisher directory.
 | Method | Params | Required grant | Result |
 | --- | --- | --- | --- |
 | `model.query` | none | `model.read` | Frozen canonical snapshot |
+| `workspace.getSelection` | none | `workspace.readSelection` | Array of `{collection, id}` references |
 | `model.execute` | `{command, expectedModelRevision?, approval?}` | Grants matching each canonical mutation | Broker outcome |
 | `ui.notify` | `{message, kind?}` | `ui.notify` | `void` |
 | `ui.openPanel` | `{panelId}` | `ui.panel`; panel must belong to plugin | `void` |
@@ -59,7 +60,7 @@ are typed, while individual entity records remain `unknown` in this alpha.
 
 ## Permission catalog
 
-The supported Worker RPC methods above use `model.read`, `ui.notify`,
+The supported Worker RPC methods above use `model.read`, `workspace.readSelection`, `ui.notify`,
 `ui.panel`, `storage.project`, `storage.local` and relevant mutation grants:
 
 ```text
@@ -74,8 +75,7 @@ model.delete.groups        model.delete.selectionSets model.delete.parametric
 workspace.writeSelection  workspace.visibility
 ```
 
-The manifest schema also recognizes `workspace.readSelection`,
-`viewport.pick`, `viewport.draw` and `viewport.zoomTo` for internal broker
+The manifest schema also recognizes `viewport.pick`, `viewport.draw` and `viewport.zoomTo` for internal broker
 surfaces. They are **not callable from a ZIP Worker's public RPC table in this
 alpha**. Do not request them for a third-party ZIP. The exported
 `ALL_PLUGIN_PERMISSIONS` value is the exact host catalog and includes those

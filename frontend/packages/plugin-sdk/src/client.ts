@@ -2,7 +2,7 @@ import {
   DEFAULT_CALL_TIMEOUT_MS,
   RPC_VERSION,
 } from './contract.ts';
-import type { PluginModelSnapshot, RpcMethod } from './contract.ts';
+import type { PluginEntityReference, PluginModelSnapshot, RpcMethod } from './contract.ts';
 
 /**
  * Typed client a sandboxed plugin panel uses to talk to the host over the
@@ -84,6 +84,10 @@ export class PluginPanelClient {
 
   query(): Promise<PluginModelSnapshot> {
     return this.call('model.query') as Promise<PluginModelSnapshot>
+  }
+
+  getSelection(): Promise<readonly PluginEntityReference[]> {
+    return this.call('workspace.getSelection') as Promise<readonly PluginEntityReference[]>
   }
 
   execute(command: unknown, expectedModelRevision?: number): Promise<unknown> {

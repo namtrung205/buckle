@@ -1,0 +1,17 @@
+{
+  "name": "buckle-bulk-rename-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types src/rename.test.ts",
+    "build": "buckle-plugin build ."
+  },
+  "dependencies": {
+    "@buckle/plugin-sdk": "file:../../packages/plugin-sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "typescript": "^7.0.2"
+  }
+}

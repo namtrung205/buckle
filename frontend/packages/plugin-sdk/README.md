@@ -32,6 +32,9 @@ panel assets into one ZIP. A ZIP must contain `buckle.plugin.json` at its root.
 The [Hello Buckle sample](../../examples/hello-plugin/README.md) uses the same
 SDK from Worker and panel; its ready-to-install ZIP is
 [`hello-buckle.zip`](../../examples/hello-buckle.zip).
+The [Bulk Rename sample](../../examples/bulk-rename-plugin/README.md) shows
+selection reads, model transactions and a right-side panel. Its ready-to-install
+ZIP is [`bulk-rename.zip`](../../examples/bulk-rename.zip).
 
 For maintainers, `npm run test:external` packs the SDK, creates a project outside
 this repository, installs that tarball, type-checks and builds the starter,
@@ -85,6 +88,7 @@ removes message listeners and rejects pending calls.
 | Method | Required grant | Argument / result |
 | --- | --- | --- |
 | `query()` | `model.read` | `PluginModelSnapshot` with typed top-level collections and revision; entity records remain `unknown` |
+| `getSelection()` | `workspace.readSelection` | Current `{collection, id}` entity references |
 | `execute(command, expectedRevision?)` | Matching `model.write.*` or `model.delete.*` | Canonical structural command / broker outcome |
 | `notify(message, kind?)` | `ui.notify` | Toast / `void` |
 | `openPanel(panelId)` | `ui.panel` | Namespaced panel ID / `void` |

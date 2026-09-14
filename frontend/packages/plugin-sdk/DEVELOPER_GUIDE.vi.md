@@ -88,6 +88,11 @@ Plugin mẫu có sẵn để thử ngay:
 `frontend/examples/hello-buckle.zip`. Source dùng SDK ở
 `frontend/examples/hello-plugin`; xem README của mẫu để build lại.
 
+Plugin mẫu đổi tên hàng loạt có ZIP ở `frontend/examples/bulk-rename.zip` và
+source tại `frontend/examples/bulk-rename-plugin`. Mẫu này minh họa button
+ribbon → panel phải, `query()`, `getSelection()` (cần quyền
+`workspace.readSelection`) và `execute()` cho một transaction đổi tên.
+
 ## Khi có lỗi
 
 | Triệu chứng | Kiểm tra |

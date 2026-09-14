@@ -92,6 +92,7 @@ export const brokerRpcHandlers = (
   storage?: PluginStorage,
 ): Partial<Record<RpcMethod, SandboxHandler>> => ({
   'model.query': () => session.query(),
+  'workspace.getSelection': () => session.getSelection(),
   'model.execute': ({ params }) => {
     if (!isRecord(params) || !isRecord(params.command) || typeof params.command.type !== 'string') {
       throw new RpcProtocolError('INVALID_PARAMS', 'model.execute requires { command: { type, payload? } }')

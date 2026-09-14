@@ -31,6 +31,7 @@ export const ALL_PLUGIN_PERMISSIONS: readonly PluginSessionPermission[] =
 export const MAX_RPC_MESSAGE_BYTES = 256 * 1024
 export const RPC_METHODS = {
   'model.query': { params: { kind: 'none' } },
+  'workspace.getSelection': { params: { kind: 'none' } },
   'model.execute': { params: { kind: 'object', optional: false, maxBytes: MAX_RPC_MESSAGE_BYTES } },
   'ui.notify': { params: { kind: 'object', optional: false, maxBytes: 4096 } },
   'ui.openPanel': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
@@ -40,6 +41,12 @@ export const RPC_METHODS = {
   'storage.keys': { params: { kind: 'object', optional: false, maxBytes: 1024 } },
 } as const
 export type RpcMethod = keyof typeof RPC_METHODS
+
+export type PluginEntityReference = Readonly<{
+  collection: 'nodes' | 'materials' | 'sections' | 'members' | 'shells' | 'loads' |
+    'boundaryConditions' | 'grids' | 'levels' | 'groups' | 'parametricObjects' | 'selectionSets'
+  id: number
+}>
 
 /** Stable top-level shape returned by model.query in API v1. Entity records
  * remain unknown until their public typed schemas are finalized. */
