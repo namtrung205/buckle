@@ -19,8 +19,12 @@ SESSION_HEADERS = {"X-Copilot-Session": "test-session-0000000000000001"}
 
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as test_client:
-        yield test_client
+    # Deliberately NOT entered as a context manager: the app lifespan (MCP
+    # StreamableHTTPSessionManager.run) may start only once per process, so a
+    # second TestClient context (e.g. test_api.py in the same pytest run)
+    # crashes startup with RuntimeError. Copilot routes do not depend on the
+    # lifespan — the CORS middleware and router need no startup hooks.
+    return TestClient(app)
 
 
 def _request():

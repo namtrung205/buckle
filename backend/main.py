@@ -69,8 +69,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    # X-Copilot-Session is required by every /api/copilot endpoint
+    # (backend/copilot.py) and must be listed or the browser preflight
+    # (OPTIONS) fails with 400 "Disallowed CORS headers".
+    allow_headers=["Authorization", "Content-Type", "X-Copilot-Session"],
 )
 
 
