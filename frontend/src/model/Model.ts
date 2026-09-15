@@ -1475,10 +1475,14 @@ export class Model {
   executeCommand(command: CommandEnvelope, options: {
     allowDestructive?: boolean
     pluginPermissions?: readonly PluginPermission[]
+    /** Trusted-source payload budget override (e.g. ImportModel of a large
+     *  project file or benchmark fixture). Never forwarded to plugin sessions. */
+    maxPayloadBytes?: number
   } = {}): CommandResult {
     return this.commandGateway.execute(command, this.commandContext(
       options.allowDestructive === true,
       options.pluginPermissions,
+      options.maxPayloadBytes,
     ))
   }
 
@@ -1523,7 +1527,7 @@ export class Model {
     return this.pluginEvents;
   }
 
-  private commandContext(allowDestructive: boolean, pluginPermissions?: readonly PluginPermission[]): CommandGatewayContext {
+  private commandContext(allowDestructive: boolean, pluginPermissions?: readonly PluginPermission[], maxPayloadBytes?: number): CommandGatewayContext {
     return {
       getWorkspaceState: () => this.workspaceContext.getCommandState(),
       applyWorkspaceState: state => {
@@ -1554,6 +1558,7 @@ export class Model {
         modelLocked: this.isLocked,
         pluginPermissions,
         allowPluginDestructive: allowDestructive,
+        ...(maxPayloadBytes !== undefined ? { maxPayloadBytes } : {}),
       },
       onCommitted: result => {
         if (result.changed) {

@@ -421,3 +421,52 @@ test('command policy rejects entity and operation quota overflow before commit',
   assert.equal(document.nodes.size, 0)
   assert.equal(gateway.auditLog.length, 0)
 })
+
+const oversizedImportCommand = (): StructuralCommand => ({
+  type: 'ImportModel',
+  payload: {
+    document: {
+      nodes: Array.from({ length: 120_000 }, (_, index) => ({
+        id: index + 1,
+        name: `N${index}`,
+        position: [index % 7, (index % 13) * 3, (index % 11) * 2],
+      })),
+    },
+    replace: true,
+    confirmed: true,
+  },
+}) as StructuralCommand
+
+test('oversized ImportModel payload is rejected by the default policy', () => {
+  const document = baseDocument()
+  const gateway = new CommandGateway(document)
+  assert.throws(
+    () => gateway.execute(envelope(document, 'oversized', oversizedImportCommand())),
+    (error: unknown) => error instanceof CommandPolicyError && error.code === 'PAYLOAD_LIMIT',
+  )
+  assert.equal(document.revision, 0)
+})
+
+test('trusted import may raise the payload budget via the policy context', () => {
+  const document = baseDocument()
+  const gateway = new CommandGateway(document)
+  const { context } = workspaceContext()
+  context.policy = { maxPayloadBytes: 64 * 1024 * 1024 }
+  context.allowDestructive = () => true
+  const result = gateway.execute(envelope(document, 'oversized-allowed', oversizedImportCommand()), context)
+  assert.equal(result.changed, true)
+  assert.equal(document.revision, 1)
+  assert.equal(document.nodes.size, 120_000)
+})
+
+test('plugin envelopes stay capped even when other sources raise their budget', () => {
+  const document = baseDocument()
+  const gateway = new CommandGateway(document)
+  const { context } = workspaceContext()
+  context.policy = { maxPayloadBytes: 64 * 1024 * 1024 }
+  context.allowDestructive = () => true
+  assert.throws(
+    () => gateway.execute(pluginEnvelope(document, 'oversized-plugin', oversizedImportCommand()), context),
+    (error: unknown) => error instanceof CommandPolicyError && error.code === 'PLUGIN_OPERATION_DENIED',
+  )
+})

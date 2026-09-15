@@ -66,6 +66,13 @@ export const exportProjectJson = (model: Model): BuckleProjectFile => {
  * Z-up engineering frame into the three.js Y-up scene frame. Created shells
  * too when the payload provides them.
  */
+/**
+ * Command payload budget for trusted UI imports (open project file, benchmark
+ * fixture). The default 5 MB cap in CommandPolicy throttles untrusted plugin /
+ * script mutations; a 100k-beam fixture is ~13 MB of JSON.
+ */
+const UI_IMPORT_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
+
 export const buildModelFromJson = (model: Model, input: StructuralModelDto | BuckleProjectFile) => {
   // Buckle project files carry the organizational collections (selection sets,
   // groups, parametric objects, grids, levels) under a separate top-level key;
@@ -87,7 +94,7 @@ export const buildModelFromJson = (model: Model, input: StructuralModelDto | Buc
     modelRevision: model.structuralDocument.revision,
     payload: { document, replace: true, confirmed: true },
     source: 'ui',
-  }, { allowDestructive: true })
+  }, { allowDestructive: true, maxPayloadBytes: UI_IMPORT_MAX_PAYLOAD_BYTES })
 
   // Fit the camera to the model so large models are not culled by the far plane
   model.camera.fitModelToView()
