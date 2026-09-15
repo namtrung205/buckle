@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tower Lab (Plugin Experiment)</title>
+<link rel="stylesheet" href="./panel.css">
+<div class="layout">
+  <form id="tower-form" class="form" autocomplete="off">
+    <h1>Tower Lab <span class="badge">plugin</span></h1>
+    <p class="hint">Bản thử nghiệm bên thứ 3, song song với generator built-in.
+      Dùng parametric kind riêng <code>TowerPlugin</code> — không đụng dữ liệu <code>Tower</code> của built-in.</p>
+
+    <fieldset>
+      <legend>Hình học</legend>
+      <label>Số mạch (circuit)
+        <select name="circuit"><option value="double">double</option><option value="single">single</option></select></label>
+      <label>Chiều cao thân (m)
+        <input name="bodyHeight" type="number" step="any" value="30"></label>
+      <label>Chiều cao đỉnh (m)
+        <input name="peakHeight" type="number" step="any" value="6"></label>
+      <label>Độ rộng chân (m)
+        <input name="baseWidth" type="number" step="any" value="10"></label>
+      <label>Độ rộng đỉnh (m)
+        <input name="topWidth" type="number" step="any" value="2"></label>
+      <label>Số tầng (panel)
+        <input name="panelCount" type="number" step="1" min="1" value="6"></label>
+      <label>Số tầng thẳng (head)
+        <input name="straightPanels" type="number" step="1" min="0" value="2"></label>
+      <label>Dạng thu hẹp
+        <select name="taper"><option value="linear">linear</option><option value="step">step</option></select></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Tai đỡ (arms)</legend>
+      <label>Số tai đỡ (0–3)
+        <input name="armCount" type="number" step="1" min="0" max="3" value="3"></label>
+      <label>Chiều dài (m)
+        <input name="armLength" type="number" step="any" min="0" value="5"></label>
+      <label>Độ sụt (m)
+        <input name="armDrop" type="number" step="any" value="1.5"></label>
+      <label>Khoảng cách (m)
+        <input name="armSpacing" type="number" step="any" min="0" value="5"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Section</legend>
+      <label>Section chân trụ (leg)
+        <select name="legSectionId"></select></label>
+      <label>Section vệ/đai (brace)
+        <select name="braceSectionId"></select></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Tự động</legend>
+      <label class="check"><input name="autoSupports" type="checkbox" checked> Tạo gối chân tự động</label>
+      <label>Loại gối
+        <select name="supportKind"><option value="pinned">pinned</option><option value="fixed">fixed</option></select></label>
+      <label class="check"><input name="autoLoads" type="checkbox" checked> Tải tự động (gió + trọng lượng)</label>
+      <label>Gió X (kN)
+        <input name="windX" type="number" step="any" value="0"></label>
+      <label>Gió Y (kN)
+        <input name="windY" type="number" step="any" value="0"></label>
+      <label>Gió Z (kN)
+        <input name="windZ" type="number" step="any" value="1"></label>
+      <label>Lực gió (kN)
+        <input name="windForce" type="number" step="any" min="0" value="1"></label>
+      <label>g (m/s²)
+        <input name="gravity" type="number" step="any" value="9.81"></label>
+    </fieldset>
+
+    <div class="actions">
+      <button type="button" id="reload">Nạp lại model</button>
+      <button type="submit" id="analyze">Phân tích</button>
+      <button type="button" id="generate" class="primary" disabled>Tạo trụ</button>
+    </div>
+    <div id="plan-summary" class="plan hidden"></div>
+    <div id="confirm-box" class="confirm hidden">
+      <strong>Lần tạo này sẽ xóa entity cũ.</strong>
+      Nhấn “Tạo trụ” lần nữa để xác nhận phê duyệt destructive
+      (plugin sẽ gửi <code>approval: true</code> cho host).
+    </div>
+    <div id="status" role="status">Đang nạp model…</div>
+  </form>
+  <div class="preview"><canvas id="preview"></canvas></div>
+</div>
+<script type="module" src="./src/panel.ts"></script>
+</html>
