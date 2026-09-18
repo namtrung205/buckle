@@ -141,6 +141,8 @@ export class Model {
   diagramRenderer: DiagramRenderer
   gpuAnnotations: GpuAnnotations
   loadGpuRenderer: LoadGpuRenderer
+  /** Dedicated support-reaction arrow batch (own visibility, never follows the load toggles). */
+  reactionGpuRenderer: LoadGpuRenderer
   structuralPicker: StructuralGpuPicker
   private activeResultBinding: ResultBinding | null = null
   solidPreparation = { active: false, progress: 0, estimatedTriangles: 0 }
@@ -1087,6 +1089,7 @@ export class Model {
     this.diagramRenderer = new DiagramRenderer(this.scene, this.layer)
     this.gpuAnnotations = new GpuAnnotations(this.scene, this.layer)
     this.loadGpuRenderer = new LoadGpuRenderer(this.scene, this.layer)
+    this.reactionGpuRenderer = new LoadGpuRenderer(this.scene, this.layer)
     this.camera.controls.addEventListener('end', () => this.gpuAnnotations.markDirty())
     this.structuralPicker = new StructuralGpuPicker(this.renderer)
     // Seed the canonical authority with startup materials/sections before the
@@ -1750,17 +1753,30 @@ export class Model {
     if (!this.loadGpuRenderer) return
     queueMicrotask(() => {
       if (!this.loadGpuRenderer) return
-      const instances = buildLoadInstances(this)
-      // Support reactions share the load-arrow language (shaft + slim cone
-      // diving INTO the node); only their value labels stay on the text stream.
-      const reactionViz = this.reactionViz
-      const reactionArrows = buildReactionInstances({
-        nodes: this.nodes,
-        reactions: this.output?.reactions ?? [],
-        components: reactionViz ? REACTION_COMPONENTS.filter(component => reactionViz.show[component]) : [],
-      })
-      this.loadGpuRenderer.upload({ arrows: [...instances.arrows, ...reactionArrows], bands: instances.bands })
+      this.loadGpuRenderer.upload(buildLoadInstances(this))
       this.loadGpuRenderer.setVisible(this.visibility?.loads ?? true)
+    })
+  }
+
+  /** Rebuild the dedicated support-reaction arrow batch. Reactions have
+   *  their own visibility control (Settings -> Reaction) and never follow
+   *  the load toggles; the arrow language (shaft + slim cone diving INTO
+   *  the node) is shared with loads but drawn larger. */
+  scheduleReactionGpuSync() {
+    if (!this.reactionGpuRenderer) return
+    queueMicrotask(() => {
+      if (!this.reactionGpuRenderer) return
+      const reactionViz = this.reactionViz
+      const active = reactionViz ? REACTION_COMPONENTS.filter(component => reactionViz.show[component]) : []
+      this.reactionGpuRenderer.upload({
+        arrows: buildReactionInstances({
+          nodes: this.nodes,
+          reactions: this.output?.reactions ?? [],
+          components: active,
+        }),
+        bands: [],
+      })
+      this.reactionGpuRenderer.setVisible(this.visibility?.reactions ?? true)
     })
   }
 
@@ -1888,7 +1904,10 @@ export class Model {
     // Reaction arrows ride the LoadGpuRenderer batch (load-arrow language:
     // shaft + slim cone diving INTO the node); only the value labels stay
     // on this text stream.
-    const active = (['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const).filter(key => this.reactionViz?.show[key])
+    // Hidden together with the arrows while Settings -> Reaction is off.
+    const active = (this.visibility?.reactions ?? true)
+      ? (['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const).filter(key => this.reactionViz?.show[key])
+      : []
     for (const reaction of this.output?.reactions ?? []) for (const component of active) {
         const value = Number(reaction[component] ?? 0)
         if (Math.abs(value) < 1e-9) continue
@@ -2115,6 +2134,7 @@ export class Model {
     this.diagramRenderer?.dispose()
     this.gpuAnnotations?.dispose()
     this.loadGpuRenderer?.dispose()
+    this.reactionGpuRenderer?.dispose()
     this.resultStore?.dispose()
     this.structuralPicker?.dispose()
     this.structuralDocumentBridge.dispose()

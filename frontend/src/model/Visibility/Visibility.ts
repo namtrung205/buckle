@@ -19,6 +19,8 @@ class Visibility {
   /** Sub-toggle: load VALUES (numeric labels riding the GPU annotation
    *  stream). Only meaningful while `loads` is on. */
   loadValues : boolean = true
+  /** Support-reaction arrows (own GPU batch, independent of the load toggles). */
+  reactions : boolean = true
   // Startup defaults: structural axis grids and the level datum set stay
   // HIDDEN until enabled in Settings → Level. GridSystem / LevelVisual
   // read these flags when they are created, so the 3D view and this dialog
@@ -110,6 +112,13 @@ class Visibility {
   showOrHideLoadValues(visible : boolean){
     this.loadValues = visible
     this.model.syncGpuAnnotations()
+  }
+
+  /** Show/hide the support-reaction arrows (Settings -> Reaction). Fully
+   *  independent of the load toggles - reactions render in their own batch. */
+  showOrHideReactions(visible : boolean){
+    this.reactions = visible
+    this.model.reactionGpuRenderer?.setVisible(visible)
   }
 
   /** Show/hide every structural axis grid (Settings → Level). */

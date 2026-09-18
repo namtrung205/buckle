@@ -136,7 +136,7 @@ class ReactionViz {
     // legacy construction below remains as a temporary reference/fallback but
     // is intentionally skipped so 10k reactions never create 10k Groups.
     this.model.syncGpuAnnotations()
-    this.model.scheduleLoadGpuSync()
+    this.model.scheduleReactionGpuSync()
     return
 
     const reactions: ReactionEntry[] = this.model.output?.reactions ?? []
@@ -228,7 +228,7 @@ class ReactionViz {
   dispose() {
     this.clearScene()
     this.model.syncGpuAnnotations()
-    this.model.scheduleLoadGpuSync()
+    this.model.scheduleReactionGpuSync()
   }
 
   /** Per-frame hook (Model.update): keep every symbol pixel-sized and the

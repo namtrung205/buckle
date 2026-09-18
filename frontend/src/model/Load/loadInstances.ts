@@ -76,6 +76,12 @@ const DISTRIBUTED_HEAD = slimHead(0.1)
 const NODAL_HEAD = slimHead(0.15)
 const PRESSURE_HEAD = slimHead(0.35)
 
+/** Reaction arrows are deliberately larger than load arrows: they carry the
+ *  analysis result being reviewed, so they stay readable on dense models. */
+const REACTION_ARROW_SCALE = 1.6
+const REACTION_ARROW_LENGTH = NODAL_ARROW_LENGTH * REACTION_ARROW_SCALE
+const REACTION_HEAD = { length: 0.4, width: 0.08 }
+
 export const vecSub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 export const vecAdd = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 export const vecScale = (a: Vec3, factor: number): Vec3 => [a[0] * factor, a[1] * factor, a[2] * factor]
@@ -278,10 +284,10 @@ export const buildReactionInstances = ({ nodes, reactions, components }: Reactio
       const color: LoadRgb = component[0] === 'M' ? [1, .62, .05] : [0.2, .45, 1]
       if (component[0] !== 'M') {
         arrows.push({
-          origin: vecAdd(tip, vecScale(direction, -NODAL_ARROW_LENGTH)),
+          origin: vecAdd(tip, vecScale(direction, -REACTION_ARROW_LENGTH)),
           tip,
-          headLength: NODAL_HEAD.length,
-          headWidth: NODAL_HEAD.width,
+          headLength: REACTION_HEAD.length,
+          headWidth: REACTION_HEAD.width,
           color,
         })
         continue
@@ -290,17 +296,17 @@ export const buildReactionInstances = ({ nodes, reactions, components }: Reactio
       // it - both point into the node (right-hand-rule direction).
       arrows.push(
         {
-          origin: vecAdd(tip, vecScale(direction, -NODAL_ARROW_LENGTH)),
+          origin: vecAdd(tip, vecScale(direction, -REACTION_ARROW_LENGTH)),
           tip,
-          headLength: NODAL_HEAD.length,
-          headWidth: NODAL_HEAD.width,
+          headLength: REACTION_HEAD.length,
+          headWidth: REACTION_HEAD.width,
           color,
         },
         {
-          origin: vecAdd(tip, vecScale(direction, -0.55)),
-          tip: vecAdd(tip, vecScale(direction, -0.25)),
-          headLength: NODAL_HEAD.length,
-          headWidth: NODAL_HEAD.width,
+          origin: vecAdd(tip, vecScale(direction, -0.88)),
+          tip: vecAdd(tip, vecScale(direction, -0.40)),
+          headLength: REACTION_HEAD.length,
+          headWidth: REACTION_HEAD.width,
           color,
         },
       )
