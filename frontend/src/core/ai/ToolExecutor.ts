@@ -1,3 +1,6 @@
+import { ENTITY_SCHEMAS, CREATE_OPERATION, EDITABLE_PROPERTIES } from './EntitySchemas.ts'
+import { payloadShapes } from '../structural/CommandBoundary.ts'
+import { ANALYSIS_TOOLS } from './AnalysisTools.ts'
 import {
   COMMAND_SCHEMA_VERSION,
   canonicalStringify,
@@ -103,7 +106,8 @@ const validateSchema = (value: unknown, schema: JsonSchema, path = 'arguments') 
     if (typeof schema.maxItems === 'number' && values.length > schema.maxItems) throw new Error(`${path} has too many items`)
     const item = schema.items as JsonSchema | undefined
     if (item && (item.type || item.oneOf || item.anyOf)) values.forEach((child, index) => validateSchema(child, item, `${path}[${index}]`))
-  } else if (type === 'string' && typeof value !== 'string') throw new Error(`${path} must be a string`)
+  } else if (type === 'null' && value !== null) throw new Error(`${path} must be null`)
+  else if (type === 'string' && typeof value !== 'string') throw new Error(`${path} must be a string`)
   else if (type === 'integer' && !Number.isSafeInteger(value)) throw new Error(`${path} must be an integer`)
   else if (type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) throw new Error(`${path} must be a finite number`)
   else if (type === 'boolean' && typeof value !== 'boolean') throw new Error(`${path} must be a boolean`)
@@ -133,26 +137,24 @@ export class AiToolExecutor {
     last_created: [], last_updated: [], last_affected: [],
   }
   private readonly namedTargets = new Map<string, EntityReference[]>()
-  private agentSteps = 0
-  private agentCommands = 0
-  private readonly startedAt: number
   readonly document: StructuralDocument
   readonly gateway: CommandGateway
   readonly runtime: AiToolRuntime
-  readonly agentBudget: AgentBudget
 
   constructor(
     document: StructuralDocument,
     gateway: CommandGateway,
     runtime: AiToolRuntime,
-    agentBudget: AgentBudget = {},
+    // Retained as a source-compatible constructor argument. Agent budgets are
+    // intentionally ignored: Stop/cancellation and provider limits are the
+    // only execution boundaries.
+    _agentBudget: AgentBudget = {},
   ) {
+    void _agentBudget
     this.document = document
     this.gateway = gateway
     this.runtime = runtime
-    this.agentBudget = agentBudget
     this.queries = new StructuralQueryService(document, runtime.getWorkspaceState)
-    this.startedAt = (runtime.now ?? Date.now)()
   }
 
   execute(call: AiToolCall, mode: AiMode): AiToolResponse {
@@ -169,7 +171,6 @@ export class AiToolExecutor {
       if (!tool) throw new Error(`Unknown tool ${call.name}`)
       validateSchema(call.arguments, tool.inputSchema)
       if (!isToolAllowed(mode, tool)) return this.remember(call, signature, this.error(call, 'MODE_DENIED', `${call.name} is not allowed in ${mode} mode`))
-      this.consumeBudget(mode, tool.kind === 'mutation')
       assertSelectionScope(mode, call.name, targetsFor(call.name, call.arguments as Record<string, unknown>), this.runtime.getWorkspaceState().selection)
       response = tool.kind === 'query' ? this.executeQuery(call) : this.executeMutation(call, mode)
     } catch (error) {
@@ -178,18 +179,44 @@ export class AiToolExecutor {
     return this.remember(call, signature, response)
   }
 
+  async executeAsync(call: AiToolCall, mode: AiMode, signal?: AbortSignal): Promise<AiToolResponse> {
+    if (call.name !== 'run_analysis') return this.execute(call, mode)
+    const signature = canonicalStringify({ name: call.name, arguments: call.arguments, mode })
+    const replay = this.replay.get(call.id)
+    if (replay) return replay.signature === signature ? replay.response : this.error(call, 'IDEMPOTENCY_CONFLICT', 'Tool call ID reused with different content')
+    try {
+      signal?.throwIfAborted()
+      const tool = this.registry.get(call.name)!
+      validateSchema(call.arguments, tool.inputSchema)
+      if (!isToolAllowed(mode, tool)) return this.error(call, 'MODE_DENIED', `run_analysis is not allowed in ${mode}`)
+      if (!this.runtime.runAnalysis) throw new Error('Analysis runtime is unavailable')
+      const data = await this.runtime.runAnalysis(signal)
+      signal?.throwIfAborted()
+      return this.remember(call, signature, { toolCallId: call.id, tool: call.name, ok: true, revision: this.document.revision, data })
+    } catch (error) {
+      if (signal?.aborted) throw error
+      return this.error(call, 'ANALYSIS_FAILED', error instanceof Error ? error.message : String(error))
+    }
+  }
+
   private executeQuery(call: AiToolCall): AiToolResponse {
+    if (ANALYSIS_TOOLS.some(tool => tool.name === call.name)) {
+      if (!this.runtime.queryAnalysis) throw new Error('Analysis result runtime is unavailable')
+      return { toolCallId: call.id, tool: call.name, ok: true, revision: this.document.revision,
+        data: this.runtime.queryAnalysis(call.name, call.arguments as Record<string, unknown>) }
+    }
     const args = call.arguments as Record<string, unknown>
     let data: unknown
     switch (call.name) {
+      case 'get_command_catalogue': data = { operations: payloadShapes, entities: ENTITY_SCHEMAS, editableProperties: EDITABLE_PROPERTIES, units: 'm, kN; material modulus/stress in Pa; density kg/m3' }; break
       case 'get_model_summary': data = this.queries.getModelSummary(); break
       case 'get_selection': data = this.queries.getSelection(); break
       case 'resolve_targets': data = this.resolveTargets(args); break
       case 'remember_targets': data = this.rememberTargets(args); break
       case 'get_entities': data = this.queries.getEntities(args.collection as EntityCollection, args.ids as number[] | undefined); break
-      case 'query_entities': data = this.queries.queryEntities(args.collection as EntityCollection, (args.filter ?? {}) as never, (args.limit as number | undefined) ?? 1000); break
+      case 'query_entities': data = this.queries.queryEntities(args.collection as EntityCollection, (args.filter ?? {}) as never, (args.limit as number | undefined) ?? Infinity); break
       case 'get_connected_entities': data = this.queries.getConnectedEntities(asRefs(args.entities, 'entities')); break
-      case 'get_nearby_nodes': data = this.queries.getNearbyNodes(args.point as [number, number, number], args.radius as number, (args.limit as number | undefined) ?? 100); break
+      case 'get_nearby_nodes': data = this.queries.getNearbyNodes(args.point as [number, number, number], args.radius as number, (args.limit as number | undefined) ?? Infinity); break
       case 'get_sections': data = this.queries.getEntities('sections', args.ids as number[] | undefined); break
       case 'get_materials': data = this.queries.getEntities('materials', args.ids as number[] | undefined); break
       case 'get_parametric_templates': data = this.parametricTemplates(args.kind as string | undefined); break
@@ -213,6 +240,10 @@ export class AiToolExecutor {
 
   private executeMutation(call: AiToolCall, mode: AiMode): AiToolResponse {
     const args = call.arguments as Record<string, unknown>
+    if (call.name === 'unlock_analysis_results' || call.name === 'show_result_view') {
+      if (!this.runtime.queryAnalysis) throw new Error('Analysis runtime unavailable')
+      return { toolCallId: call.id, tool: call.name, ok: true, revision: this.document.revision, data: this.runtime.queryAnalysis(call.name, args) }
+    }
     if (call.name === 'undo_last_ai_change') return this.undo(call, args.undoToken as string)
     if (call.name === 'generate_parametric' || call.name === 'update_parametric_object' || PARAMETRIC_KIND_BY_TOOL[call.name]) return this.generate(call, args)
     const operations = this.operationsFor(call.name, args)
@@ -223,6 +254,17 @@ export class AiToolExecutor {
 
   private operationsFor(name: string, args: Record<string, unknown>): CommandTransactionOperation[] {
     switch (name) {
+      case 'create_entities': {
+        const collection = args.collection as EntityCollection
+        const schema = ENTITY_SCHEMAS[collection]; const type = CREATE_OPERATION[collection]
+        if (!schema || !type) throw new Error(`Unsupported creation collection ${collection}`)
+        const records = asArray<Record<string, unknown>>(args.records, 'records')
+        for (const record of records) {
+          validateSchema(record, schema)
+          if (record.id !== undefined && this.document[collection].has(Number(record.id))) throw new Error(`Entity ${collection}:${record.id} already exists; use an edit tool`)
+        }
+        return [{ type, payload: { [collection]: clone(records) } } as CommandTransactionOperation]
+      }
       case 'create_material': return [{ type: 'CreateOrUpdateMaterials', payload: { materials: [this.materialRecord(args)] } }]
       case 'create_section': return [{ type: 'CreateOrUpdateSections', payload: { sections: [this.sectionRecord(args)] } }]
       case 'create_nodes': return [{ type: 'CreateNodes', payload: { nodes: args.nodes as never[] } }]
@@ -328,15 +370,21 @@ export class AiToolExecutor {
   }
 
   private transformOperations(refs: readonly EntityReference[], args: Record<string, unknown>): CommandTransactionOperation[] {
-    const unsupported = refs.find(ref => ref.collection !== 'nodes' && ref.collection !== 'members')
+    const unsupported = refs.find(ref => ref.collection !== 'nodes' && ref.collection !== 'members' && ref.collection !== 'shells')
     if (unsupported) throw new Error(`transform_entities does not support ${unsupported.collection}`)
     const memberIds = new Set(refs.filter(ref => ref.collection === 'members').map(ref => ref.id))
+    const shellIds = new Set(refs.filter(ref => ref.collection === 'shells').map(ref => ref.id))
     const explicitNodeIds = new Set(refs.filter(ref => ref.collection === 'nodes').map(ref => ref.id))
     const nodeIds = new Set(explicitNodeIds)
     for (const id of memberIds) {
       const member = this.document.members.get(id)
       if (!member) throw new Error(`Unknown members id ${id}`)
       nodeIds.add(member.nodeI); nodeIds.add(member.nodeJ)
+    }
+    for (const id of shellIds) {
+      const shell = this.document.shells.get(id)
+      if (!shell) throw new Error(`Unknown shells id ${id}`)
+      shell.nodeIds.forEach(nodeId => nodeIds.add(nodeId))
     }
     for (const id of nodeIds) if (!this.document.nodes.has(id)) throw new Error(`Unknown nodes id ${id}`)
     const operation = args.operation as string
@@ -367,6 +415,8 @@ export class AiToolExecutor {
       for (const nodeId of nodeIds) {
         if (explicitNodeIds.has(nodeId)) continue
         const outsideTargets = [...(this.document.memberIdsByNodeId.get(nodeId) ?? [])].filter(id => !memberIds.has(id))
+        const outsideShells = [...this.document.shells.values()].filter(shell => shell.nodeIds.includes(nodeId) && !shellIds.has(shell.id))
+        if (outsideShells.length) throw new Error(`Transform would move connected shell(s) ${outsideShells.map(shell => shell.id).join(', ')} through shared node ${nodeId}; include the shared node explicitly or include all connected shells`)
         if (outsideTargets.length) {
           throw new Error(`Transforming targeted members would also move connected member(s) ${outsideTargets.join(', ')} through shared node ${nodeId}; include the shared node explicitly or include all connected members`)
         }
@@ -374,13 +424,21 @@ export class AiToolExecutor {
       return [{ type: 'MoveNodes', payload: { nodes: [...nodeIds].sort((a, b) => a - b).map(id => ({ id, position: transform(this.document.nodes.get(id)!.position) })) } }]
     }
     const copies = operation === 'array' ? Number(args.copies ?? 0) : 1
-    if (!Number.isSafeInteger(copies) || copies < 1 || copies > 1000) throw new Error('array copies must be an integer in [1, 1000]')
-    const nodes: Record<string, unknown>[] = []; const members: Record<string, unknown>[] = []
+    if (!Number.isSafeInteger(copies) || copies < 1) throw new Error('array copies must be a positive integer')
+    const nodes: Record<string, unknown>[] = []; const members: Record<string, unknown>[] = []; const shells: Record<string, unknown>[] = []
+    let nextNodeId = 1
+    for (const id of this.document.nodes.keys()) nextNodeId = Math.max(nextNodeId, id + 1)
     for (let copyIndex = 1; copyIndex <= copies; copyIndex++) {
+      const copiedNodeIds = new Map<number, number>()
       const aliasFor = (id: number) => `transform:${copyIndex}:node:${id}`
       for (const id of [...nodeIds].sort((a, b) => a - b)) {
         const node = this.document.nodes.get(id)!
-        nodes.push({ alias: aliasFor(id), ...(node.name ? { name: `${node.name} copy ${copyIndex}` } : {}), position: transform(node.position, copyIndex) })
+        const copiedId = nextNodeId++; copiedNodeIds.set(id, copiedId)
+        nodes.push({ id: copiedId, alias: aliasFor(id), ...(node.name ? { name: `${node.name} copy ${copyIndex}` } : {}), position: transform(node.position, copyIndex) })
+      }
+      for (const id of shellIds) {
+        const shell = this.document.shells.get(id)!
+        shells.push({ ...clone(shell), id: undefined, nodeIds: shell.nodeIds.map(nodeId => copiedNodeIds.get(nodeId)!) })
       }
       for (const id of [...memberIds].sort((a, b) => a - b)) {
         const member = this.document.members.get(id)!
@@ -389,6 +447,7 @@ export class AiToolExecutor {
       }
     }
     const result: CommandTransactionOperation[] = [{ type: 'CreateNodes', payload: { nodes: nodes as never[] } }]
+    if (shells.length) result.push({ type: 'CreateOrUpdateShells', payload: { shells: shells as never[] } })
     if (members.length) result.push({ type: 'CreateMembers', payload: { members: members as never[] } })
     return result
   }
@@ -397,16 +456,7 @@ export class AiToolExecutor {
     const patch = clone(rawPatch)
     delete patch.id
     if (!Object.keys(patch).length) throw new Error('patch must change at least one property')
-    const allowed: Partial<Record<EntityCollection, readonly string[]>> = {
-      nodes: ['name', 'position', 'metadata'],
-      members: ['label', 'sectionId', 'referenceAxis', 'gammaDegrees', 'release', 'metadata'],
-      shells: ['name', 'thickness', 'materialId', 'metadata'],
-      sections: ['name', 'type', 'materialId', 'depth', 'height', 'width', 'tw', 'tf', 'diameter', 'thickness', 'r', 'ri', 'properties', 'metadata'],
-      materials: ['name', 'category', 'code', 'E', 'nu', 'rho', 'alpha', 'fy', 'fc', 'fu', 'ft', 'grade', 'preset', 'metadata'],
-      loads: ['name', 'type', 'targetIds', 'value', 'magnitude', 'metadata'],
-      boundaryConditions: ['name', 'type', 'targetNodeIds', 'dx', 'dy', 'dz', 'rx', 'ry', 'rz', 'rotationDegrees', 'metadata'],
-      grids: ['name', 'kind', 'data', 'metadata'], levels: ['name', 'elevation', 'metadata'], groups: ['name', 'entityRefs', 'metadata'],
-    }
+    const allowed = EDITABLE_PROPERTIES
     const allowlist = allowed[collection]
     if (!allowlist) throw new Error(`update_entity_properties does not support ${collection}`)
     const unsupported = Object.keys(patch).find(key => !allowlist.includes(key))
@@ -430,6 +480,7 @@ export class AiToolExecutor {
       case 'boundaryConditions': return [{ type: 'CreateOrUpdateBoundaryConditions', payload: { boundaryConditions: records as never[] } }]
       case 'grids': return [{ type: 'CreateOrUpdateGrids', payload: { grids: records as never[] } }]
       case 'levels': return [{ type: 'CreateOrUpdateLevels', payload: { levels: records as never[] } }]
+      case 'selectionSets': return [{ type: 'CreateOrUpdateSelectionSets', payload: { selectionSets: records as never[] } }]
       case 'groups': return [{ type: 'CreateOrUpdateGroups', payload: { groups: records as never[] } }]
       default: throw new Error(`update_entity_properties does not support ${collection}`)
     }
@@ -445,7 +496,7 @@ export class AiToolExecutor {
     }
     push('loads', 'DeleteLoads'); push('boundaryConditions', 'DeleteBoundaryConditions'); push('shells', 'DeleteShells')
     push('members', 'DeleteMembers'); push('nodes', 'DeleteNodes', { cascade }); push('sections', 'DeleteSections', { cascade })
-    push('materials', 'DeleteMaterials'); push('grids', 'DeleteGrids'); push('levels', 'DeleteLevels'); push('groups', 'DeleteGroups'); push('parametricObjects', 'DeleteParametricObjects')
+    push('materials', 'DeleteMaterials'); push('grids', 'DeleteGrids'); push('levels', 'DeleteLevels'); push('groups', 'DeleteGroups'); push('selectionSets', 'DeleteSelectionSets'); push('parametricObjects', 'DeleteParametricObjects')
     return operations
   }
 
@@ -676,16 +727,6 @@ export class AiToolExecutor {
     this.approvals.delete(token)
     if (!approval || approval.signature !== signature || approval.revision !== this.document.revision) throw new Error('Approval token is invalid or stale')
     return true
-  }
-
-  private consumeBudget(mode: AiMode, mutation: boolean) {
-    if (mode !== 'Agent') return
-    this.agentSteps++
-    if (mutation) this.agentCommands++
-    const now = (this.runtime.now ?? Date.now)()
-    if (this.agentSteps > (this.agentBudget.maxSteps ?? 20)) throw new Error('Agent step budget exceeded')
-    if (this.agentCommands > (this.agentBudget.maxCommands ?? 10)) throw new Error('Agent command budget exceeded')
-    if (now - this.startedAt > (this.agentBudget.maxTimeMs ?? 60_000)) throw new Error('Agent time budget exceeded')
   }
 
   private remember(call: AiToolCall, signature: string, response: AiToolResponse) {

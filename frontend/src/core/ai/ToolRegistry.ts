@@ -1,10 +1,13 @@
+import { ENTITY_COLLECTIONS } from '../structural/types.ts'
+import { ENTITY_SCHEMAS } from './EntitySchemas.ts'
+import { ANALYSIS_TOOLS } from './AnalysisTools.ts'
 import type { AiToolDefinition, JsonSchema } from './types.ts'
 
-const collections = ['nodes', 'materials', 'sections', 'members', 'shells', 'loads', 'boundaryConditions', 'grids', 'levels', 'groups', 'parametricObjects'] as const
+const collections = ENTITY_COLLECTIONS
 const object = (properties: Record<string, unknown>, required: readonly string[] = []): JsonSchema => ({
   type: 'object', additionalProperties: false, properties, ...(required.length ? { required } : {}),
 })
-const array = (items: unknown, maxItems = 10_000) => ({ type: 'array', items, maxItems })
+const array = (items: unknown) => ({ type: 'array', items })
 const batch = (items: unknown) => ({ ...array(items), minItems: 1 })
 const ids = array({ type: 'integer', minimum: 1 })
 const ref = object({ collection: { type: 'string', enum: collections }, id: { type: 'integer', minimum: 1 } }, ['collection', 'id'])
@@ -17,6 +20,9 @@ const engineeringVector = { type: 'array', items: engineeringLength, minItems: 3
 const generationControl = { preview: { type: 'boolean' }, approvalToken: { type: 'string' } }
 
 const definitions: AiToolDefinition[] = [
+  ...ANALYSIS_TOOLS,
+  { name: 'get_command_catalogue', kind: 'query', description: 'Discover all canonical transaction operation payloads, entity record schemas and editable property names. Use before advanced create/edit/transaction operations. All dimensions are SI.', inputSchema: object({}) },
+  { name: 'create_entities', kind: 'mutation', description: 'Create canonical entity batches including shells, loads, supports, grids, levels, groups and selection sets. Get record shapes from get_command_catalogue. Existing IDs are rejected.', inputSchema: object({ collection: { type: 'string', enum: Object.keys(ENTITY_SCHEMAS) }, records: batch({ type: 'object' }), preview: { type: 'boolean' } }, ['collection', 'records']) },
   { name: 'get_model_summary', kind: 'query', description: 'Return exact model counts, revision, hash and units.', inputSchema: object({}) },
   { name: 'get_selection', kind: 'query', description: 'Return selected and hidden entity references.', inputSchema: object({}) },
   { name: 'resolve_targets', kind: 'query', description: 'Resolve selection or the latest AI-created/updated entity set without relying on chat text.', inputSchema: object({
@@ -30,7 +36,7 @@ const definitions: AiToolDefinition[] = [
   }, ['alias', 'entities']) },
   { name: 'get_entities', kind: 'query', description: 'Read entities by collection and optional IDs.', inputSchema: object({ collection: { type: 'string', enum: collections }, ids }, ['collection']) },
   { name: 'query_entities', kind: 'query', description: 'Filter exact model entities by ID, type, name, semantic role, group, level, grid, connectivity, workspace state, material, section or coordinate.', inputSchema: object({
-    collection: { type: 'string', enum: collections }, limit: { type: 'integer', minimum: 1, maximum: 10_000 },
+    collection: { type: 'string', enum: collections }, limit: { type: 'integer', minimum: 1 },
     filter: object({
       ids, names: array({ type: 'string' }), nameContains: { type: 'string' }, types: array({ type: 'string' }),
       semanticRoles: array({ type: 'string' }), sectionIds: ids, materialIds: ids,
@@ -45,7 +51,7 @@ const definitions: AiToolDefinition[] = [
     }),
   }, ['collection']) },
   { name: 'get_connected_entities', kind: 'query', description: 'Traverse node/member/section/material connectivity.', inputSchema: object({ entities: array(ref) }, ['entities']) },
-  { name: 'get_nearby_nodes', kind: 'query', description: 'Find nodes within a radius of a Z-up metre coordinate.', inputSchema: object({ point: vector, radius: { type: 'number', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 10_000 } }, ['point', 'radius']) },
+  { name: 'get_nearby_nodes', kind: 'query', description: 'Find nodes within a radius of a Z-up metre coordinate.', inputSchema: object({ point: vector, radius: { type: 'number', minimum: 0 }, limit: { type: 'integer', minimum: 1 } }, ['point', 'radius']) },
   { name: 'get_sections', kind: 'query', description: 'Return all section catalogue records.', inputSchema: object({ ids }) },
   { name: 'get_materials', kind: 'query', description: 'Return all material catalogue records.', inputSchema: object({ ids }) },
   { name: 'get_parametric_templates', kind: 'query', description: 'Return the versioned parametric template catalogue, published defaults and Vietnamese/English engineering vocabulary.', inputSchema: object({ kind: { type: 'string' } }) },
@@ -69,10 +75,10 @@ const definitions: AiToolDefinition[] = [
   { name: 'update_members', kind: 'mutation', description: 'Patch existing members in one batch. Provider calls are previewed before apply.', inputSchema: object({ members: batch(object({ id: { type: 'integer', minimum: 1 }, patch: { type: 'object' } }, ['id', 'patch'])), preview: { type: 'boolean' } }, ['members']) },
   { name: 'change_section', kind: 'mutation', description: 'Assign one section to a member batch. Provider calls are previewed before apply.', inputSchema: object({ memberIds: batch({ type: 'integer', minimum: 1 }), sectionId: { type: 'integer', minimum: 1 }, preview: { type: 'boolean' } }, ['memberIds', 'sectionId']) },
   { name: 'change_material', kind: 'mutation', description: 'Assign a material to members by reusing or creating equivalent sections in one transaction. Set preview=true before apply.', inputSchema: object({ memberIds: batch({ type: 'integer', minimum: 1 }), materialId: { type: 'integer', minimum: 1 }, preview: { type: 'boolean' } }, ['memberIds', 'materialId', 'preview']) },
-  { name: 'transform_entities', kind: 'mutation', description: 'Move, rotate, mirror, copy or array a node/member set in one transaction. Set preview=true before apply.', inputSchema: object({
+  { name: 'transform_entities', kind: 'mutation', description: 'Move, rotate, mirror, copy or array a node/member/shell set in one transaction. Set preview=true before apply.', inputSchema: object({
     entities: batch(ref), operation: { type: 'string', enum: ['move', 'rotate', 'mirror', 'copy', 'array'] },
     translation: vector, origin: vector, axis: { type: 'string', enum: ['x', 'y', 'z'] },
-    angleDegrees: { type: 'number' }, copies: { type: 'integer', minimum: 1, maximum: 1000 }, preview: { type: 'boolean' },
+    angleDegrees: { type: 'number' }, copies: { type: 'integer', minimum: 1 }, preview: { type: 'boolean' },
   }, ['entities', 'operation', 'preview']) },
   { name: 'update_entity_properties', kind: 'mutation', description: 'Patch a batch of same-collection entities, including release, load, support and metadata fields, in one transaction. Set preview=true before apply.', inputSchema: object({
     collection: { type: 'string', enum: collections }, ids: batch({ type: 'integer', minimum: 1 }), patch: { type: 'object' }, preview: { type: 'boolean' },

@@ -7,7 +7,7 @@ import {
 
 const sources = new Set<CommandSource>(['ui', 'ai', 'mcp', 'plugin', 'script', 'system'])
 
-const payloadShapes = {
+export const payloadShapes = {
   CreateNodes: { required: ['nodes'], allowed: ['nodes'], array: 'nodes' },
   MoveNodes: { required: ['nodes'], allowed: ['nodes'], array: 'nodes' },
   DeleteNodes: { required: ['ids'], allowed: ['ids', 'cascade'], array: 'ids' },

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { CommandGateway, StructuralDocument, type CommandWorkspaceState } from '../structural/index.ts'
@@ -146,6 +147,8 @@ test('Inspect rejects mutation even when a provider emits a valid mutation call'
 test('Inspect denies every registered mutation schema before handler execution', () => {
   const state = harness()
   const args: Record<string, Record<string, unknown>> = {
+    run_analysis: {}, unlock_analysis_results: {}, show_result_view: { component: 'N' },
+    create_entities: { collection: 'levels', records: [{ name: 'Roof', elevation: 4 }] },
     create_material: { name: 'S355', E: '210 GPa', nu: 0.3, preview: true },
     create_section: { name: 'I500', type: 'I', materialId: 1, height: '500 mm', width: '200 mm', tw: '10 mm', tf: '16 mm', preview: true },
     create_nodes: { nodes: [{ position: [0, 0, 0] }] },
@@ -420,9 +423,10 @@ test('Goal 17 batch property edits cover release, load, support, group and metad
     collection: 'groups', ids: [1], patch: { name: 'Perimeter frame' }, preview: false,
   }).ok, true)
   assert.equal(state.document.groups.get(1)?.name, 'Perimeter frame')
-  assert.match(invoke(state.executor, 'rewire-denied', 'update_entity_properties', {
+  assert.equal(invoke(state.executor, 'rewire', 'update_entity_properties', {
     collection: 'members', ids: [1], patch: { nodeI: 3 }, preview: false,
-  }).error!.message, /cannot be changed/)
+  }).ok, true)
+  assert.equal(state.document.members.get(1)?.nodeI, 3)
 })
 
 test('Goal 17 no-op previews report zero exact changes and do not create a misleading undo', () => {
@@ -501,11 +505,11 @@ test('Generate accepts only injected high-level generators and supports regenera
   assert.equal(invoke(state.executor, 'generate-low-level', 'create_nodes', { nodes: [{ position: [0, 0, 0] }] }, 'Generate').error?.code, 'MODE_DENIED')
 })
 
-test('Agent enforces step/command budget and schema errors request clarification', () => {
+test('Agent ignores legacy step/command/time budgets and schema errors request clarification', () => {
   const state = harness(baseDocument(), { maxSteps: 2, maxCommands: 1, maxTimeMs: 60_000 })
   assert.equal(invoke(state.executor, 'agent-query', 'get_model_summary', {}, 'Agent').ok, true)
   assert.equal(invoke(state.executor, 'agent-command', 'set_selection', { entities: [] }, 'Agent').ok, true)
-  assert.match(invoke(state.executor, 'over-budget', 'get_model_summary', {}, 'Agent').error!.message, /budget/)
+  assert.equal(invoke(state.executor, 'over-legacy-budget', 'get_model_summary', {}, 'Agent').ok, true)
   const missing = invoke(state.executor, 'missing-section', 'change_section', { memberIds: [1] })
   assert.equal(missing.ok, false)
   assert.ok(missing.error?.clarification)
@@ -516,4 +520,46 @@ test('raw unknown command cannot bypass gateway validation', () => {
   const result = invoke(state.executor, 'unknown-operation', 'execute_transaction', { operations: [{ type: 'DirectModelMutation', payload: {} }] })
   assert.equal(result.ok, false)
   assert.match(result.error!.message, /Unsupported command operation/)
+})
+
+
+test('default Agent remains usable after idle time and beyond old step and mutation limits', () => {
+  let time = 0
+  const doc = baseDocument()
+  const executor = new AiToolExecutor(doc, new CommandGateway(doc), { now: () => time,
+    getWorkspaceState: () => ({ selection: [], hidden: [] }), applyWorkspaceState: () => {} })
+  time = 3_600_000
+  for (let index = 0; index < 60; index++) {
+    assert.equal(invoke(executor, `long-query-${index}`, 'get_model_summary', {}, 'Agent').ok, true)
+    assert.equal(invoke(executor, `long-mutation-${index}`, 'set_selection', { entities: [] }, 'Agent').ok, true)
+  }
+})
+
+test('create_entities exposes supports, loads and selection sets with canonical validation', () => {
+  const state = harness()
+  const created = invoke(state.executor, 'create-load', 'create_entities', { collection: 'loads', records: [{ type: 'nodal', targetIds: [1], value: [0, 0, -5] }] }, 'Agent')
+  assert.equal(created.ok, true)
+  assert.equal(state.document.loads.size, 2)
+  const existing = invoke(state.executor, 'existing-load', 'create_entities', { collection: 'loads', records: [{ id: 1, type: 'nodal', targetIds: [1], value: [0, 0, -5] }] }, 'Agent')
+  assert.equal(existing.ok, false)
+})
+
+test('shell transforms copy nodes and shell connectivity atomically', () => {
+  const doc = new StructuralDocument({ materials: [{ id: 1, name: 'Steel', E: 210e9, nu: .3 }], nodes: [
+    { id: 1, position: [0, 0, 0] }, { id: 2, position: [1, 0, 0] }, { id: 3, position: [1, 1, 0] }, { id: 4, position: [0, 1, 0] },
+  ], shells: [{ id: 1, nodeIds: [1, 2, 3, 4], thickness: .02, materialId: 1 }] })
+  const state = harness(doc)
+  const result = invoke(state.executor, 'shell-copy', 'transform_entities', { entities: [{ collection: 'shells', id: 1 }], operation: 'copy', translation: [0, 0, 2], preview: false }, 'Agent')
+  assert.equal(result.ok, true, result.error?.message)
+  assert.equal(doc.shells.size, 2); assert.equal(doc.nodes.size, 8)
+  const copy = [...doc.shells.values()].find(shell => shell.id !== 1)!
+  assert.ok(copy.nodeIds.every(id => doc.nodes.get(id)!.position[2] === 2))
+})
+
+
+test('every Copilot tool has a backend allowlist entry, including analysis and advanced edits', () => {
+  const backend = readFileSync(new URL('../../../../backend/copilot.py', import.meta.url), 'utf8')
+  const block = backend.slice(backend.indexOf('QUERY_TOOL_NAMES ='), backend.indexOf('ALLOWED_TOOL_NAMES ='))
+  const names = new Set([...block.matchAll(/"([a-z_]+)"/g)].map(match => match[1]))
+  for (const tool of new AiToolRegistry().list()) assert.ok(names.has(tool.name), `Backend is missing ${tool.name}`)
 })

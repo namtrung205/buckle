@@ -1,5 +1,5 @@
 const providerPreviewTools = new Set([
-  'create_material', 'create_section',
+  'create_entities', 'create_material', 'create_section',
   'move_nodes', 'update_members', 'change_section', 'change_material',
   'transform_entities', 'update_entity_properties',
   'create_grid', 'create_portal_frame', 'create_frame_array', 'create_truss',
@@ -13,7 +13,7 @@ const collectionWords: Readonly<Record<string, string>> = {
   shell: 'shells', shells: 'shells', load: 'loads', loads: 'loads',
   boundarycondition: 'boundaryConditions', boundaryconditions: 'boundaryConditions',
   grid: 'grids', grids: 'grids', level: 'levels', levels: 'levels',
-  group: 'groups', groups: 'groups', parametricobject: 'parametricObjects', parametricobjects: 'parametricObjects',
+  selectionset: 'selectionSets', selectionsets: 'selectionSets', group: 'groups', groups: 'groups', parametricobject: 'parametricObjects', parametricobjects: 'parametricObjects',
 }
 
 /** Flattened/singular keys invented by small models, mapped to documented query_entities filter keys. */
@@ -150,7 +150,16 @@ const queryNormalizers: Readonly<Record<string, (args: Readonly<Record<string, u
 
 /** Provider-authored structural edits are proposals; only the Apply UI may commit them.
  *  Read-only queries additionally tolerate the flattened argument shapes small local models emit. */
-export const safeProviderToolArguments = (tool: string, args: Readonly<Record<string, unknown>>) => {
+export const safeProviderToolArguments = (tool: string, args: Readonly<Record<string, unknown>>, mode?: string) => {
   const normalized = queryNormalizers[tool]?.(args) ?? { ...args }
-  return providerPreviewTools.has(tool) ? { ...normalized, preview: true } : normalized
+  return providerPreviewTools.has(tool) ? { ...normalized, preview: mode === 'Agent' ? normalized.preview === true : true } : normalized
+}
+
+/** Apply only changes the preview flag for tools that declare it. */
+export const approvedToolArguments = (args: Readonly<Record<string, unknown>>, properties: Record<string, unknown>, approvalToken?: string) => {
+  const approved = { ...args }
+  delete approved.preview
+  if ('preview' in properties) approved.preview = false
+  if (approvalToken) approved.approvalToken = approvalToken
+  return approved
 }

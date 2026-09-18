@@ -1,10 +1,10 @@
 import type { CommandTransactionOperation, EntityReference } from '../structural/index.ts'
 import type { AiMode, AiToolDefinition, ToolPreview } from './types.ts'
 
-const workspaceTools = new Set(['set_selection', 'hide_entities', 'show_entities'])
+const workspaceTools = new Set(['show_result_view', 'set_selection', 'hide_entities', 'show_entities'])
 const editTools = new Set(['move_nodes', 'update_members', 'change_section', 'change_material', 'transform_entities', 'update_entity_properties', 'delete_entities'])
 const catalogueTools = new Set(['create_material', 'create_section'])
-const modelingTools = new Set([...catalogueTools, 'create_nodes', 'create_members', ...editTools, ...workspaceTools, 'execute_transaction', 'preview_transaction', 'undo_last_ai_change'])
+const modelingTools = new Set(['run_analysis', 'unlock_analysis_results', 'create_entities', ...catalogueTools, 'create_nodes', 'create_members', ...editTools, ...workspaceTools, 'execute_transaction', 'preview_transaction', 'undo_last_ai_change'])
 export const PARAMETRIC_MUTATION_TOOLS = [
   'create_grid', 'create_portal_frame', 'create_frame_array', 'create_truss',
   'create_warehouse', 'create_tower', 'update_parametric_object', 'generate_parametric',

@@ -426,3 +426,71 @@ def test_parse_tool_calls_accepts_string_and_object_arguments():
     assert parsed[0]["arguments"] == {}
     with pytest.raises(RuntimeError):
         copilot._parse_tool_calls({"tool_calls": [{"id": "call-4", "function": {"name": "x", "arguments": "{bad"}}]})
+
+
+def test_agent_contract_accepts_large_context_long_messages_and_many_results():
+    payload = _turn_request(mode="Agent")
+    payload["prompt"] = "Inspect " + "x" * 5000
+    payload["history"] = [{"role": "assistant", "content": "y" * 5000} for _ in range(25)]
+    payload["context"]["large"] = "z" * 300_000
+    payload["toolResults"] = [{"toolCallId": f"result-{i}", "tool": "query_entities", "ok": True, "content": {}} for i in range(100)]
+    request = copilot.CopilotTurnRequest.model_validate(payload)
+    copilot._validate_turn_tools(request)
+    assert len(request.tool_results) == 100
+    assert len(request.history) == 25
+
+
+def test_length_cutoff_continues_until_the_provider_finishes(monkeypatch):
+    calls = []
+
+    async def fake_turn(request, _session_id):
+        calls.append(request)
+        index = len(calls)
+        return {
+            "message": f"part-{index}", "toolCalls": [], "contextRevision": 7,
+            "finishReason": "length" if index < 3 else "stop",
+        }
+
+    monkeypatch.setattr(copilot, "_run_copilot_turn", fake_turn)
+    request = copilot.CopilotTurnRequest.model_validate(_turn_request(mode="Agent"))
+    result = asyncio.run(copilot.run_copilot_turn(request, "continuation-session"))
+    assert result["message"] == "part-1part-2part-3"
+    assert len(calls) == 3
+    assert calls[1].tools == []
+    assert calls[2].history[-1].content == "part-1part-2"
+
+
+def test_analysis_tools_and_large_call_batches_are_available(monkeypatch):
+    session = "agent-batch-session"
+    connection = copilot.ProviderConnection(id="batch", provider="openai", label="test", api_key="test", base_url="https://example.com/v1", models=["test-model"], rate_limit=copilot.RateLimitSettings())
+    copilot.connections[(session, connection.id)] = connection
+
+    async def fake_post(*args):
+        assert copilot.unbounded_agent.get() is True
+        return httpx.Response(200, json={"choices": [{"message": {"tool_calls": [
+            {"id": str(i), "function": {"name": "get_analysis_summary", "arguments": "{}"}} for i in range(30)
+        ]}}]})
+    monkeypatch.setattr(copilot, "_provider_post", fake_post)
+    payload = _turn_request(mode="Agent", tools=[{"name": "get_analysis_summary", "description": "Summary", "inputSchema": {"type": "object"}}])
+    payload["connectionId"] = connection.id
+    try:
+        result = asyncio.run(copilot.run_copilot_turn(copilot.CopilotTurnRequest.model_validate(payload), session))
+        assert len(result["toolCalls"]) == 30
+        assert copilot.unbounded_agent.get() is False
+    finally:
+        copilot.connections.pop((session, connection.id), None)
+
+
+def test_cancel_interrupts_a_waiting_provider_task():
+    async def scenario():
+        session, request_id = "cancel-unbounded-session", "request-long-running"
+        task = asyncio.create_task(asyncio.sleep(3600))
+        copilot.active_turns[(session, request_id)] = task
+        try:
+            await copilot.cancel_copilot_turn(request_id, session)
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            copilot.active_turns.pop((session, request_id), None)
+            copilot.cancelled_requests.discard((session, request_id))
+    asyncio.run(scenario())

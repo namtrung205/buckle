@@ -83,6 +83,8 @@ export type AiToolRuntime = Readonly<{
   executeCommand?: (command: CommandEnvelope) => CommandResult
   undoCommand?: () => CommandResult | null
   parametricGenerators?: Readonly<Record<string, ParametricGeneratorBinding>>
+  queryAnalysis?: (tool: string, args: Record<string, unknown>) => unknown
+  runAnalysis?: (signal?: AbortSignal) => Promise<unknown>
   now?: () => number
 }>
 

@@ -34,7 +34,7 @@ export class StructuralQueryService {
       snapshotHash: this.document.getSnapshotHash(),
       counts: Object.fromEntries([
         'nodes', 'materials', 'sections', 'members', 'shells', 'loads',
-        'boundaryConditions', 'grids', 'levels', 'groups', 'parametricObjects',
+        'boundaryConditions', 'grids', 'levels', 'groups', 'parametricObjects', 'selectionSets',
       ].map(collection => [collection, this.document[collection as EntityCollection].size])),
       selectionCount: this.getWorkspaceState().selection.length,
       units: { length: 'm', force: 'kN', coordinateSystem: 'Z-up' },
@@ -54,8 +54,8 @@ export class StructuralQueryService {
       .map(record => this.describe(collection, record.id))
   }
 
-  queryEntities(collection: EntityCollection, filter: QueryFilter = {}, limit = 1000) {
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) throw new Error('limit must be an integer in [1, 10000]')
+  queryEntities(collection: EntityCollection, filter: QueryFilter = {}, limit = Infinity) {
+    if (limit !== Infinity && (!Number.isSafeInteger(limit) || limit < 1)) throw new Error('limit must be a positive integer')
     for (const id of filter.sectionIds ?? []) this.requireEntity('sections', id)
     for (const id of filter.materialIds ?? []) this.requireEntity('materials', id)
     const activeFilterKeys = Object.entries(filter).filter(([, value]) => value !== undefined).map(([key]) => key)
@@ -165,7 +165,7 @@ export class StructuralQueryService {
     return [...found.values()].sort((a, b) => a.collection.localeCompare(b.collection) || a.id - b.id)
   }
 
-  getNearbyNodes(point: readonly [number, number, number], radius: number, limit = 100) {
+  getNearbyNodes(point: readonly [number, number, number], radius: number, limit = Infinity) {
     if (!Number.isFinite(radius) || radius < 0) throw new Error('radius must be non-negative')
     return [...this.document.nodes.values()].map(node => ({
       id: node.id,

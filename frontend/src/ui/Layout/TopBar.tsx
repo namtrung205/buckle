@@ -38,7 +38,6 @@ import TowerGeneratorDialog from '../Model/Tower/TowerGenerator';
 import AnalysisProgress from '../Results/AnalysisProgress';
 import Dialog from '../../components/Dialog/Dialog';
 
-const { VITE_BACKEND_SERVER } = import.meta.env;
 const APP_VERSION = '0.0.2';
 
 type BuiltinRibbonAction =
@@ -331,24 +330,7 @@ const TopBar = observer(({ onMenuClick, onPluginsClick }: TopBarProps) => {
       model.console.setFinished(false);
       open('analysisProgress');
       
-      // Build the Z-up payload through the single source of truth. The whole
-      // model (nodes, member vecxz, boundary conditions, load values, shells)
-      // is converted from the three.js (Y-up) scene frame to the shared
-      // JSON/OpenSees (Z-up) schema HERE, at this boundary only.
-      const analysisSnapshot = model.createAnalysisSnapshot();
-      const data = structuredClone(analysisSnapshot.model);
-
-      const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);
-      model.reconcileStructuralDocument();
-      if (model.structuralDocument.revision !== analysisSnapshot.revision) {
-        throw new Error('Model changed while analysis was running; discard the stale result and run again.');
-      }
-      console.log('RES', res);
-      model.output = res.data.output;
-      model.analysisRevision = analysisSnapshot.revision;
-      model.analysisSnapshotHash = analysisSnapshot.hash;
-      model.reactionViz.apply();
-      model.lockResults();
+      await model.runAnalysis();
       // Jump straight to the results ribbon now that the model is locked.
       setActiveTab('result');
       

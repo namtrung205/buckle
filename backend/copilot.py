@@ -11,6 +11,9 @@ import os
 import json
 import ipaddress
 import asyncio
+from contextvars import ContextVar
+from collections.abc import Callable
+from copilot_streaming import provider_stream
 from urllib.parse import urlparse
 from uuid import uuid4
 from typing import Any, Literal
@@ -19,10 +22,13 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from provider_rate_limit import ProviderQueueTimeout, ProviderRateGovernor, estimate_request_tokens
+from provider_rate_limit import ProviderQueueTimeout, ProviderRateGovernor, estimate_request_tokens, _seconds
 
 
 router = APIRouter(prefix="/api/copilot", tags=["copilot"])
+unbounded_agent: ContextVar[bool] = ContextVar("unbounded_agent", default=False)
+active_turns: dict[tuple[str, str], asyncio.Task] = {}
+turn_text_sink: ContextVar[Callable[[str], None] | None] = ContextVar("turn_text_sink", default=None)
 
 
 class ModelContext(BaseModel):
@@ -38,7 +44,7 @@ class ModelContext(BaseModel):
 class PlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    prompt: str = Field(min_length=1, max_length=4000)
+    prompt: str = Field(min_length=1)
     context: ModelContext
     connection_id: str | None = Field(default=None, alias="connectionId")
     model: str | None = Field(default=None, min_length=1, max_length=200)
@@ -48,7 +54,7 @@ class ConversationMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     role: Literal["user", "assistant"]
-    content: str = Field(max_length=4000)
+    content: str
 
 
 class ClientToolDefinition(BaseModel):
@@ -73,12 +79,12 @@ class CopilotTurnRequest(BaseModel):
 
     request_id: str = Field(alias="requestId", min_length=8, max_length=200)
     conversation_id: str = Field(alias="conversationId", min_length=8, max_length=200)
-    prompt: str = Field(min_length=1, max_length=4000)
+    prompt: str = Field(min_length=1)
     mode: Literal["Inspect", "Edit", "Modeling", "Generate", "Agent"]
     context: dict[str, Any]
-    history: list[ConversationMessage] = Field(default_factory=list, max_length=20)
-    tools: list[ClientToolDefinition] = Field(default_factory=list, max_length=40)
-    tool_results: list[ClientToolResult] = Field(default_factory=list, alias="toolResults", max_length=40)
+    history: list[ConversationMessage] = Field(default_factory=list)
+    tools: list[ClientToolDefinition] = Field(default_factory=list)
+    tool_results: list[ClientToolResult] = Field(default_factory=list, alias="toolResults")
     connection_id: str | None = Field(default=None, alias="connectionId")
     model: str | None = Field(default=None, min_length=1, max_length=200)
 
@@ -180,8 +186,8 @@ class TransactionPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str = Field(min_length=1, max_length=500)
-    nodes: list[PlannedNode] = Field(max_length=10_000)
-    members: list[PlannedMember] = Field(max_length=10_000)
+    nodes: list[PlannedNode]
+    members: list[PlannedMember]
 
 
 COPILOT_TOOL = {
@@ -321,19 +327,35 @@ async def _provider_post(
     path: str,
     payload: dict[str, Any],
 ) -> httpx.Response:
+    async def send():
+        url = f"{connection.base_url}/{path.lstrip('/')}"
+        headers = {**_headers(connection.provider, connection.api_key), "content-type": "application/json"}
+        sink = turn_text_sink.get()
+        if sink:
+            return await provider_stream(client, url, headers, payload, connection.provider, sink)
+        return await client.post(url, headers=headers, json=payload)
+
+    if unbounded_agent.get():
+        # Agent obeys actual provider quota, not Buckle's local RPM/TPM/wait budget.
+        while True:
+            response = await send()
+            if response.status_code != 429:
+                return response
+            try:
+                error = response.json().get("error", {})
+            except (ValueError, AttributeError):
+                error = {}
+            code = error.get("code") if isinstance(error, dict) else None
+            if code in {"insufficient_quota", "billing_hard_limit_reached", "credits_exhausted"}:
+                return response
+            await asyncio.sleep(_seconds(response.headers.get("retry-after")) or 5)
     key = (session_id, connection.id)
     governor = rate_governors.get(key)
     if governor is None:
         governor = ProviderRateGovernor(connection.rate_limit)
         rate_governors[key] = governor
-    return await governor.execute(
-        lambda: client.post(
-            f"{connection.base_url}/{path.lstrip('/')}",
-            headers={**_headers(connection.provider, connection.api_key), "content-type": "application/json"},
-            json=payload,
-        ),
-        estimate_request_tokens(payload),
-    )
+    return await governor.execute(send, estimate_request_tokens(payload))
+
 
 
 def _parse_tool_calls(message: dict[str, Any]) -> list[dict[str, Any]]:
@@ -486,11 +508,11 @@ async def plan_copilot_request(request: PlanRequest, session_id: str) -> dict[st
 
     context = request.context.model_dump(by_alias=True)
     user_content = f"Model context:\n{context}\n\nUser request:\n{request.prompt}"
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=30)) as client:
         if connection.provider == "anthropic":
             response = await _provider_post(
                 client, connection, session_id, "messages", {
-                    "model": model, "max_tokens": 1800, "temperature": 0,
+                    "model": model, "max_tokens": int(os.getenv("COPILOT_MAX_OUTPUT_TOKENS", "8192")), "temperature": 0,
                     "system": SYSTEM_PROMPT,
                     "messages": [{"role": "user", "content": user_content}],
                     "tools": [COPILOT_TOOL],
@@ -555,11 +577,14 @@ async def create_plan(
 
 
 QUERY_TOOL_NAMES = {
+    "get_command_catalogue", "get_agent_tool_result", "list_analysis_runs", "get_analysis_summary", "query_analysis_results",
+    "check_result_equilibrium", "check_result_threshold", "compare_analysis_runs", "create_analysis_report",
     "get_model_summary", "get_selection", "resolve_targets", "remember_targets", "get_entities", "query_entities",
     "get_connected_entities", "get_nearby_nodes", "get_sections", "get_materials", "get_parametric_templates",
     "validate_model",
 }
 MUTATION_TOOL_NAMES = {
+    "run_analysis", "show_result_view", "unlock_analysis_results", "create_entities",
     "create_material", "create_section", "create_nodes", "create_members", "move_nodes", "update_members", "change_section",
     "change_material", "transform_entities", "update_entity_properties",
     "delete_entities", "set_selection", "hide_entities", "show_entities",
@@ -585,7 +610,7 @@ Mode rules are security boundaries:
   existing generated object. Never use low-level geometry tools when a semantic generator exists.
 - Use create_material before create_section when the requested material does not exist. Use
   create_section before member/generator creation when the requested section does not exist.
-- Agent: multi-step tools within the supplied budget.
+- Agent: complete the task with as many tool steps as needed. There is no application step, loop or time budget.
 
 Never claim that create_material or create_section is unavailable when that tool is present in the
 supplied tool list. If a requested mutation is unavailable because the current mode does not expose
@@ -604,13 +629,30 @@ Never pass placeholders such as [range]; omit that filter instead. If a tool cal
 validation, fix the arguments against the tool schema and retry once.
 Use get_parametric_templates when defaults or engineering parameter names are needed; defaults
 returned by that tool are authoritative and must be stated in the generation preview.
-For edits, resolve exact targets first, reject zero or ambiguous matches, then call the
-edit tool with preview=true. Apply only after user approval. Prefer transform_entities for
+For edits, resolve exact targets first and reject zero or ambiguous matches. In Agent mode,
+perform explicitly requested non-destructive edits directly (preview=false). Use preview=true
+when the user asks to review a proposal. Other modes preview edits before approval. Prefer transform_entities for
 move/copy/rotate/mirror/array, change_material for member material, and
 update_entity_properties for batch release/load/support/metadata edits.
 Destructive tools may return a preview and approval token: explain the preview and stop;
 never fabricate approval. Do not expose chain-of-thought. Keep final answers concise and
-state exact affected counts/IDs from tool results."""
+state exact affected counts/IDs from tool results.
+
+Write user-facing answers as clear Markdown with tables when comparing results. Never claim
+that an application step/loop/time limit has been reached: Agent has none. If a query repeats
+without progress, use its prior output or change strategy. Archived tool outputs remain fully
+available through get_agent_tool_result. A paginated response is not the full dataset; follow
+nextOffset when the user asks for all data.
+For result review, call get_analysis_summary, then query_analysis_results for evidence.
+Cite analysisRunId, model revision, entity ID, station, component, unit and axis frame.
+Use only actual solver samples; do not infer continuous extrema or load combinations.
+check_result_threshold tests an explicit absolute response threshold, not a design-code check.
+No provided threshold means no pass/fail conclusion. Convergence alone does not establish
+structural safety. Separate observed values from hypotheses and proposed investigations.
+Use check_result_equilibrium for recorded-load force/moment balance; it does not prove all requested loads were applied. Use unlock_analysis_results before requested editing after a solve; it preserves the archived baseline. Use show_result_view to highlight results.
+Use compare_analysis_runs for before/after review and create_analysis_report for an exact
+Markdown table. Historical results must be labelled stale when the current snapshot differs.
+If USER_REJECTED is returned, do not repeat the rejected proposal; explain remaining work."""
 
 
 def _turn_connection(request: CopilotTurnRequest, session_id: str) -> tuple[ProviderConnection, str]:
@@ -641,9 +683,6 @@ def _validate_turn_tools(request: CopilotTurnRequest) -> None:
         raise RuntimeError(f"Unsupported tool definitions: {', '.join(sorted(unknown))}")
     if request.mode == "Inspect" and set(names) - QUERY_TOOL_NAMES:
         raise RuntimeError("Inspect mode cannot expose mutation tools")
-    serialized_size = len(json.dumps(request.model_dump(by_alias=True), separators=(",", ":")))
-    if serialized_size > 250_000:
-        raise RuntimeError("Copilot turn context exceeds 250 KB")
 
 
 def _turn_user_content(request: CopilotTurnRequest) -> str:
@@ -651,7 +690,7 @@ def _turn_user_content(request: CopilotTurnRequest) -> str:
         "conversationId": request.conversation_id,
         "mode": request.mode,
         "modelContext": request.context,
-        "recentConversation": [message.model_dump() for message in request.history[-12:]],
+        "recentConversation": [message.model_dump() for message in request.history],
         "userRequest": request.prompt,
         "toolResults": [result.model_dump(by_alias=True) for result in request.tool_results],
     }
@@ -659,17 +698,36 @@ def _turn_user_content(request: CopilotTurnRequest) -> str:
 
 
 async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict[str, Any]:
+    token = unbounded_agent.set(request.mode == "Agent")
+    try:
+        result = await _run_copilot_turn(request, session_id)
+        chunks = [result["message"]]
+        while result["finishReason"] == "length":
+            continuation = request.model_copy(update={
+                "prompt": "Continue the previous answer exactly where it ended, without repeating it. Finish the original request: " + request.prompt,
+                "history": [*request.history, ConversationMessage(role="assistant", content="".join(chunks))],
+                "tools": [],
+            })
+            result = await _run_copilot_turn(continuation, session_id)
+            chunks.append(result["message"])
+        return {**result, "message": "".join(chunks)}
+    finally:
+        unbounded_agent.reset(token)
+
+
+async def _run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict[str, Any]:
     _validate_turn_tools(request)
     connection, model = _turn_connection(request, session_id)
     user_content = _turn_user_content(request)
+    provider_finish = "stop"
     system_prompt = TOOL_SYSTEM_PROMPT if request.tools else (
         TOOL_SYSTEM_PROMPT + "\nNo more tools are available for this turn. Answer the user's request now "
         "using the supplied tool results. Mention any unresolved limitation concisely."
     )
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(None, connect=30)) as client:
         if connection.provider == "anthropic":
             payload = {
-                "model": model, "max_tokens": 2200, "temperature": 0,
+                "model": model, "max_tokens": int(os.getenv("COPILOT_MAX_OUTPUT_TOKENS", "8192")), "temperature": 0,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_content}],
             }
@@ -679,6 +737,7 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
                 client, connection, session_id, "messages", payload,
             )
             _raise_provider_error(response)
+            provider_finish = response.json().get("stop_reason", "stop")
             content = response.json().get("content", [])
             text = "\n".join(str(block.get("text", "")) for block in content if block.get("type") == "text").strip()
             tool_calls = [{
@@ -704,10 +763,9 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
             )
             _raise_provider_error(response)
             message = response.json().get("choices", [{}])[0].get("message", {})
-            text = str(message.get("content") or "").strip()
+            provider_finish = response.json().get("choices", [{}])[0].get("finish_reason", "stop")
+            text = str(message.get("content") or "")
             tool_calls = _parse_tool_calls(message)
-    if len(tool_calls) > 25:
-        raise RuntimeError("Provider exceeded the 25 tool-call turn budget")
     allowed = {tool.name for tool in request.tools}
     if any(call["name"] not in allowed for call in tool_calls):
         raise RuntimeError("Provider returned a tool that is not available in this mode")
@@ -715,7 +773,7 @@ async def run_copilot_turn(request: CopilotTurnRequest, session_id: str) -> dict
         "message": text,
         "toolCalls": tool_calls,
         "contextRevision": request.context.get("revision"),
-        "finishReason": "tool_calls" if tool_calls else "stop",
+        "finishReason": "tool_calls" if tool_calls else "length" if provider_finish in {"length", "max_tokens"} else "stop",
     }
 
 
@@ -747,18 +805,57 @@ async def copilot_turn_stream(
     async def events():
         key = (x_copilot_session, request.request_id)
         yield "event: status\ndata: {\"status\":\"planning\"}\n\n"
+        next_chunk = None
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        sink_token = turn_text_sink.set(queue.put_nowait)
         try:
-            result = await run_copilot_turn(request, x_copilot_session)
+            if key in cancelled_requests:
+                yield 'event: cancelled\ndata: {}\n\n'
+                return
+            task = asyncio.create_task(run_copilot_turn(request, x_copilot_session))
+            active_turns[key] = task
+            emitted = False
+            while not task.done() or not queue.empty():
+                if not queue.empty():
+                    emitted = True
+                    yield f"event: text\ndata: {json.dumps({'text': queue.get_nowait()}, ensure_ascii=False)}\n\n"
+                    continue
+                if task.done():
+                    break
+                next_chunk = asyncio.create_task(queue.get())
+                done, _ = await asyncio.wait({task, next_chunk}, timeout=10, return_when=asyncio.FIRST_COMPLETED)
+                if next_chunk in done:
+                    chunk = next_chunk.result()
+                    emitted = True
+                    yield f"event: text\ndata: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
+                else:
+                    next_chunk.cancel()
+                    await asyncio.gather(next_chunk, return_exceptions=True)
+                    if not done:
+                        yield ': provider still working or waiting for quota\n\n'
+                next_chunk = None
+            result = await task
             if key in cancelled_requests:
                 yield "event: cancelled\ndata: {}\n\n"
                 return
             message = result.get("message") or ""
-            for start in range(0, len(message), 80):
-                yield f"event: text\ndata: {json.dumps({'text': message[start:start + 80]}, ensure_ascii=False)}\n\n"
+            if message and not emitted:
+                yield f"event: text\ndata: {json.dumps({'text': message}, ensure_ascii=False)}\n\n"
             yield f"event: result\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            if key in cancelled_requests:
+                yield 'event: cancelled\ndata: {}\n\n'
+            else:
+                raise
         except Exception as error:
             yield f"event: error\ndata: {json.dumps({'message': str(error)})}\n\n"
         finally:
+            turn_text_sink.reset(sink_token)
+            if next_chunk and not next_chunk.done():
+                next_chunk.cancel()
+            task = active_turns.pop(key, None)
+            if task and not task.done():
+                task.cancel()
             cancelled_requests.discard(key)
 
     return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
@@ -769,6 +866,10 @@ async def cancel_copilot_turn(
     request_id: str,
     x_copilot_session: str = Header(min_length=20, max_length=200),
 ):
-    cancelled_requests.add((x_copilot_session, request_id))
+    key = (x_copilot_session, request_id)
+    cancelled_requests.add(key)
+    task = active_turns.get(key)
+    if task:
+        task.cancel()
     asyncio.get_running_loop().call_later(60, cancelled_requests.discard, (x_copilot_session, request_id))
     return {"cancelled": True, "requestId": request_id}

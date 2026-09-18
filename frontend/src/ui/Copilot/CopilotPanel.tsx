@@ -12,9 +12,12 @@ import { colors } from '../../theme'
 import { isToolAllowed, type AiMode, type AiToolCall, type AiToolResponse } from '../../core/ai'
 import { COMMAND_SCHEMA_VERSION, type EntityReference } from '../../core/structural'
 import { createParametricGeneratorCatalogue } from '../../model/Generators/ParametricCatalogue'
-import { canRetryCopilotTurn, copilotToolCallId, type CopilotTurnStatus } from './CopilotRetry'
-import { copilotContextConflictMessage, copilotPreviewConflictMessage, copilotToolCallSignature, repeatedCopilotToolCycle, retainCopilotToolResults } from './CopilotLoopGuard'
-import { safeProviderToolArguments } from './CopilotToolPolicy'
+import { canRetryCopilotTurn, type CopilotTurnStatus } from './CopilotRetry'
+import { copilotContextConflictMessage, copilotPreviewConflictMessage } from './CopilotLoopGuard'
+import { safeProviderToolArguments, approvedToolArguments } from './CopilotToolPolicy'
+import { runAgent, newAgentCheckpoint, agentContextResults, AGENT_RESULT_TOOL, readAgentResult, type AgentCheckpoint } from './AgentRunner'
+import MarkdownMessage from './MarkdownMessage'
+import { saveCopilotArchive, loadCopilotArchive, type SavedAgentRun } from './CopilotArchive'
 
 type Message = {
   id: string
@@ -38,7 +41,7 @@ type RateLimitSettings = {
 }
 type ProviderConnection = { id: string; provider: ProviderKind; label: string; baseUrl: string; models: string[]; keyHint: string; rateLimit: RateLimitSettings }
 type TurnResult = { message: string; toolCalls: AiToolCall[]; contextRevision: number; finishReason: 'tool_calls' | 'stop' | 'cancelled' }
-type PendingApproval = { tool: string; args: Record<string, unknown>; preview: NonNullable<AiToolResponse['preview']>; revision: number }
+type PendingApproval = { tool: string; args: Record<string, unknown>; preview: NonNullable<AiToolResponse['preview']>; revision: number; mode: AiMode }
 
 const apiRoot = (import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/\/$/, '')
 const sessionKey = 'buckle.copilot.session'
@@ -80,7 +83,7 @@ const httpDetailMessage = (body: unknown, fallback: string): string => {
 const initialMessages = (): Message[] => {
   try {
     const stored = JSON.parse(sessionStorage.getItem(messagesKey) ?? 'null')
-    if (Array.isArray(stored)) return stored.slice(-50)
+    if (Array.isArray(stored)) return stored
   } catch { /* ignore invalid session state */ }
   return [newMessage('assistant', 'Tôi có thể truy vấn, chọn, chỉnh sửa và tạo mô hình. Chọn mode phù hợp trước khi gửi lệnh.')]
 }
@@ -166,6 +169,14 @@ const CopilotPanel = observer(() => {
   const [streamingText, setStreamingText] = useState('')
   const [pending, setPending] = useState<PendingApproval | null>(null); const [lastUndoToken, setLastUndoToken] = useState('')
   const [conversationId, setConversationId] = useState(() => sessionStorage.getItem(conversationKey) ?? crypto.randomUUID())
+  const runRef = useRef<AgentCheckpoint | null>(null)
+  const savedRunRef = useRef<SavedAgentRun | null>(null)
+  const [archiveReady, setArchiveReady] = useState(false)
+  const [archiveError, setArchiveError] = useState('')
+  const approvalRef = useRef<((response: AiToolResponse) => void) | null>(null)
+  const [runRound, setRunRound] = useState(0)
+  const [autoReview, setAutoReview] = useState(false)
+  const reviewedRunRef = useRef<string | null>(null)
   const abortRef = useRef<AbortController | null>(null); const requestIdRef = useRef('')
   const panelRef = useRef<HTMLDivElement>(null); const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 })
   const [connectionDraft, setConnectionDraft] = useState({ provider: 'deepseek' as ProviderKind, label: '', apiKey: '', baseUrl: '', modelIds: '', rateLimit: defaultRateLimit() })
@@ -178,12 +189,30 @@ const CopilotPanel = observer(() => {
     if (!conversationId) throw new Error('Copilot conversation ID is required')
     return model.createAiToolExecutor(parametricGenerators)
   }, [conversationId, model, parametricGenerators])
-  useEffect(() => { sessionStorage.setItem(messagesKey, JSON.stringify(messages.slice(-50))) }, [messages])
+  useEffect(() => {
+    let active = true
+    setArchiveReady(false)
+    void Promise.all([loadCopilotArchive<Message[]>(`${conversationId}:messages`), loadCopilotArchive<SavedAgentRun>(`${conversationId}:run`)]).then(([storedMessages, storedRun]) => {
+      if (!active) return
+      if (storedMessages) setMessages(storedMessages)
+      if (storedRun) {
+        if (storedRun.run.status === 'running') storedRun.run.status = 'stopped'
+        runRef.current = storedRun.run; savedRunRef.current = storedRun
+        setRunRound(storedRun.run.round)
+      }
+    }).catch(error => { if (active) setArchiveError(`Archive unavailable: ${String(error)}`) })
+      .finally(() => { if (active) setArchiveReady(true) })
+    return () => { active = false }
+  }, [conversationId])
+  useEffect(() => {
+    if (archiveReady) void saveCopilotArchive(`${conversationId}:messages`, messages).catch(error => setArchiveError(`Messages remain in this session; archive failed: ${String(error)}`))
+  }, [messages, archiveReady, conversationId])
   useEffect(() => { sessionStorage.setItem(modeKey, mode) }, [mode])
   useEffect(() => { sessionStorage.setItem(conversationKey, conversationId) }, [conversationId])
 
   const context = () => ({ ...executor.queries.getModelSummary(), selection: executor.queries.getSelection().selection,
-    sections: executor.queries.getEntities('sections').slice(0, 100), materials: executor.queries.getEntities('materials').slice(0, 100),
+    sections: executor.queries.getEntities('sections'), materials: executor.queries.getEntities('materials'),
+    analysis: { currentRevision: model.analysisRevision, snapshotHash: model.analysisSnapshotHash, latestRunId: model.currentAnalysisRunId ?? model.analysisRuns.latestId, archiveWarning: model.analysisArchiveError || undefined },
     capabilities: { parametricKinds: Object.keys(parametricGenerators), commonQueries: ['computed member length', 'semantic role', 'section', 'material', 'position', 'connectivity'] } })
 
   useEffect(() => {
@@ -224,54 +253,73 @@ const CopilotPanel = observer(() => {
     setMessages(current => current.map(message => message.id === messageId ? { ...message, ...patch } : message))
 
   const runConversation = async (text: string, logicalTurnId: string, onMutationCommitted: () => void): Promise<Exclude<CopilotTurnStatus, 'running' | 'failed'>> => {
-    const controller = new AbortController(); abortRef.current = controller; const requestId = crypto.randomUUID(); requestIdRef.current = requestId
-    const allowedTools = executor.registry.list().filter(tool => isToolAllowed(mode, tool))
-    const toolDefinitions = allowedTools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
-    const queryToolNames = new Set(allowedTools.filter(tool => tool.kind === 'query').map(tool => tool.name))
-    const history = messages.filter(message => message.role === 'user' || message.role === 'assistant').slice(-12).map(message => ({ role: message.role as 'user' | 'assistant', content: message.text }))
-    let toolResults: Array<{ toolCallId: string; tool: string; ok: boolean; content: Record<string, unknown> }> = []
-    let querySignatures: string[] = []
-    const finishWithoutTools = async (fallback: string): Promise<Exclude<CopilotTurnStatus, 'running' | 'failed'>> => {
-      let streamed = ''; setStreamingText('')
-      const result = await streamTurn({ requestId, conversationId, prompt: text, mode, context: context(), history, tools: [], toolResults, connectionId: selectedConnectionId, model: selectedModel }, controller.signal, chunk => { streamed += chunk; setStreamingText(current => current + chunk) })
-      if (result.finishReason === 'cancelled') return 'cancelled'
-      setStreamingText('')
-      setMessages(current => [...current, newMessage('assistant', result.message || streamed || fallback)])
-      return 'completed'
-    }
-    for (let round = 0; round < 6; round++) {
-      let streamed = ''; setStreamingText(''); const startRevision = model.structuralDocument.revision
-      const result = await streamTurn({ requestId, conversationId, prompt: text, mode, context: context(), history, tools: toolDefinitions, toolResults, connectionId: selectedConnectionId, model: selectedModel }, controller.signal, chunk => { streamed += chunk; setStreamingText(current => current + chunk) })
-      if (result.finishReason === 'cancelled') return 'cancelled'
-      setStreamingText('')
-      if (!result.toolCalls.length) { setMessages(current => [...current, newMessage('assistant', result.message || streamed || 'Done.')]); return 'completed' }
-      const conflict = copilotContextConflictMessage(startRevision, model.structuralDocument.revision, result.contextRevision)
-      if (conflict) throw new Error(conflict)
-      const queryOnly = result.toolCalls.every(call => queryToolNames.has(call.name))
-      if (queryOnly && repeatedCopilotToolCycle(querySignatures, result.toolCalls)) {
-        return finishWithoutTools('Copilot stopped a repeated tool loop and returned the available results.')
-      }
-      if (!queryOnly) querySignatures = []
-      for (const [callIndex, providerCall] of result.toolCalls.entries()) {
-        const call = { ...providerCall, id: copilotToolCallId(logicalTurnId, round, callIndex), arguments: safeProviderToolArguments(providerCall.name, providerCall.arguments) }
-        const response = executor.execute(call, mode); const refs = affectedRefs(response)
-        setMessages(current => [...current, { id: crypto.randomUUID(), role: 'activity', text: activityText(response), ...(refs.length ? { affected: refs } : {}) }])
-        if (response.undoToken) { setLastUndoToken(response.undoToken); onMutationCommitted(); querySignatures = [] }
-        const explicitPreview = call.name === 'preview_transaction' || call.arguments.preview === true
-        if (response.preview && (response.preview.requiresApproval || explicitPreview)) {
-          const args = { ...call.arguments, preview: false, ...(response.preview.approvalToken ? { approvalToken: response.preview.approvalToken } : {}) }
-          setPending({ tool: call.name === 'preview_transaction' ? 'execute_transaction' : call.name, args, preview: response.preview, revision: response.revision })
-          setMessages(current => [...current, newMessage('assistant', result.message || 'Review the proposed change before applying.')]); return 'completed'
+    const previous = savedRunRef.current?.run.id === logicalTurnId ? savedRunRef.current : null
+    const runMode = previous?.mode ?? mode
+    const connectionId = previous?.connectionId ?? selectedConnectionId
+    const modelId = previous?.modelId ?? selectedModel
+    if (previous && previous.modelHash !== model.structuralDocument.getSnapshotHash()) throw new Error('Model changed since the checkpoint. Start a new request against the current model; saved calls were not replayed.')
+    const controller = new AbortController(); abortRef.current = controller
+    const allowedTools = [...executor.registry.list().filter(tool => isToolAllowed(runMode, tool)), AGENT_RESULT_TOOL]
+    const tools = allowedTools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
+    const history = messages.filter(message => message.role === 'user' || message.role === 'assistant').map(message => ({ role: message.role, content: message.text }))
+    const run = runRef.current?.id === logicalTurnId ? runRef.current : { ...newAgentCheckpoint(text), id: logicalTurnId }
+    runRef.current = run
+    const message = await runAgent(run, {
+      signal: controller.signal,
+      checkpoint: async checkpoint => {
+        setRunRound(checkpoint.round)
+        const saved: SavedAgentRun = { run: checkpoint, modelHash: ['stopped', 'failed'].includes(checkpoint.status) ? savedRunRef.current?.modelHash ?? model.structuralDocument.getSnapshotHash() : model.structuralDocument.getSnapshotHash(), mode: runMode, connectionId, modelId }
+        savedRunRef.current = saved
+        try { await saveCopilotArchive(`${conversationId}:run`, structuredClone(saved)) }
+        catch (error) { setArchiveError(`Checkpoint remains in memory; save failed: ${String(error)}`) }
+      },
+      plan: async checkpoint => {
+        controller.signal.throwIfAborted()
+        const requestId = crypto.randomUUID(); requestIdRef.current = requestId
+        const revision = model.structuralDocument.revision
+        setStreamingText('')
+        const result = await streamTurn({ requestId, conversationId, prompt: text, mode: runMode, context: context(), history, tools,
+          toolResults: agentContextResults(checkpoint.results), connectionId, model: modelId }, controller.signal,
+          chunk => setStreamingText(current => current + chunk))
+        controller.signal.throwIfAborted()
+        setStreamingText('')
+        const conflict = copilotContextConflictMessage(revision, model.structuralDocument.revision, result.contextRevision)
+        if (conflict && result.finishReason !== 'cancelled') throw new Error(conflict)
+        return result
+      },
+      execute: async providerCall => {
+        controller.signal.throwIfAborted()
+        if (providerCall.name === AGENT_RESULT_TOOL.name) {
+          try { return { toolCallId: providerCall.id, tool: providerCall.name, ok: true, revision: model.structuralDocument.revision, data: readAgentResult(run, providerCall.arguments) } }
+          catch (error) { return { toolCallId: providerCall.id, tool: providerCall.name, ok: false, revision: model.structuralDocument.revision, error: { code: 'INVALID_ARGUMENTS', message: String(error) } } }
         }
-        toolResults = retainCopilotToolResults(toolResults, [{ toolCallId: call.id, tool: call.name, ok: response.ok, content: response as unknown as Record<string, unknown> }])
-        if (queryOnly) querySignatures.push(copilotToolCallSignature(call))
-      }
-    }
-    return finishWithoutTools('Copilot reached its tool-call budget and returned the available results.')
+        const call = { ...providerCall, arguments: safeProviderToolArguments(providerCall.name, providerCall.arguments, runMode) }
+        const response = await executor.executeAsync(call, runMode, controller.signal)
+        if (response.ok && !response.undoToken && response.preview && (response.preview.requiresApproval || call.name === 'preview_transaction' || call.arguments.preview === true)) {
+          const tool = call.name === 'preview_transaction' ? 'execute_transaction' : call.name
+          const properties = executor.registry.get(tool)!.inputSchema.properties as Record<string, unknown>
+          const args = approvedToolArguments(call.arguments, properties, response.preview.approvalToken)
+          return await new Promise<AiToolResponse>((resolve, reject) => {
+            const abort = () => { approvalRef.current = null; setPending(null); reject(new DOMException('Stopped', 'AbortError')) }
+            approvalRef.current = value => { controller.signal.removeEventListener('abort', abort); approvalRef.current = null; resolve(value) }
+            controller.signal.addEventListener('abort', abort, { once: true })
+            setPending({ tool, args, preview: response.preview!, revision: response.revision, mode: runMode })
+          })
+        }
+        return response
+      },
+      activity: response => {
+        const refs = affectedRefs(response)
+        setMessages(current => [...current, { id: crypto.randomUUID(), role: 'activity', text: activityText(response), ...(refs.length ? { affected: refs } : {}) }])
+        if (response.undoToken) { setLastUndoToken(response.undoToken); onMutationCommitted() }
+      },
+    })
+    setMessages(current => [...current, newMessage('assistant', message)])
+    return 'completed'
   }
 
   const sendPrompt = async (text: string, retryOf?: Message) => {
-    if (!text || busy) return
+    if (!text || busy || !archiveReady) return
     if (!selectedConnectionId || !selectedModel) { setSettingsOpen(true); setConnectionError('Connect a provider and select a model first.'); return }
     if (retryOf && !canRetryCopilotTurn(retryOf, busy)) return
     const logicalTurnId = retryOf?.logicalTurnId ?? crypto.randomUUID()
@@ -307,41 +355,69 @@ const CopilotPanel = observer(() => {
   }
   const stop = () => {
     abortRef.current?.abort(); if (requestIdRef.current) void fetch(`${apiRoot}/api/copilot/cancel/${encodeURIComponent(requestIdRef.current)}`, { method: 'POST', headers: apiHeaders })
-    setBusy(false); setStreamingText(''); setMessages(current => [...current, newMessage('assistant', 'Đã dừng. Không command chưa hoàn tất nào được áp dụng.')])
+    setStreamingText(''); setMessages(current => [...current, newMessage('assistant', 'Đã yêu cầu dừng. Những thay đổi đã áp dụng được giữ lại; có thể Undo hoặc tiếp tục tác vụ.')])
   }
   const applyPending = () => {
-    if (!pending) return
+    if (!pending || !approvalRef.current) return
     const conflict = copilotPreviewConflictMessage(pending.revision, model.structuralDocument.revision)
-    if (conflict) {
-      setMessages(current => [...current, newMessage('error', conflict)])
-      setPending(null)
-      return
-    }
-    const response = executor.execute({ id: crypto.randomUUID(), name: pending.tool, arguments: pending.args }, mode)
-    setMessages(current => [...current, newMessage(response.ok ? 'activity' : 'error', activityText(response))]); if (response.undoToken) setLastUndoToken(response.undoToken); setPending(null)
+    const response: AiToolResponse = conflict
+      ? { toolCallId: crypto.randomUUID(), tool: pending.tool, ok: false, revision: model.structuralDocument.revision, error: { code: 'STALE_REVISION', message: conflict } }
+      : executor.execute({ id: crypto.randomUUID(), name: pending.tool, arguments: pending.args }, pending.mode)
+    approvalRef.current(response); setPending(null)
   }
+  const rejectPending = () => {
+    if (!pending) return
+    approvalRef.current?.({ toolCallId: crypto.randomUUID(), tool: pending.tool, ok: false, revision: model.structuralDocument.revision,
+      error: { code: 'USER_REJECTED', message: 'The user rejected this proposed change. Do not propose it again; explain what remains undone.' } })
+    setPending(null)
+  }
+  const resumeRun = () => {
+    const run = runRef.current
+    if (!run || busy || run.status === 'completed') return
+    const previous = messages.find(message => message.logicalTurnId === run.id)
+    void sendPrompt(run.prompt, { ...previous, ...newMessage('user', run.prompt), logicalTurnId: run.id, status: 'failed', retryCount: 0 })
+  }
+  const reviewResults = () => void sendPrompt('Phân tích kết quả analysis hiện tại: dùng get_analysis_summary, truy vấn các vị trí quan trọng, giải thích chuyển vị, nội lực và phản lực. Ghi run/revision, ID, station, đơn vị và hạn chế dữ liệu. Không tự kết luận đạt tiêu chuẩn khi chưa có kiểm tra tương ứng. Trả báo cáo Markdown có bảng và các đề xuất kiểm tra tiếp.')
+  useEffect(() => { void model.restoreAnalysisArchive() }, [model])
+  useEffect(() => {
+    const id = model.currentAnalysisRunId
+    if (open && autoReview && !busy && id && reviewedRunRef.current !== id && selectedConnectionId && selectedModel) {
+      reviewedRunRef.current = id
+      reviewResults()
+    }
+    // reviewResults intentionally follows the live sendPrompt closure; the
+    // stable run identity and busy flag are the scheduling boundary.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model.currentAnalysisRunId, open, autoReview, busy, selectedConnectionId, selectedModel])
   const undoAi = () => {
     if (!lastUndoToken) return
     const response = executor.execute({ id: crypto.randomUUID(), name: 'undo_last_ai_change', arguments: { undoToken: lastUndoToken } }, mode)
     setMessages(current => [...current, newMessage(response.ok ? 'activity' : 'error', response.ok ? `Undo complete · revision ${response.revision}` : response.error!.message)]); if (response.ok) setLastUndoToken('')
   }
-  const clearContext = () => { setConversationId(crypto.randomUUID()); setPending(null); setLastUndoToken(''); setMessages([newMessage('assistant', 'Context cleared. What would you like to inspect or model?')]) }
+  const clearContext = () => { runRef.current = null; savedRunRef.current = null; setConversationId(crypto.randomUUID()); setPending(null); setLastUndoToken(''); setMessages([newMessage('assistant', 'Context cleared. What would you like to inspect or model?')]) }
   const selectAffected = (refs: EntityReference[]) => model.executeCommand({ commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: COMMAND_SCHEMA_VERSION, modelRevision: model.structuralDocument.revision, source: 'ui', payload: { entities: refs } })
 
   if (!open) return <Tooltip title="AI Copilot"><IconButton onClick={() => setOpen(true)} sx={{ position: 'fixed', right: 18, bottom: 38, zIndex: 1300, bgcolor: colors.accent, color: '#fff', '&:hover': { bgcolor: colors.accentHover } }}><SmartToy /></IconButton></Tooltip>
   return <Draggable nodeRef={panelRef} handle=".copilot-drag-handle" cancel="button, input, textarea, [role='button'], .MuiInputBase-root" bounds="body" position={panelPosition} onStop={(_, data) => setPanelPosition({ x: data.x, y: data.y })}>
-  <Paper ref={panelRef} elevation={12} sx={{ position: 'fixed', right: 16, bottom: 36, zIndex: 1300, width: { xs: 'calc(100vw - 24px)', sm: 430 }, height: { xs: 'min(610px, calc(100vh - 24px))', sm: 610 }, display: 'flex', flexDirection: 'column', bgcolor: colors.surface, border: `1px solid ${colors.border}`, overflow: 'hidden' }}>
+  <Paper ref={panelRef} elevation={12} sx={{ position: 'fixed', right: 16, bottom: 36, zIndex: 1300, resize: 'both', minWidth: 360, minHeight: 400, maxWidth: '95vw', maxHeight: '95vh', width: { xs: 'calc(100vw - 24px)', sm: 620 }, height: { xs: 'min(610px, calc(100vh - 24px))', sm: 610 }, display: 'flex', flexDirection: 'column', bgcolor: colors.surface, border: `1px solid ${colors.border}`, overflow: 'hidden' }}>
     <Box className="copilot-drag-handle" title="Drag to move chat" sx={{ display: 'flex', alignItems: 'center', gap: .5, px: 1, py: .75, borderBottom: `1px solid ${colors.border}`, cursor: 'grab', userSelect: 'none', '&:active': { cursor: 'grabbing' } }}><SmartToy sx={{ color: colors.accentSoft }} /><Typography sx={{ fontWeight: 700, fontSize: 14 }}>Buckle AI</Typography>
-      <Select size="small" value={mode} onChange={event => setMode(event.target.value as AiMode)} sx={{ width: 104, height: 30, fontSize: 11 }}>{(['Inspect', 'Edit', 'Modeling', 'Generate', 'Agent'] as AiMode[]).map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}</Select>
-      <Select size="small" value={selectedConnectionId && selectedModel ? `${selectedConnectionId}|${selectedModel}` : ''} onChange={event => { const [id, ...rest] = event.target.value.split('|'); setSelectedConnectionId(id); setSelectedModel(rest.join('|')) }} displayEmpty sx={{ flex: 1, height: 30, fontSize: 11, minWidth: 0 }} renderValue={value => value ? selectedModel : 'Choose model'}>{connections.flatMap(connection => connection.models.map(modelId => <MenuItem key={`${connection.id}|${modelId}`} value={`${connection.id}|${modelId}`}>{connection.label} · {modelId}</MenuItem>))}</Select>
+      <Select size="small" disabled={busy} value={mode} onChange={event => setMode(event.target.value as AiMode)} sx={{ width: 104, height: 30, fontSize: 11 }}>{(['Inspect', 'Edit', 'Modeling', 'Generate', 'Agent'] as AiMode[]).map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}</Select>
+      <Select size="small" disabled={busy} value={selectedConnectionId && selectedModel ? `${selectedConnectionId}|${selectedModel}` : ''} onChange={event => { const [id, ...rest] = event.target.value.split('|'); setSelectedConnectionId(id); setSelectedModel(rest.join('|')) }} displayEmpty sx={{ flex: 1, height: 30, fontSize: 11, minWidth: 0 }} renderValue={value => value ? selectedModel : 'Choose model'}>{connections.flatMap(connection => connection.models.map(modelId => <MenuItem key={`${connection.id}|${modelId}`} value={`${connection.id}|${modelId}`}>{connection.label} · {modelId}</MenuItem>))}</Select>
       <Tooltip arrow title="Configure AI providers, models and rate limits" componentsProps={{ tooltip: { sx: { maxWidth: 280, px: 1.5, py: 1, fontSize: 13 } } }}><IconButton size="small" onClick={() => { setConnectionError(''); setSettingsOpen(true) }}><Settings fontSize="small" /></IconButton></Tooltip><Tooltip title="Undo last AI change"><span><IconButton size="small" disabled={!lastUndoToken || busy} onClick={undoAi}><Undo fontSize="small" /></IconButton></span></Tooltip><IconButton size="small" onClick={() => setOpen(false)}><Close fontSize="small" /></IconButton>
     </Box>
-    <Box sx={{ flex: 1, overflowY: 'auto', p: 1.25, display: 'flex', flexDirection: 'column', gap: .8 }}>{messages.map(message => message.role === 'user' ? <Box key={message.id} sx={{ alignSelf: 'flex-end', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: .2, maxWidth: '88%' }}><Box sx={{ bgcolor: colors.accentHover, color: colors.text, px: 1.1, py: .7, borderRadius: 1, fontSize: 13, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Box>{canRetryCopilotTurn(message, busy) && <Button size="small" onClick={() => retryMessage(message)} sx={{ fontSize: 10, minWidth: 0, px: .8, color: colors.textDim }}><Refresh sx={{ fontSize: 12, mr: .3 }} />Retry once</Button>}</Box> : <Box key={message.id} sx={{ alignSelf: 'flex-start', maxWidth: message.role === 'activity' ? '100%' : '88%', bgcolor: message.role === 'activity' ? colors.bg : colors.surfaceAlt, border: message.role === 'activity' ? `1px solid ${colors.border}` : undefined, color: message.role === 'error' ? colors.danger : colors.text, px: 1.1, py: .7, borderRadius: 1, fontSize: message.role === 'activity' ? 11 : 13, whiteSpace: 'pre-wrap' }}>{message.text}{!!message.affected?.length && <Button size="small" sx={{ ml: 1, fontSize: 10 }} onClick={() => selectAffected(message.affected!)}>Select</Button>}</Box>)}
-      {pending && <Box sx={{ border: `1px solid ${colors.secondary}`, borderRadius: 1, p: 1, bgcolor: colors.bg }}><Typography fontSize={12} fontWeight={700}>Proposed change</Typography><Typography fontSize={12}>Add {pending.preview.created} · Update {pending.preview.updated} · Delete {pending.preview.deleted} · Risk {pending.preview.risk}</Typography>{pending.preview.parametric && <Stack spacing={.25} mt={.5}><Typography fontSize={11}>{pending.preview.parametric.kind} · template {pending.preview.parametric.templateId}@{pending.preview.parametric.templateVersion}</Typography>{pending.preview.parametric.footprint && <Typography fontSize={11}>Size {pending.preview.parametric.footprint.size.map(value => `${Number(value.toFixed(3))} m`).join(' × ')}</Typography>}<Typography fontSize={11}>Sections {pending.preview.parametric.sectionIds.join(', ') || 'none'} · Loads {pending.preview.parametric.loadCount} · Supports {pending.preview.parametric.supportCount} · Render/analysis {pending.preview.parametric.estimatedCost.render}/{pending.preview.parametric.estimatedCost.analysis}</Typography>{pending.preview.parametric.defaultsApplied.length > 0 && <Typography fontSize={11} color={colors.textDim}>Defaults: {pending.preview.parametric.defaultsApplied.join(', ')}</Typography>}{pending.preview.parametric.warnings.map(warning => <Typography key={warning} fontSize={11} color={colors.secondary}>{warning}</Typography>)}</Stack>}<Stack direction="row" spacing={1} mt={1}><Button size="small" variant="contained" onClick={applyPending}>Apply</Button><Button size="small" onClick={() => setPending(null)}>Reject</Button></Stack></Box>}
-      {streamingText && <Box sx={{ alignSelf: 'flex-start', maxWidth: '88%', bgcolor: colors.surfaceAlt, px: 1.1, py: .7, borderRadius: 1, fontSize: 13, whiteSpace: 'pre-wrap' }}>{streamingText}</Box>}
-      {busy && <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={16} /><Typography fontSize={11}>Planning and running tools…</Typography></Stack>}
+    <Box sx={{ flex: 1, overflowY: 'auto', p: 1.25, display: 'flex', flexDirection: 'column', gap: .8 }}>{messages.map(message => message.role === 'user' ? <Box key={message.id} sx={{ alignSelf: 'flex-end', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: .2, maxWidth: '88%' }}><Box sx={{ bgcolor: colors.accentHover, color: colors.text, px: 1.1, py: .7, borderRadius: 1, fontSize: 13, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{message.text}</Box>{canRetryCopilotTurn(message, busy) && <Button size="small" onClick={() => retryMessage(message)} sx={{ fontSize: 10, minWidth: 0, px: .8, color: colors.textDim }}><Refresh sx={{ fontSize: 12, mr: .3 }} />Retry once</Button>}</Box> : <Box key={message.id} sx={{ alignSelf: 'flex-start', maxWidth: message.role === 'activity' ? '100%' : '88%', bgcolor: message.role === 'activity' ? colors.bg : colors.surfaceAlt, border: message.role === 'activity' ? `1px solid ${colors.border}` : undefined, color: message.role === 'error' ? colors.danger : colors.text, px: 1.1, py: .7, borderRadius: 1, fontSize: message.role === 'activity' ? 11 : 13, whiteSpace: 'pre-wrap' }}>{message.role === 'assistant' ? <MarkdownMessage text={message.text} exportable /> : message.text}{!!message.affected?.length && <Button size="small" sx={{ ml: 1, fontSize: 10 }} onClick={() => selectAffected(message.affected!)}>Select</Button>}</Box>)}
+      {pending && <Box sx={{ border: `1px solid ${colors.secondary}`, borderRadius: 1, p: 1, bgcolor: colors.bg }}><Typography fontSize={12} fontWeight={700}>Proposed change</Typography><Typography fontSize={12}>Add {pending.preview.created} · Update {pending.preview.updated} · Delete {pending.preview.deleted} · Risk {pending.preview.risk}</Typography>{pending.preview.parametric && <Stack spacing={.25} mt={.5}><Typography fontSize={11}>{pending.preview.parametric.kind} · template {pending.preview.parametric.templateId}@{pending.preview.parametric.templateVersion}</Typography>{pending.preview.parametric.footprint && <Typography fontSize={11}>Size {pending.preview.parametric.footprint.size.map(value => `${Number(value.toFixed(3))} m`).join(' × ')}</Typography>}<Typography fontSize={11}>Sections {pending.preview.parametric.sectionIds.join(', ') || 'none'} · Loads {pending.preview.parametric.loadCount} · Supports {pending.preview.parametric.supportCount} · Render/analysis {pending.preview.parametric.estimatedCost.render}/{pending.preview.parametric.estimatedCost.analysis}</Typography>{pending.preview.parametric.defaultsApplied.length > 0 && <Typography fontSize={11} color={colors.textDim}>Defaults: {pending.preview.parametric.defaultsApplied.join(', ')}</Typography>}{pending.preview.parametric.warnings.map(warning => <Typography key={warning} fontSize={11} color={colors.secondary}>{warning}</Typography>)}</Stack>}<Stack direction="row" spacing={1} mt={1}><Button size="small" variant="contained" onClick={applyPending}>Apply</Button><Button size="small" onClick={rejectPending}>Reject</Button></Stack></Box>}
+      {streamingText && <Box sx={{ alignSelf: 'flex-start', maxWidth: '88%', bgcolor: colors.surfaceAlt, px: 1.1, py: .7, borderRadius: 1, fontSize: 13, whiteSpace: 'pre-wrap' }}><MarkdownMessage text={streamingText} /></Box>}
+      {busy && <Stack direction="row" spacing={1} alignItems="center"><CircularProgress size={16} /><Typography fontSize={11}>{pending ? 'Waiting for approval…' : `Running · round ${runRound} · no step limit`}</Typography></Stack>}
     </Box>
-    <Box component="form" onSubmit={submit} sx={{ p: 1, borderTop: `1px solid ${colors.border}` }}><Stack direction="row" spacing={1}><TextField value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={handlePromptKeyDown} disabled={busy} size="small" fullWidth multiline maxRows={3} placeholder={mode === 'Inspect' ? 'Tìm các member thép dài dưới 5 m…' : 'Nhập yêu cầu mô hình…'} inputProps={{ 'aria-label': 'Copilot prompt' }} />{busy ? <IconButton onClick={stop} color="error"><Stop /></IconButton> : <IconButton type="submit" disabled={!prompt.trim()} color="primary"><Send /></IconButton>}</Stack><Stack direction="row" justifyContent="space-between" alignItems="center" mt={.5}><Typography fontSize={10} color={colors.textFaint}>{mode} · Z-up · m · kN</Typography><Button size="small" onClick={clearContext}>Clear context</Button></Stack></Box>
+    {archiveError && <Typography sx={{ px: 1, color: 'warning.main', fontSize: 11 }}>{archiveError}</Typography>}
+    <Stack direction="row" spacing={.5} sx={{ px: 1, flexWrap: 'wrap' }}>
+      <Button size="small" disabled={busy || model.analysisRevision === null} onClick={reviewResults}>Đánh giá result</Button>
+      <Button size="small" color={autoReview ? 'primary' : 'inherit'} onClick={() => setAutoReview(value => !value)}>Auto review: {autoReview ? 'On' : 'Off'}</Button>
+      {runRef.current && ['stopped', 'failed'].includes(runRef.current.status) && <Button size="small" disabled={busy} onClick={resumeRun}>Continue task</Button>}
+      <Tooltip title={executor.registry.list().filter(tool => isToolAllowed(mode, tool)).map(tool => tool.name).join(', ')}><Button size="small">{executor.registry.list().filter(tool => isToolAllowed(mode, tool)).length + 1} tools</Button></Tooltip>
+    </Stack>
+    <Box component="form" onSubmit={submit} sx={{ p: 1, borderTop: `1px solid ${colors.border}` }}><Stack direction="row" spacing={1}><TextField value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={handlePromptKeyDown} disabled={busy} size="small" fullWidth multiline maxRows={3} placeholder={mode === 'Inspect' ? 'Tìm các member thép dài dưới 5 m…' : 'Nhập yêu cầu mô hình…'} inputProps={{ 'aria-label': 'Copilot prompt' }} />{busy ? <IconButton onClick={stop} color="error"><Stop /></IconButton> : <IconButton type="submit" disabled={!prompt.trim() || !archiveReady} color="primary"><Send /></IconButton>}</Stack><Stack direction="row" justifyContent="space-between" alignItems="center" mt={.5}><Typography fontSize={10} color={colors.textFaint}>{mode} · Z-up · m · kN</Typography><Button size="small" disabled={busy} onClick={clearContext}>Clear context</Button></Stack></Box>
     <Dialog open={settingsOpen} onClose={() => setSettingsOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { width: { xs: 'calc(100% - 24px)', sm: 760, md: 920 }, maxWidth: 'none', maxHeight: 'calc(100% - 32px)', backgroundImage: 'none' } }}>
       <DialogTitle sx={{ px: { xs: 2, sm: 3 }, py: 2.25, borderBottom: `1px solid ${colors.border}` }}><Stack direction="row" alignItems="center" spacing={1.25}><Box sx={{ display: 'grid', placeItems: 'center', width: 38, height: 38, borderRadius: 1.25, bgcolor: colors.accentHover }}><Settings sx={{ fontSize: 21 }} /></Box><Box sx={{ flex: 1 }}><Typography fontSize={18} fontWeight={750}>AI provider settings</Typography><Typography mt={.25} fontSize={12.5} color={colors.textDim}>Manage provider connections, available models and outbound request limits.</Typography></Box><IconButton aria-label="Close provider settings" onClick={() => setSettingsOpen(false)}><Close /></IconButton></Stack></DialogTitle>
       <DialogContent sx={{ px: { xs: 2, sm: 3 }, py: '24px !important', bgcolor: colors.surface }}><Stack spacing={3}>

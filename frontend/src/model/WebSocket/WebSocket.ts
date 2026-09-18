@@ -1,7 +1,7 @@
+import { isToolAllowed, type AiMode, type AiToolExecutor } from '../../core/ai'
+import { createParametricGeneratorCatalogue } from '../Generators/ParametricCatalogue'
 import { exportModelJson } from '../../helpers';
-import { jsonToThree } from '../../utils/axis';
 import Model from '../Model';
-import { Node, ElasticBeamColumn, BoundaryCondition, Load } from '..';
 import type { BoundaryConditionDto, LoadDto } from '../../contracts/structuralModel';
 
 interface WebSocketPayload {
@@ -31,6 +31,7 @@ interface MemberMutation {
 
 export default class WebSocketHandler {
   private ws: WebSocket | null = null;
+  private toolExecutor?: AiToolExecutor;
   private readonly url: string;
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 5;
@@ -53,12 +54,26 @@ export default class WebSocketHandler {
           resolve();
         };
 
-        this.ws.onmessage = (event) => {
+        this.ws.onmessage = async (event) => {
           try {
             const { message, id, data } = JSON.parse(event.data) as WebSocketPayload;
             let answer: object | undefined;
 
             switch (message) {
+              case 'list_ai_tools':
+              case 'call_ai_tool': {
+                const request = (data ?? {}) as { mode?: AiMode; name?: string; arguments?: Record<string, unknown>; callId?: string }
+                const mode = request.mode ?? 'Inspect'
+                if (!['Inspect', 'Edit', 'Modeling', 'Generate', 'Agent'].includes(mode)) throw new Error('Invalid AI mode')
+                const executor = this.toolExecutor ??= this.model.createAiToolExecutor(createParametricGeneratorCatalogue(this.model.structuralDocument), {}, 'mcp')
+                if (message === 'list_ai_tools') answer = { id, success: true, tools: executor.registry.list().filter(tool => isToolAllowed(mode, tool)) }
+                else {
+                  if (!request.name || !request.callId || !request.arguments) throw new Error('name, arguments and callId are required')
+                  const result = await executor.executeAsync({ id: request.callId, name: request.name, arguments: request.arguments }, mode)
+                  answer = { id, success: result.ok, result }
+                }
+                break;
+              }
               case 'get_scene_info': {
                 answer = {
                   message: 'This is the scene state',

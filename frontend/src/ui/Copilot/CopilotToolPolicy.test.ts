@@ -1,3 +1,6 @@
+import { approvedToolArguments } from './CopilotToolPolicy.ts'
+import { AiToolRegistry, AiToolExecutor } from '../../core/ai/index.ts'
+import { StructuralDocument, CommandGateway } from '../../core/structural/index.ts'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { safeProviderToolArguments } from './CopilotToolPolicy.ts'
@@ -46,4 +49,21 @@ test('get_nearby_nodes accepts position/center aliases for the point vector', ()
   assert.deepEqual(safeProviderToolArguments('get_nearby_nodes', { point: [1, 2, 3] }), { point: [1, 2, 3] })
   // Mutations are never reshaped beyond the preview guard.
   assert.deepEqual(safeProviderToolArguments('move_nodes', { nodes: [] }), { nodes: [], preview: true })
+})
+
+
+test('delete Apply accepts schema-shaped arguments and commits after a preview', () => {
+  const doc = new StructuralDocument({ nodes: [{ id: 1, position: [0, 0, 0] }] })
+  const executor = new AiToolExecutor(doc, new CommandGateway(doc), { getWorkspaceState: () => ({ selection: [], hidden: [] }), applyWorkspaceState: () => {} })
+  const args = { entities: [{ collection: 'nodes', id: 1 }] }
+  const preview = executor.execute({ id: 'preview', name: 'delete_entities', arguments: args }, 'Agent')
+  const properties = new AiToolRegistry().get('delete_entities')!.inputSchema.properties as Record<string, unknown>
+  const applied = executor.execute({ id: 'apply', name: 'delete_entities', arguments: approvedToolArguments(args, properties, preview.preview!.approvalToken) }, 'Agent')
+  assert.equal(applied.ok, true, applied.error?.message); assert.equal(doc.nodes.size, 0)
+})
+
+test('Agent edits execute directly unless explicitly previewed', () => {
+  assert.equal(safeProviderToolArguments('move_nodes', { nodes: [] }, 'Agent').preview, false)
+  assert.equal(safeProviderToolArguments('move_nodes', { nodes: [], preview: true }, 'Agent').preview, true)
+  assert.equal(safeProviderToolArguments('move_nodes', { nodes: [] }, 'Edit').preview, true)
 })

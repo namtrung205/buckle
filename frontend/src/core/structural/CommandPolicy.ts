@@ -81,9 +81,9 @@ export const classifyCommandRisk = (command: CommandEnvelope): CommandRisk => {
 export const assertCommandAuthorized = (command: CommandEnvelope, context: CommandPolicyContext = {}) => {
   assertCommandEnvelope(command)
   const operations = operationsOf(command)
-  const maxOperations = context.maxOperations ?? 1_000
-  const maxEntities = context.maxEntitiesPerOperation ?? 10_000
-  const maxPayloadBytes = context.maxPayloadBytes ?? 5 * 1024 * 1024
+  const maxOperations = command.source === 'ai' ? Infinity : context.maxOperations ?? 1_000
+  const maxEntities = command.source === 'ai' ? Infinity : context.maxEntitiesPerOperation ?? 10_000
+  const maxPayloadBytes = command.source === 'ai' ? Infinity : context.maxPayloadBytes ?? 5 * 1024 * 1024
 
   if (operations.length > maxOperations) {
     throw new CommandPolicyError('OPERATION_LIMIT', `Command has ${operations.length} operations; limit is ${maxOperations}`)

@@ -13,7 +13,7 @@ const stableValue = (value: unknown): unknown => {
 export const copilotToolCallSignature = (call: Pick<AiToolCall, 'name' | 'arguments'>): string =>
   `${call.name}:${JSON.stringify(stableValue(call.arguments))}`
 
-export const retainCopilotToolResults = <T>(previous: readonly T[], additions: readonly T[], limit = 40): T[] =>
+export const retainCopilotToolResults = <T>(previous: readonly T[], additions: readonly T[], limit = Infinity): T[] =>
   [...previous, ...additions].slice(-limit)
 
 export const copilotContextConflictMessage = (plannedRevision: number, currentRevision: number, providerRevision: number): string | null => {

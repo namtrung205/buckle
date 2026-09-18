@@ -1,3 +1,5 @@
+import { AnalysisRunStore } from '../core/ai/AnalysisResults'
+import { archiveAnalysis, loadAnalysisArchive } from '../core/ai/AnalysisArchive'
 import * as THREE from "three";
 import { ViewportGizmo } from "three-viewport-gizmo";
 import { 
@@ -19,7 +21,7 @@ import {
   LevelVisual,
 } from "./index";
 import ReactionViz from "./PostProcessing/ReactionViz";
-import { makeAutoObservable, runInAction } from "mobx";
+import { makeAutoObservable, runInAction, toJS } from "mobx";
 import { Material, mockMaterials, mockSections, Section, NavTool } from "../types";
 import { GUI } from "lil-gui";
 import { Member, Level, mockLevels } from "../types";
@@ -127,6 +129,10 @@ export class Model {
   pluginEvents = new PluginEventBus()
   analysisRevision: number | null = null
   analysisSnapshotHash: string | null = null
+  currentAnalysisRunId: string | null = null
+  analysisRuns = new AnalysisRunStore()
+  analysisArchiveError = ''
+  analysisRunning = false
   resultStore = new ResultStore()
   structuralSceneDBBuildMs = 0
   structuralSceneSyncScheduled = false
@@ -849,6 +855,11 @@ export class Model {
   /** Lock the model after a successful analysis: results become active, editing is disabled. */
   lockResults = () => {
     if (!this.output) return
+    const snapshot = this.createAnalysisSnapshot()
+    if (this.analysisRevision !== snapshot.revision || this.analysisSnapshotHash !== snapshot.hash) throw new Error('Cannot archive stale analysis output')
+    const run = this.analysisRuns.add({ revision: snapshot.revision, hash: snapshot.hash, input: snapshot.model, output: toJS(this.output) })
+    this.currentAnalysisRunId = run.id
+    void archiveAnalysis(run).catch(error => runInAction(() => { this.analysisArchiveError = `Results remain available in this session, but archive failed: ${String(error)}` }))
     this.resultStore.ingestAnalysisOutput(this.output, this.structuralSceneDB)
     this.isLocked = true;
     // Remember the model-mode visibility BEFORE any result view hides the
@@ -1096,6 +1107,7 @@ export class Model {
       workspaceContext: false,
       pluginEvents: false,
       resultStore: false,
+      analysisRuns: false,
       structuralSceneDBBuildMs: false,
       structuralSceneSyncScheduled: false,
       centerlineRenderer: false,
@@ -1486,16 +1498,78 @@ export class Model {
     ))
   }
 
+  async restoreAnalysisArchive() {
+    try { for (const run of await loadAnalysisArchive()) this.analysisRuns.restore(run) }
+    catch (error) { runInAction(() => { this.analysisArchiveError = `Cannot load analysis archive: ${String(error)}` }) }
+  }
+
+  async runAnalysis(signal?: AbortSignal) {
+    if (this.analysisRunning) throw new Error('Analysis is already running')
+    this.analysisRunning = true
+    try {
+      signal?.throwIfAborted()
+      const snapshot = this.createAnalysisSnapshot()
+      if (!snapshot.model.nodes.length) throw new Error('Analysis requires nodes')
+      const root = (import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/\/$/, '')
+      const response = await fetch(`${root}/analysis`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot.model), signal })
+      const body = await response.json()
+      if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail ?? body))
+      signal?.throwIfAborted()
+      this.reconcileStructuralDocument()
+      if (this.structuralDocument.revision !== snapshot.revision || this.createAnalysisSnapshot().hash !== snapshot.hash) throw new Error('Model changed during analysis; result was not applied')
+      runInAction(() => {
+        this.output = body.output
+        this.analysisRevision = snapshot.revision
+        this.analysisSnapshotHash = snapshot.hash
+        this.reactionViz.apply()
+        this.lockResults()
+      })
+      return this.analysisRuns.summary(undefined, this.structuralDocument.revision)
+    } finally { runInAction(() => { this.analysisRunning = false }) }
+  }
+
+  queryAnalysis(tool: string, args: Record<string, unknown>) {
+    args = { ...args, analysisRunId: args.analysisRunId ?? this.currentAnalysisRunId ?? this.analysisRuns.latestId }
+    const revision = this.structuralDocument.revision
+    const hash = this.createAnalysisSnapshot().hash
+    switch (tool) {
+      case 'unlock_analysis_results': this.unlockResults(); return { unlocked: true, archivedRunId: this.analysisRuns.latestId }
+      case 'show_result_view': {
+        const summary = this.analysisRuns.summary(args.analysisRunId as string | undefined, revision, hash)
+        if (summary.stale || !this.output || summary.snapshotHash !== this.analysisSnapshotHash) throw new Error('Cannot display historical results on a different model; run analysis first')
+        const ids = (args.memberIds ?? []) as number[]
+        for (const id of ids) if (!this.structuralDocument.members.has(id)) throw new Error(`Unknown member ${id}`)
+        if (ids.length) this.selectEntityRefs(ids.map(id => ({ collection: 'members', id })))
+        this.postProcessing.dispose(); this.reactionViz.dispose()
+        if (args.component === 'reactions') this.reactionViz.apply()
+        else if (args.component === 'deformation') this.postProcessing.showDeflectedShape(ids)
+        else this.postProcessing.showDiagram(String(args.component), ids)
+        return { analysisRunId: summary.analysisRunId, component: args.component, memberIds: ids }
+      }
+      case 'check_result_equilibrium': return this.analysisRuns.equilibrium(args, revision, hash)
+      case 'list_analysis_runs': return { runs: this.analysisRuns.list(), archiveWarning: this.analysisArchiveError || undefined }
+      case 'get_analysis_summary': return this.analysisRuns.summary(args.analysisRunId as string | undefined, revision, hash)
+      case 'query_analysis_results': return this.analysisRuns.query(args, revision, hash)
+      case 'check_result_threshold': return this.analysisRuns.checkThreshold(args, revision, hash)
+      case 'compare_analysis_runs': return this.analysisRuns.compare(String(args.baselineId), String(args.candidateId))
+      case 'create_analysis_report': return this.analysisRuns.report(args.analysisRunId as string | undefined, revision, hash)
+      default: throw new Error(`Unknown analysis tool ${tool}`)
+    }
+  }
+
   /** Create a provider-neutral AI tool session wired to the live viewport projection. */
   createAiToolExecutor(
     parametricGenerators: Readonly<Record<string, ParametricGeneratorBinding>> = {},
     agentBudget: AgentBudget = {},
+    source: 'ai' | 'mcp' = 'ai',
   ) {
     return new AiToolExecutor(this.structuralDocument, this.commandGateway, {
       getWorkspaceState: () => this.workspaceContext.getCommandState(),
       applyWorkspaceState: state => this.workspaceContext.applyCommandState(state),
-      executeCommand: command => this.executeCommand(command),
+      executeCommand: command => this.executeCommand({ ...command, source }),
       undoCommand: () => this.undoCommand(),
+      queryAnalysis: (tool, args) => this.queryAnalysis(tool, args),
+      runAnalysis: signal => this.runAnalysis(signal),
       parametricGenerators,
     }, agentBudget)
   }
@@ -2074,6 +2148,7 @@ export class Model {
     this.output = null
     this.analysisRevision = null
     this.analysisSnapshotHash = null
+    this.currentAnalysisRunId = null
   }
 
   private onContextLost = (event: Event) => {

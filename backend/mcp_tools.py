@@ -147,3 +147,30 @@ async def _send_request(payload: dict) -> dict:
     
     await client_connection.send_text(json.dumps(payload))
     return await _wait_for_response(payload["id"])
+
+
+@mcp_server.tool(description="Discover the current Buckle AI registry and JSON schemas from the connected viewport. Mode defaults to Inspect; Agent exposes all available tools including analysis results.")
+async def list_ai_tools(mode: str = "Inspect") -> dict:
+    return await _send_ai_request("list_ai_tools", {"mode": mode})
+
+
+@mcp_server.tool(description="Execute a tool discovered by list_ai_tools through the shared Buckle executor. Supply a stable call_id for retry idempotency. Destructive changes return previews with bound approval tokens; apply only after user approval. Analysis can take time; this bridge has no elapsed-time cutoff.")
+async def call_ai_tool(name: str, arguments: dict, call_id: str, mode: str = "Inspect") -> dict:
+    if not call_id.strip():
+        raise ValueError("call_id is required")
+    return await _send_ai_request("call_ai_tool", {"name": name, "arguments": arguments, "callId": call_id, "mode": mode})
+
+
+async def _send_ai_request(message: str, data: dict) -> dict:
+    connection = client_connection
+    if connection is None:
+        raise RuntimeError("No WebSocket client connected")
+    msg_id = str(uuid.uuid4())
+    await connection.send_text(json.dumps({"id": msg_id, "message": message, "data": data}))
+    while client_connection is connection:
+        answer = next((item for item in messages if item.get("id") == msg_id), None)
+        if answer is not None:
+            messages.remove(answer)
+            return answer
+        await asyncio.sleep(0.1)
+    raise RuntimeError("Viewport disconnected while executing the AI tool")
