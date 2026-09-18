@@ -199,8 +199,9 @@ test('catalogue tools preview then create SI materials and sections with undo', 
   }, 'Generate')
   assert.equal(section.ok, true)
   const sectionId = section.ids?.sections?.[0] as number
-  assert.equal(state.document.sections.get(sectionId)?.height, 0.5)
-  assert.equal(state.document.sections.get(sectionId)?.tf, 0.016)
+  assert.equal(state.document.sections.get(sectionId)?.height, 500)
+  assert.equal(state.document.sections.get(sectionId)?.depth, 500)
+  assert.equal(state.document.sections.get(sectionId)?.tf, 16)
   assert.ok(section.undoToken)
   assert.equal(invoke(state.executor, 'undo-section', 'undo_last_ai_change', { undoToken: section.undoToken }, 'Generate').ok, true)
   assert.equal(state.document.sections.has(sectionId), false)

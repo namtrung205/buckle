@@ -208,7 +208,7 @@ export class AiToolExecutor {
     const args = call.arguments as Record<string, unknown>
     let data: unknown
     switch (call.name) {
-      case 'get_command_catalogue': data = { operations: payloadShapes, entities: ENTITY_SCHEMAS, editableProperties: EDITABLE_PROPERTIES, units: 'm, kN; material modulus/stress in Pa; density kg/m3' }; break
+      case 'get_command_catalogue': data = { operations: payloadShapes, entities: ENTITY_SCHEMAS, editableProperties: EDITABLE_PROPERTIES, units: 'coordinates/lengths in m; section dimensions in mm; force in kN; material modulus/stress in Pa; density kg/m3' }; break
       case 'get_model_summary': data = this.queries.getModelSummary(); break
       case 'get_selection': data = this.queries.getSelection(); break
       case 'resolve_targets': data = this.resolveTargets(args); break
@@ -306,7 +306,9 @@ export class AiToolExecutor {
       name: nonEmptyText(args.name, 'name'), type: args.type, materialId,
     }
     for (const key of ['depth', 'height', 'width', 'tw', 'tf', 'diameter', 'thickness', 'r', 'ri']) {
-      if (args[key] !== undefined) record[key] = positive(parseLength(args[key], key), key)
+      // Section dimensions use millimetres in the document/render/solver contract.
+      // AI numeric input is metres; explicit values may use mm/m/ft.
+      if (args[key] !== undefined) record[key] = positive(parseLength(args[key], key), key) * 1000
     }
     const height = Number(record.height ?? record.depth)
     const requireDimensions = (...keys: string[]) => {
@@ -322,6 +324,7 @@ export class AiToolExecutor {
       default: throw new Error(`Unsupported section type ${String(record.type)}`)
     }
     if (Number.isFinite(height) && record.height === undefined) record.height = height
+    if (['I', 'IPN', 'Channel', 'UPN', 'Tee'].includes(String(record.type)) && record.depth === undefined) record.depth = height
     const thickness = Number(record.thickness)
     if (record.type === 'HollowCircular' && thickness * 2 >= Number(record.diameter)) throw new Error('HollowCircular thickness must be less than half the diameter')
     if (record.type === 'RectangularHollow' && (thickness * 2 >= height || thickness * 2 >= Number(record.width))) throw new Error('RectangularHollow thickness must fit inside height and width')

@@ -1,6 +1,6 @@
-import Model from '../Model'
-import { Section as SectionData } from '../../types'
-import { COMMAND_SCHEMA_VERSION, type SectionRecord } from '../../core/structural'
+import type Model from '../Model.ts'
+import type { Section as SectionData } from '../../types.ts'
+import { COMMAND_SCHEMA_VERSION, type MaterialRecord, type SectionRecord } from '../../core/structural/index.ts'
 
 class Section {
   model: Model
@@ -15,7 +15,26 @@ class Section {
   }
 
   createOrUpdate() {
-    const { material, ...section } = this.section
+    const { material: initialMaterial, ...section } = this.section
+    let material = initialMaterial
+    if (!this.model.structuralDocument.materials.has(material.id)) {
+      const materialId = Number.isSafeInteger(material.id) && material.id > 0
+        ? material.id
+        : Math.max(0, ...this.model.structuralDocument.materials.keys()) + 1
+      material = { ...material, id: materialId }
+      this.section = { ...this.section, material }
+      this.model.executeCommand({
+        commandId: crypto.randomUUID(), type: 'Transaction',
+        schemaVersion: COMMAND_SCHEMA_VERSION,
+        modelRevision: this.model.structuralDocument.revision,
+        payload: { operations: [
+          { type: 'CreateOrUpdateMaterials', payload: { materials: [material as MaterialRecord] } },
+          { type: 'CreateOrUpdateSections', payload: { sections: [{ ...section, materialId }] } },
+        ] },
+        source: 'ui',
+      })
+      return
+    }
     this.model.executeCommand({
       commandId: crypto.randomUUID(), type: 'CreateOrUpdateSections',
       schemaVersion: COMMAND_SCHEMA_VERSION,
