@@ -60,6 +60,7 @@ const Settings = ({open, onClose}) => {
     { key: 'member', label: 'Member' },
     { key: 'boundary', label: 'Boundary' },
     { key: 'load', label: 'Load' },
+    { key: 'reaction', label: 'Reaction' },
     { key: 'level', label: 'Level' },
     { key: 'render', label: 'Render' },
   ];
@@ -73,6 +74,9 @@ const Settings = ({open, onClose}) => {
     // Load tab splits into master switch + the two sub-views so symbols and
     // numeric values can be toggled independently.
     load: ['loads', 'loadSymbols', 'loadValues'],
+    // Reactions own their tab: the arrow batch and its labels hide/show
+    // together, fully independent of the Load tab.
+    reaction: ['reactions'],
     level: ['grids', 'levels'],
   };
 
@@ -85,6 +89,7 @@ const Settings = ({open, onClose}) => {
     loads: { label: 'Loads (master)', value: 'loads' },
     loadSymbols: { label: 'Load Symbols (arrows/bands)', value: 'loadSymbols' },
     loadValues: { label: 'Load Values (labels)', value: 'loadValues' },
+    reactions: { label: 'Reaction Symbols', value: 'reactions' },
     supports: { label: 'Supports', value: 'supports' },
     releases: { label: 'Releases', value: 'releases' },
     grids: { label: 'Grids', value: 'grids' },
@@ -124,6 +129,9 @@ const Settings = ({open, onClose}) => {
         break;
       case 'loadValues':
         model.visibility.showOrHideLoadValues(checked)
+        break;
+      case 'reactions':
+        model.visibility.showOrHideReactions(checked)
         break;
       case 'supports':
         model.visibility.showOrHideSupports(checked)

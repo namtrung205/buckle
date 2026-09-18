@@ -20,7 +20,7 @@ import {
   WorkPlaneReferenceVisual,
   LevelVisual,
 } from "./index";
-import ReactionViz from "./PostProcessing/ReactionViz";
+import ReactionViz, { REACTION_COMPONENTS } from "./PostProcessing/ReactionViz";
 import { makeAutoObservable, runInAction, toJS } from "mobx";
 import { Material, mockMaterials, mockSections, Section, NavTool } from "../types";
 import { GUI } from "lil-gui";
@@ -61,7 +61,7 @@ import { legacyModelToDocumentSeed } from "./Structural/legacyStructuralDocument
 import { applyStructuralChangeToLegacy } from "./Structural/StructuralLegacyProjection";
 import { WorkspaceContext } from "./Workspace/WorkspaceContext";
 import { SHRINK_RATIO_PER_END } from "./Utils/shrink";
-import { buildLoadInstances } from "./Load/loadInstances";
+import { buildLoadInstances, buildReactionInstances } from "./Load/loadInstances";
 import LoadGpuRenderer from "./Rendering/LoadGpuRenderer";
 import CenterlineRenderer from "./Rendering/CenterlineRenderer";
 import ThinShellRenderer from "./Rendering/ThinShellRenderer";
@@ -141,6 +141,8 @@ export class Model {
   diagramRenderer: DiagramRenderer
   gpuAnnotations: GpuAnnotations
   loadGpuRenderer: LoadGpuRenderer
+  /** Dedicated support-reaction arrow batch (own visibility, never follows the load toggles). */
+  reactionGpuRenderer: LoadGpuRenderer
   structuralPicker: StructuralGpuPicker
   private activeResultBinding: ResultBinding | null = null
   solidPreparation = { active: false, progress: 0, estimatedTriangles: 0 }
@@ -1087,6 +1089,7 @@ export class Model {
     this.diagramRenderer = new DiagramRenderer(this.scene, this.layer)
     this.gpuAnnotations = new GpuAnnotations(this.scene, this.layer)
     this.loadGpuRenderer = new LoadGpuRenderer(this.scene, this.layer)
+    this.reactionGpuRenderer = new LoadGpuRenderer(this.scene, this.layer)
     this.camera.controls.addEventListener('end', () => this.gpuAnnotations.markDirty())
     this.structuralPicker = new StructuralGpuPicker(this.renderer)
     // Seed the canonical authority with startup materials/sections before the
@@ -1755,6 +1758,28 @@ export class Model {
     })
   }
 
+  /** Rebuild the dedicated support-reaction arrow batch. Reactions have
+   *  their own visibility control (Settings -> Reaction) and never follow
+   *  the load toggles; the arrow language (shaft + slim cone diving INTO
+   *  the node) is shared with loads but drawn larger. */
+  scheduleReactionGpuSync() {
+    if (!this.reactionGpuRenderer) return
+    queueMicrotask(() => {
+      if (!this.reactionGpuRenderer) return
+      const reactionViz = this.reactionViz
+      const active = reactionViz ? REACTION_COMPONENTS.filter(component => reactionViz.show[component]) : []
+      this.reactionGpuRenderer.upload({
+        arrows: buildReactionInstances({
+          nodes: this.nodes,
+          reactions: this.output?.reactions ?? [],
+          components: active,
+        }),
+        bands: [],
+      })
+      this.reactionGpuRenderer.setVisible(this.visibility?.reactions ?? true)
+    })
+  }
+
 
   async setRenderMode(mode: RenderMode) {
     if (!isRenderMode(mode)) throw new Error(`Unsupported render mode: ${mode}`)
@@ -1876,14 +1901,19 @@ export class Model {
         labels.push({ id: `load-${load.id}-${target}`, text, anchor, priority: 'value', forceVisible: true, color: [1, .86, .12] })
       }
     }
-    const active = (['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const).filter(key => this.reactionViz?.show[key])
+    // Reaction arrows ride the LoadGpuRenderer batch (load-arrow language:
+    // shaft + slim cone diving INTO the node); only the value labels stay
+    // on this text stream.
+    // Hidden together with the arrows while Settings -> Reaction is off.
+    const active = (this.visibility?.reactions ?? true)
+      ? (['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const).filter(key => this.reactionViz?.show[key])
+      : []
     for (const reaction of this.output?.reactions ?? []) for (const component of active) {
         const value = Number(reaction[component] ?? 0)
         if (Math.abs(value) < 1e-9) continue
+        // Backend rows are OpenSees Z-up; the scene is three.js Y-up:
+        // [x, y, z]_ops -> [x, z, y]_scene.
         const anchor = [Number(reaction.x ?? 0), Number(reaction.z ?? 0), Number(reaction.y ?? 0)] as const
-        const sign = value >= 0 ? 1 : -1
-        const direction = component[1] === 'x' ? [sign, 0, 0] as const : component[1] === 'y' ? [0, 0, sign] as const : [0, sign, 0] as const
-        symbols.push({ anchor, direction, kind: component[0] === 'M' ? 3 : 2, color: component[0] === 'M' ? [1, .62, .05] : [0.2, .45, 1] })
         labels.push({ id: `reaction-${component}-${reaction.id}`, text: `${component} ${value.toPrecision(4)}`, anchor, priority: 'value', forceVisible: true, color: [1, .45, .72] })
     }
     // Selected member local axes share the same symbol batch (RGB = local
@@ -2104,6 +2134,7 @@ export class Model {
     this.diagramRenderer?.dispose()
     this.gpuAnnotations?.dispose()
     this.loadGpuRenderer?.dispose()
+    this.reactionGpuRenderer?.dispose()
     this.resultStore?.dispose()
     this.structuralPicker?.dispose()
     this.structuralDocumentBridge.dispose()
