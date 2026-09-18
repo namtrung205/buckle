@@ -5,6 +5,7 @@ import ElasticBeamColumn from '../Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../BoundaryCondition/BoundaryCondition';
 import Load from '../Load/Load';
 import type { Section } from '../../types';
+import { COMMAND_SCHEMA_VERSION, prepareParametricRegeneration, type ParametricEntityGraph } from '../../core/structural';
 
 /**
  * Transmission-tower (lattice) generator — 500 kV style steel towers.
@@ -129,7 +130,7 @@ export function sectionArea(section: Section | undefined): number {
   }
 }
 
-export function generateTower(model: Model, params: TowerParams): TowerResult {
+function generateTowerLegacy(model: Model, params: TowerParams): TowerResult {
   // Resolve sections (allow the legacy single-section form).
   const legSection = model.sections.find((s) => s.id === (params.legSectionId ?? params.sectionId));
   const braceSection = model.sections.find((s) => s.id === (params.braceSectionId ?? params.sectionId));
@@ -185,20 +186,24 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
   const footNodes: Node[] = [];
   const allNodes: Node[] = [];
   const memberMeta: { member: ElasticBeamColumn; part: string; len: number; section: Section }[] = [];
+  const nodeRecords: { id: number; name?: string; position: readonly [number, number, number] }[] = [];
+  const memberRecords: { id: number; label: string; nodeI: number; nodeJ: number; sectionId: number; referenceAxis: readonly [number, number, number] }[] = [];
+  const boundaryConditionRecords: any[] = [];
+  const loadRecords: any[] = [];
 
   const addNode = (x: number, y: number, z: number): Node => {
     const n = new Node(new THREE.Vector3(x, y, z), undefined);
-    n.model = model;
-    n.create();
-    model.nodes.push(n);
     allNodes.push(n);
+    nodeRecords.push({ id: n.id, name: n.name, position: [x, z, y] });
     nodeCount++;
     return n;
   };
   const addMember = (a: Node, b: Node, part: string, section: Section): ElasticBeamColumn => {
     const m = new ElasticBeamColumn(model, 'TW-' + part, [a, b], section);
-    m.create();
-    model.members = [...model.members, m];
+    memberRecords.push({
+      id: m.id, label: m.label, nodeI: a.id, nodeJ: b.id, sectionId: section.id,
+      referenceAxis: [m.vecxz.x, m.vecxz.z, m.vecxz.y],
+    });
     memberCount++;
     memberMeta.push({
       member: m,
@@ -293,13 +298,13 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
     // One support PER base node — a single BC covering all four feet only ever
     // restrains one node during the solve, so split them 1:1.
     for (const foot of footNodes) {
-      const bc = new BoundaryCondition(model, {
+      const fixed = params.supportKind === 'fixed';
+      boundaryConditionRecords.push({
         id: Math.floor(Math.random() * 0x7fffffff),
         name: 'Tower base',
-        type: params.supportKind === 'fixed' ? 'fixed' : 'pinned',
-        targets: [foot.id],
-      } as any);
-      bc.createOrUpdate();
+        type: fixed ? 'fixed' : 'pinned', targetNodeIds: [foot.id],
+        dx: 1, dy: 1, dz: 1, rx: 1, ry: fixed ? 1 : 0, rz: fixed ? 1 : 0,
+      });
       supportCount++;
     }
   }
@@ -356,14 +361,13 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
     }
 
     const makeNodalLoad = (targets: number[], value: THREE.Vector3) => {
-      const load = new Load(model, {
+      loadRecords.push({
         id: Math.floor(Math.random() * 0x7fffffff),
         name: 'Tower auto-load',
         type: 'nodal',
-        targets,
-        value,
-      } as any);
-      load.createOrUpdate();
+        targetIds: targets,
+        value: [value.x, value.z, value.y],
+      });
       loadCount++;
     };
 
@@ -381,8 +385,149 @@ export function generateTower(model: Model, params: TowerParams): TowerResult {
     for (const g of groups.values()) makeNodalLoad(g.targets, g.value);
   }
 
-  model.invalidateResults();
+  model.executeCommand({
+    commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+    modelRevision: model.structuralDocument.revision, source: 'ui',
+    payload: { operations: [
+      { type: 'CreateNodes', payload: { nodes: nodeRecords } },
+      { type: 'CreateMembers', payload: { members: memberRecords } },
+      ...(boundaryConditionRecords.length ? [{ type: 'CreateOrUpdateBoundaryConditions' as const, payload: { boundaryConditions: boundaryConditionRecords } }] : []),
+      ...(loadRecords.length ? [{ type: 'CreateOrUpdateLoads' as const, payload: { loads: loadRecords } }] : []),
+    ] },
+  });
   return { nodes: nodeCount, members: memberCount, supports: supportCount, loads: loadCount };
+}
+
+export type ResolvedTowerParams = Record<string, unknown> & TowerParams & {
+  legSectionId: number;
+  braceSectionId: number;
+  legArea: number;
+  braceArea: number;
+  legDensity: number;
+  braceDensity: number;
+};
+
+/** Pure semantic tower graph used by UI, AI and future MCP tools. */
+export function generateTowerGraph(params: Readonly<ResolvedTowerParams>): ParametricEntityGraph {
+  if (![params.bodyHeight, params.baseWidth, params.topWidth].every(value => Number.isFinite(value) && value > 0)) {
+    throw new Error('Tower height and widths must be greater than zero.');
+  }
+  const panels = Math.max(1, Math.round(params.panelCount));
+  const straightPanels = Math.max(0, Math.min(panels - 1, Math.round(params.straightPanels ?? Math.max(1, Math.floor(panels / 3)))));
+  const taperPanels = panels - straightPanels;
+  const widthAt = (index: number) => (params.baseWidth + (params.topWidth - params.baseWidth) * (taperPanels <= 0 ? 1 : Math.min(index, taperPanels) / taperPanels)) / 2;
+  const basicLevels = Array.from({ length: panels + 1 }, (_, index) => ({ y: params.bodyHeight * index / panels, halfW: widthAt(index) }));
+  const levels = params.taper === 'step'
+    ? basicLevels.flatMap((level, index) => index === basicLevels.length - 1 ? [level] : [level, { y: level.y + (basicLevels[index + 1].y - level.y) * 0.6, halfW: level.halfW }])
+    : basicLevels;
+  const nodes: NonNullable<ParametricEntityGraph['nodes']>[number][] = [];
+  const members: NonNullable<ParametricEntityGraph['members']>[number][] = [];
+  const supports: NonNullable<ParametricEntityGraph['boundaryConditions']>[number][] = [];
+  const loads: NonNullable<ParametricEntityGraph['loads']>[number][] = [];
+  const positions = new Map<string, readonly [number, number, number]>();
+  const addNode = (role: string, position: readonly [number, number, number]) => {
+    nodes.push({ role, record: { name: role, position } });
+    positions.set(role, position);
+  };
+  const nodeRole = (level: number, corner: number) => `level:${level}:corner:${corner}:node`;
+  const addMember = (role: string, nodeIRole: string, nodeJRole: string, sectionId: number, label: string) =>
+    members.push({ role, nodeIRole, nodeJRole, sectionId, record: { label } });
+  for (let level = 0; level < levels.length; level++) {
+    const { y, halfW } = levels[level];
+    const corners = [[-halfW, -halfW], [halfW, -halfW], [halfW, halfW], [-halfW, halfW]] as const;
+    corners.forEach(([x, z], corner) => addNode(nodeRole(level, corner), [x, z, y]));
+  }
+  const faces = [[0, 1], [1, 2], [2, 3], [3, 0]] as const;
+  for (let panel = 0; panel < levels.length - 1; panel++) {
+    for (let corner = 0; corner < 4; corner++) {
+      addMember(`panel:${panel}:corner:${corner}:leg`, nodeRole(panel, corner), nodeRole(panel + 1, corner), params.legSectionId, 'TW-leg');
+      addMember(`level:${panel + 1}:side:${corner}:belt`, nodeRole(panel + 1, corner), nodeRole(panel + 1, (corner + 1) % 4), params.braceSectionId, 'TW-belt');
+    }
+    faces.forEach(([a, b], face) => {
+      addMember(`panel:${panel}:face:${face}:brace:a`, nodeRole(panel, a), nodeRole(panel + 1, b), params.braceSectionId, 'TW-brace');
+      addMember(`panel:${panel}:face:${face}:brace:b`, nodeRole(panel, b), nodeRole(panel + 1, a), params.braceSectionId, 'TW-brace');
+    });
+  }
+  if (params.peakHeight > 0) {
+    const apex = 'peak:apex-node';
+    addNode(apex, [0, 0, params.bodyHeight + params.peakHeight]);
+    for (let corner = 0; corner < 4; corner++) addMember(`peak:corner:${corner}:member`, nodeRole(levels.length - 1, corner), apex, params.legSectionId, 'TW-peak');
+  }
+  const armCount = Math.max(0, Math.min(3, Math.round(params.armCount)));
+  const candidates = levels.map((level, index) => ({ level, index })).filter(({ level }) => straightPanels === 0 || Math.abs(level.halfW - params.topWidth / 2) < 1e-6);
+  const armLevels: number[] = [];
+  for (let arm = 0; arm < armCount; arm++) {
+    const target = params.bodyHeight - arm * params.armSpacing;
+    const selected = candidates.filter(candidate => candidate.level.y <= target + 1e-6).sort((a, b) => b.level.y - a.level.y)[0]?.index;
+    if (selected !== undefined && !armLevels.includes(selected)) armLevels.push(selected);
+  }
+  armLevels.forEach((level, arm) => {
+    for (const side of [-1, 1] as const) {
+      const sideName = side < 0 ? 'left' : 'right';
+      const tip = `arm:${arm}:${sideName}:tip-node`;
+      addNode(tip, [side * (levels[level].halfW + params.armLength), 0, levels[level].y - params.armDrop]);
+      const [c1, c2] = side > 0 ? [1, 2] : [3, 0];
+      addMember(`arm:${arm}:${sideName}:chord:a`, nodeRole(level, c1), tip, params.braceSectionId, 'TW-arm');
+      addMember(`arm:${arm}:${sideName}:chord:b`, nodeRole(level, c2), tip, params.braceSectionId, 'TW-arm');
+      if (level > 0) addMember(`arm:${arm}:${sideName}:stay`, nodeRole(level - 1, c1), tip, params.braceSectionId, 'TW-arm');
+    }
+  });
+  if (params.autoSupports) for (let corner = 0; corner < 4; corner++) supports.push({
+    role: `base:corner:${corner}:support`, targetNodeRoles: [nodeRole(0, corner)],
+    record: { name: 'Tower base', type: params.supportKind === 'fixed' ? 'fixed' : 'pinned', dx: 1, dy: 1, dz: 1, rx: 1, ry: params.supportKind === 'fixed' ? 1 : 0, rz: params.supportKind === 'fixed' ? 1 : 0 },
+  });
+  if (params.autoLoads) {
+    const gravity = params.gravity ?? 9.81;
+    const values = new Map(nodes.map(node => [node.role, [0, 0, 0] as [number, number, number]]));
+    for (const member of members) {
+      const a = positions.get(member.nodeIRole)!; const b = positions.get(member.nodeJRole)!;
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      const main = member.sectionId === params.legSectionId;
+      const halfWeight = (main ? params.legArea * params.legDensity : params.braceArea * params.braceDensity) * length * gravity / 2000;
+      values.get(member.nodeIRole)![2] -= halfWeight; values.get(member.nodeJRole)![2] -= halfWeight;
+    }
+    const wind = params.windVector ?? { x: 0, y: 0, z: 1 };
+    const windLength = Math.hypot(wind.x, wind.y, wind.z) || 1;
+    const windForce = params.windForce ?? 1;
+    for (const node of nodes) {
+      const altitude = node.record.position[2];
+      const factor = 0.5 + 0.5 * Math.max(0, Math.min(1, altitude / (params.bodyHeight + params.peakHeight)));
+      const value = values.get(node.role)!;
+      value[0] += wind.x / windLength * windForce * factor / 1000;
+      value[1] += wind.z / windLength * windForce * factor / 1000;
+      value[2] += wind.y / windLength * windForce * factor / 1000;
+      loads.push({ role: `${node.role}:auto-load`, targetRoles: [node.role], record: { name: 'Tower auto-load', type: 'nodal', value } });
+    }
+  }
+  return { nodes, members, boundaryConditions: supports, loads };
+}
+
+export function generateTower(model: Model, params: TowerParams): TowerResult {
+  const legSection = model.sections.find(section => section.id === (params.legSectionId ?? params.sectionId));
+  const braceSection = model.sections.find(section => section.id === (params.braceSectionId ?? params.sectionId));
+  if (!legSection || !braceSection) throw new Error('Tower sections not found — create sections first.');
+  const resolved: ResolvedTowerParams = {
+    ...params,
+    legSectionId: legSection.id, braceSectionId: braceSection.id,
+    legArea: sectionArea(legSection), braceArea: sectionArea(braceSection),
+    legDensity: legSection.material?.rho ?? 7850, braceDensity: braceSection.material?.rho ?? 7850,
+  };
+  const existing = [...model.structuralDocument.parametricObjects.values()].find(object => object.kind === 'Tower');
+  const plan = prepareParametricRegeneration(model.structuralDocument, {
+    objectId: existing?.id, kind: 'Tower', version: 1, parameters: resolved,
+    generatorVersion: 'tower@1', generator: generateTowerGraph,
+    constraints: [{ type: 'positive', parameters: ['bodyHeight', 'baseWidth', 'topWidth'] }],
+    provenance: { source: 'TowerGenerator' },
+  });
+  model.executeCommand({
+    commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: COMMAND_SCHEMA_VERSION,
+    modelRevision: model.structuralDocument.revision, source: 'ui', payload: plan.command.payload,
+  });
+  void generateTowerLegacy;
+  return {
+    nodes: plan.graph.nodes?.length ?? 0, members: plan.graph.members?.length ?? 0,
+    supports: plan.graph.boundaryConditions?.length ?? 0, loads: plan.graph.loads?.length ?? 0,
+  };
 }
 
 // ── 2D elevation preview geometry ─────────────────────────────────────────

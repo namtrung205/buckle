@@ -13,21 +13,21 @@ import {
   Layers as LayersIcon,
   Height as HeightIcon,
   CellTower as CellTowerIcon,
+  ZoomIn as ZoomInIcon,
+  Extension as ExtensionIcon,
 } from '@mui/icons-material';
-import { useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import Settings from '../Settings/Settings';
 import Move from '../Model/Nodes/Components/Move/Move';
 import Docs from '../Docs/Docs';
 import AddOrEditSection from '../Model/Sections/AddOrEdit';
 import AddOrEditMaterial from '../Model/Materials/AddOrEdit';
 import { observer } from 'mobx-react-lite';
-import { useModel } from '../../model/Context';
+import { useContributions, useModel } from '../../model/Context';
+import { matchesPredicates, type ContributionBundle, type ContributionIcon, type HostPredicate } from '../../core/plugins';
 import axios from 'axios';
-import Node from '../../model/Elements/Node/Node';
-import ElasticBeamColumnClass from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
-import Shell from '../../model/Elements/Shell/Shell';
-import { exportModelJson, buildModelFromJson } from '../../helpers';
-import * as THREE from 'three';
+import { runInAction } from 'mobx';
+import { exportProjectJson, buildModelFromJson } from '../../helpers';
 import { toast } from 'react-toastify';
 import Copy from '../Model/Copy';
 import AddOrEditGrid from '../Model/Grids/AddOrEdit';
@@ -38,11 +38,73 @@ import TowerGeneratorDialog from '../Model/Tower/TowerGenerator';
 import AnalysisProgress from '../Results/AnalysisProgress';
 import Dialog from '../../components/Dialog/Dialog';
 
-const { VITE_BACKEND_SERVER } = import.meta.env;
 const APP_VERSION = '0.0.2';
+
+type BuiltinRibbonAction =
+  | 'open' | 'save' | 'materials' | 'sections' | 'loads' | 'supports'
+  | 'draw' | 'move' | 'zoomSelected' | 'warehouse' | 'tower' | 'grid'
+  | 'level' | 'workplane' | 'settings' | 'runAnalysis' | 'unlock'
+  | 'results' | 'reactions' | 'downloadResults' | 'plugins';
+
+const builtinOwner = { kind: 'builtin', id: 'buckle.ribbon', version: APP_VERSION } as const;
+
+const builtinRibbonBundle = (invoke: (action: BuiltinRibbonAction) => void | Promise<void>): ContributionBundle => {
+  const command = (id: BuiltinRibbonAction, title: string) => ({
+    id: `builtin.${id}`,
+    title,
+    execute: () => invoke(id),
+  });
+  const asset = (src: string, alt: string): ContributionIcon => ({ kind: 'asset', src, alt, size: 15 });
+  const host = (name: string): ContributionIcon => ({ kind: 'host', name });
+  return {
+    commands: [
+      command('open', 'Open project'), command('save', 'Save project'),
+      command('materials', 'Materials'), command('sections', 'Sections'),
+      command('loads', 'New Load'), command('supports', 'New Support'),
+      command('draw', 'Draw'), command('move', 'Move'), command('zoomSelected', 'Zoom to selected entities'),
+      command('warehouse', 'Warehouse generator'), command('tower', 'Transmission tower generator (500 kV)'),
+      command('grid', 'New structural grid'), command('level', 'New level datum'),
+      command('workplane', 'Set the active drawing plane'), command('settings', 'Settings'),
+      command('runAnalysis', 'Run Analysis'), command('unlock', 'Lock or unlock analysis results'),
+      command('results', 'View results'), command('reactions', 'View support reactions'),
+      command('downloadResults', 'Download analysis results'), command('plugins', 'Manage plugins'),
+    ],
+    ribbonTabs: [
+      { id: 'file', label: 'File', order: 10 },
+      { id: 'model', label: 'Model', order: 20 },
+      { id: 'view', label: 'View', order: 30 },
+      { id: 'analysis', label: 'Analysis', order: 40 },
+      { id: 'result', label: 'Result', order: 50, enabledWhen: ['modelLocked', 'hasResults'] },
+    ],
+    ribbon: [
+      { id: 'builtin.ribbon.open', tabId: 'file', groupId: 'file', groupLabel: 'File', commandId: 'builtin.open', label: 'Open', order: 10, icon: host('open') },
+      { id: 'builtin.ribbon.save', tabId: 'file', groupId: 'file', groupLabel: 'File', commandId: 'builtin.save', label: 'Save', order: 20, icon: host('save') },
+      { id: 'builtin.ribbon.plugins', tabId: 'file', groupId: 'plugins', groupLabel: 'Plugins', commandId: 'builtin.plugins', label: 'Manage plugins', title: 'Install and manage plugins', order: 10, icon: host('plugins') },
+      { id: 'builtin.ribbon.materials', tabId: 'model', groupId: 'define', groupLabel: 'Define', groupOrder: 10, commandId: 'builtin.materials', label: 'Materials', order: 10, icon: asset('/construction.png', 'Materials'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.sections', tabId: 'model', groupId: 'define', groupLabel: 'Define', groupOrder: 10, commandId: 'builtin.sections', label: 'Sections', order: 20, icon: asset('/sections.png', 'Sections'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.loads', tabId: 'model', groupId: 'assign', groupLabel: 'Assign', groupOrder: 20, commandId: 'builtin.loads', label: 'Loads', order: 10, icon: asset('/loads.png', 'Loads'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.supports', tabId: 'model', groupId: 'assign', groupLabel: 'Assign', groupOrder: 20, commandId: 'builtin.supports', label: 'Supports', order: 20, icon: asset('/supports.png', 'Supports'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.draw', tabId: 'model', groupId: 'modify', groupLabel: 'Modify', groupOrder: 30, commandId: 'builtin.draw', label: 'Draw', order: 10, icon: asset('/pencil.png', 'Draw'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.move', tabId: 'model', groupId: 'modify', groupLabel: 'Modify', groupOrder: 30, commandId: 'builtin.move', label: 'Move', order: 20, icon: host('move'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.zoomSelected', tabId: 'model', groupId: 'modify', groupLabel: 'Modify', groupOrder: 30, commandId: 'builtin.zoomSelected', label: 'Zoom Sel', order: 30, icon: host('zoom'), enabledWhen: ['hasSelection'] },
+      { id: 'builtin.ribbon.warehouse', tabId: 'model', groupId: 'generate', groupLabel: 'Generate', groupOrder: 40, commandId: 'builtin.warehouse', label: 'Warehouse', order: 10, icon: asset('/warehouse.png', 'Generator'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.tower', tabId: 'model', groupId: 'generate', groupLabel: 'Generate', groupOrder: 40, commandId: 'builtin.tower', label: 'Tower', order: 20, icon: host('tower'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.grid', tabId: 'model', groupId: 'system', groupLabel: 'System', groupOrder: 50, commandId: 'builtin.grid', label: 'Grid', order: 10, icon: host('grid'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.level', tabId: 'model', groupId: 'system', groupLabel: 'System', groupOrder: 50, commandId: 'builtin.level', label: 'Level', order: 20, icon: host('level'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.workplane', tabId: 'model', groupId: 'system', groupLabel: 'System', groupOrder: 50, commandId: 'builtin.workplane', label: 'Workplane', order: 30, icon: host('workplane'), enabledWhen: ['modelUnlocked'] },
+      { id: 'builtin.ribbon.settings', tabId: 'view', groupId: 'view', groupLabel: 'View', commandId: 'builtin.settings', label: 'Settings', icon: asset('/engrenage.png', 'Settings') },
+      { id: 'builtin.ribbon.runAnalysis', tabId: 'analysis', groupId: 'solve', groupLabel: 'Solve', commandId: 'builtin.runAnalysis', label: 'Run', order: 10, icon: asset('/run.png', 'Run') },
+      { id: 'builtin.ribbon.unlock', tabId: 'analysis', groupId: 'solve', groupLabel: 'Solve', commandId: 'builtin.unlock', label: 'Unlocked', labelWhen: { modelLocked: 'Locked' }, title: 'Model unlocked', titleWhen: { modelLocked: 'Unlock — clear results and edit the model' }, order: 20, icon: host('lock'), enabledWhen: ['hasResults'], activeWhen: ['modelLocked'] },
+      { id: 'builtin.ribbon.results', tabId: 'result', groupId: 'results', groupLabel: 'Results', commandId: 'builtin.results', label: 'Results', order: 10, icon: asset('/growth.png', 'Results'), enabledWhen: ['modelLocked', 'hasResults'] },
+      { id: 'builtin.ribbon.reactions', tabId: 'result', groupId: 'results', groupLabel: 'Results', commandId: 'builtin.reactions', label: 'Reactions', order: 20, icon: asset('/supports.png', 'Reactions'), enabledWhen: ['modelLocked', 'hasResults'] },
+      { id: 'builtin.ribbon.downloadResults', tabId: 'result', groupId: 'results', groupLabel: 'Results', commandId: 'builtin.downloadResults', label: 'Download', order: 30, icon: host('download'), enabledWhen: ['hasResults'] },
+    ],
+  };
+};
 
 interface TopBarProps {
   onMenuClick?: () => void;
+  onPluginsClick?: () => void;
 }
 
 interface RibbonButtonProps {
@@ -149,12 +211,48 @@ const RibbonPanel = ({ label, children }: { label: string; children: React.React
   </Box>
 );
 
-const TopBar = observer(({ onMenuClick }: TopBarProps) => {
+const hostIcon = (name: string, locked: boolean) => {
+  const sx = { fontSize: 15 };
+  switch (name) {
+    case 'open': return <OpenIcon sx={sx} />;
+    case 'save': return <SaveIcon sx={sx} />;
+    case 'move': return <MoveIcon sx={sx} />;
+    case 'zoom': return <ZoomInIcon sx={sx} />;
+    case 'tower': return <CellTowerIcon sx={sx} />;
+    case 'grid': return <GridOnIcon sx={sx} />;
+    case 'level': return <HeightIcon sx={sx} />;
+    case 'workplane': return <LayersIcon sx={sx} />;
+    case 'download': return <DownloadIcon sx={sx} />;
+    case 'plugins': return <ExtensionIcon sx={sx} />;
+    case 'lock': return locked ? <LockIcon sx={sx} /> : <LockOpenIcon sx={sx} />;
+    default: return null;
+  }
+};
+
+const conditionalText = (
+  fallback: string,
+  variants: Partial<Record<HostPredicate, string>> | undefined,
+  state: Readonly<Record<HostPredicate, boolean>>,
+) => {
+  if (!variants) return fallback;
+  for (const predicate of Object.keys(variants) as HostPredicate[]) {
+    if (state[predicate]) return variants[predicate] ?? fallback;
+  }
+  return fallback;
+};
+
+const TopBar = observer(({ onMenuClick, onPluginsClick }: TopBarProps) => {
   const model = useModel();
+  const contributions = useContributions();
+  const actionsRef = useRef<Partial<Record<BuiltinRibbonAction, () => void | Promise<void>>>>({});
   
   // model is null on the first render (Viewer provides it only after Model.getInstance() resolves)
   const isLocked = model?.isLocked ?? false;
   const hasResults = !!model?.output;
+  // At least one node / member / shell is selected in the viewport.
+  const hasSelection = ((model?.selectedNodeIds.length ?? 0) +
+    (model?.selectedMemberIds.length ?? 0) +
+    (model?.selectedShellIds.length ?? 0)) > 0;
   // Use model-level MobX state so ContextMenu and TopBar share the same dialog state
   const open = (dialog: string) => {
     const ok = model?.openDialog(dialog) ?? false;
@@ -183,17 +281,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     tower: activeDialog === 'tower',
     analysisProgress: activeDialog === 'analysisProgress',
   };
-  const [tool, setTool] = useState('')
   const [confirmUnlock, setConfirmUnlock] = useState(false)
   const [activeTab, setActiveTab] = useState<string>('model')
-  const toolName = model?.toolsController.getCurrentToolName()
-  
-  const handleToolChange = (newTool: string) => {
-    // Stop the current tool before switching
-    const currentTool = model.toolsController.getCurrentTool();
-    currentTool?.stop()
-    setTool(newTool);
-  };
 
   const runAnalysis = async () => {
     try {
@@ -241,17 +330,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       model.console.setFinished(false);
       open('analysisProgress');
       
-      // Build the Z-up payload through the single source of truth. The whole
-      // model (nodes, member vecxz, boundary conditions, load values, shells)
-      // is converted from the three.js (Y-up) scene frame to the shared
-      // JSON/OpenSees (Z-up) schema HERE, at this boundary only.
-      const data = exportModelJson(model);
-
-      const res = await axios.post(`${VITE_BACKEND_SERVER}/analysis`, data);
-      console.log('RES', res);
-      model.output = res.data.output;
-      model.reactionViz.apply();
-      model.lockResults();
+      await model.runAnalysis();
       // Jump straight to the results ribbon now that the model is locked.
       setActiveTab('result');
       
@@ -279,8 +358,15 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       
       
       // Show error toast
-      const errorMessage = axios.isAxiosError(error) && error.response?.data?.message 
-        ? error.response.data.message 
+      const responseError = axios.isAxiosError(error)
+        ? error.response?.data?.detail ?? error.response?.data?.message
+        : error instanceof Error
+        ? error.message
+        : undefined;
+      const errorMessage = typeof responseError === 'string'
+        ? responseError
+        : responseError
+        ? JSON.stringify(responseError)
         : 'Analysis failed. Please check your model and try again.';
       
       toast.error(errorMessage, {
@@ -295,10 +381,12 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
   };
 
   const download = () => {
-    // Export through the single source of truth: converts the three.js (Y-up)
-    // scene to the Z-up JSON/OpenSees schema at this boundary only. The file
-    // can be re-uploaded (Z-up -> three.js) or sent straight to the backend.
-    const modelData = exportModelJson(model);
+    // Export the full Buckle project: the Z-up JSON/OpenSees analysis transport
+    // plus the organizational document collections (selection sets, groups,
+    // parametric objects, grids, levels) that the transport omits. The saved
+    // file can be re-opened unchanged or sent straight to the backend for
+    // analysis (the transport subset is `model`).
+    const modelData = exportProjectJson(model);
 
     const dataStr = JSON.stringify(modelData, null, 2);
     const dataBlob = new Blob([dataStr], { type: 'application/json' });
@@ -306,7 +394,7 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `fem-model-${new Date().toISOString().split('T')[0]}.json`;
+    link.download = `buckle-project-${new Date().toISOString().split('T')[0]}.json`;
     
     document.body.appendChild(link);
     link.click();
@@ -382,8 +470,8 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
     document.body.removeChild(fileInput);
   };
 
-  const buildOnJson = (jsonData: any) => {
-    model.isLocked = false; // loading a new model returns to editing mode
+  const buildOnJson = (jsonData: Parameters<typeof buildModelFromJson>[1]) => {
+    runInAction(() => { model.isLocked = false; }); // loading a new model returns to editing mode
     try {
       console.log('Loading model from JSON...', jsonData);
       // Reuse the single import path: converts the Z-up JSON schema to the
@@ -409,6 +497,70 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
       });
     }
   };
+
+  actionsRef.current = {
+    open: upload,
+    save: download,
+    materials: () => open('materials'),
+    sections: () => open('sections'),
+    loads: () => model?.addNewLoad(),
+    supports: () => model?.addNewSupport(),
+    draw: () => open('draw'),
+    move: () => open('move'),
+    zoomSelected: () => model?.zoomToSelected(),
+    warehouse: () => open('warehouseWizard'),
+    tower: () => open('tower'),
+    grid: () => open('grids'),
+    level: () => open('levels'),
+    workplane: () => open('workplane'),
+    settings: () => open('settings'),
+    runAnalysis,
+    unlock: () => { if (model && isLocked) setConfirmUnlock(true); },
+    results: () => open('results'),
+    reactions: () => open('reactions'),
+    downloadResults,
+    plugins: () => onPluginsClick?.(),
+  };
+
+  useLayoutEffect(() => contributions.register(
+    builtinOwner,
+    builtinRibbonBundle(action => actionsRef.current[action]?.()),
+  ), [contributions]);
+
+  useSyncExternalStore(
+    contributions.subscribe,
+    contributions.getSnapshot,
+    contributions.getSnapshot,
+  );
+  const hostState: Readonly<Record<HostPredicate, boolean>> = {
+    modelLocked: isLocked,
+    modelUnlocked: !isLocked,
+    hasResults,
+    hasSelection,
+    hasNodeSelection: (model?.selectedNodeIds.length ?? 0) > 0,
+    hasMemberSelection: (model?.selectedMemberIds.length ?? 0) > 0,
+    hasShellSelection: (model?.selectedShellIds.length ?? 0) > 0,
+    selectionModeNode: model?.selectionMode === 'node',
+    selectionModeMember: model?.selectionMode === 'element1d',
+    selectionModeShell: model?.selectionMode === 'shell2d',
+  };
+  const ribbonTabs = contributions.listRibbonTabs()
+    .filter(tab => matchesPredicates(tab.visibleWhen, hostState));
+  const ribbonTabIds = ribbonTabs.map(tab => tab.id).join('|');
+  useEffect(() => {
+    const tabIds = ribbonTabIds ? ribbonTabIds.split('|') : [];
+    if (tabIds.length && !tabIds.includes(activeTab)) {
+      setActiveTab(tabIds.includes('model') ? 'model' : tabIds[0]);
+    }
+  }, [activeTab, ribbonTabIds]);
+
+  const ribbonGroups = new Map<string, { label: string; items: ReturnType<typeof contributions.listRibbon> }>();
+  for (const item of contributions.listRibbon(activeTab)) {
+    if (!matchesPredicates(item.visibleWhen, hostState)) continue;
+    const current = ribbonGroups.get(item.groupId);
+    if (current) current.items.push(item);
+    else ribbonGroups.set(item.groupId, { label: item.groupLabel, items: [item] });
+  }
 
   return (
     <Box
@@ -463,11 +615,14 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
               '& .MuiTabs-indicator': { backgroundColor: colors.accent, height: 2 },
             }}
           >
-            <Tab value="file" label="File" />
-            <Tab value="model" label="Model" />
-            <Tab value="view" label="View" />
-            <Tab value="analysis" label="Analysis" />
-            <Tab value="result" label="Result" disabled={!(isLocked && hasResults)} />
+            {ribbonTabs.map(tab => (
+              <Tab
+                key={`${tab.owner.id}:${tab.id}`}
+                value={tab.id}
+                label={tab.label}
+                disabled={!matchesPredicates(tab.enabledWhen, hostState)}
+              />
+            ))}
           </Tabs>
         </Box>
         <RibbonButton
@@ -480,76 +635,29 @@ const TopBar = observer(({ onMenuClick }: TopBarProps) => {
 
       {/* Ribbon content — panels of small buttons for the active tab */}
       <Box sx={{ display: 'flex', alignItems: 'stretch', px: 3, pt: 0.5, pb: 1 }}>
-        {activeTab === 'file' && (
-          <RibbonPanel label="File">
-            <RibbonButton title="Open" label="Open" onClick={upload} icon={<OpenIcon sx={{ fontSize: 15 }} />} />
-            <RibbonButton title="Save" label="Save" onClick={download} icon={<SaveIcon sx={{ fontSize: 15 }} />} />
+        {[...ribbonGroups.entries()].map(([groupId, group]) => (
+          <RibbonPanel key={`${activeTab}:${groupId}`} label={group.label}>
+            {group.items.map(item => {
+              const icon = item.icon;
+              return (
+                <RibbonButton
+                  key={`${item.owner.id}:${item.id}`}
+                  title={conditionalText(item.title ?? contributions.getCommand(item.commandId)?.title ?? item.label, item.titleWhen, hostState)}
+                  label={conditionalText(item.label, item.labelWhen, hostState)}
+                  onClick={() => {
+                    void contributions.invokeCommand(item.commandId).catch(error => {
+                      toast.error(error instanceof Error ? error.message : String(error));
+                    });
+                  }}
+                  disabled={!matchesPredicates(item.enabledWhen, hostState)}
+                  active={matchesPredicates(item.activeWhen, hostState) && !!item.activeWhen?.length}
+                  iconImage={icon?.kind === 'asset' ? icon : undefined}
+                  icon={icon?.kind === 'host' ? hostIcon(icon.name, isLocked) ?? undefined : undefined}
+                />
+              );
+            })}
           </RibbonPanel>
-        )}
-        {activeTab === 'model' && (
-          <>
-            <RibbonPanel label="Define">
-              <RibbonButton title="Materials" label="Materials" onClick={() => open('materials')} disabled={isLocked} iconImage={{ src: '/construction.png', alt: 'Materials', size: 15 }} />
-              <RibbonButton title="Sections" label="Sections" onClick={() => open('sections')} disabled={isLocked} iconImage={{ src: '/sections.png', alt: 'Sections', size: 15 }} />
-            </RibbonPanel>
-            <RibbonPanel label="Assign">
-              <RibbonButton title="New Load" label="Loads" onClick={() => model?.addNewLoad()} disabled={isLocked} iconImage={{ src: '/loads.png', alt: 'Loads', size: 15 }} />
-              <RibbonButton title="New Support" label="Supports" onClick={() => model?.addNewSupport()} disabled={isLocked} iconImage={{ src: '/supports.png', alt: 'Supports', size: 15 }} />
-            </RibbonPanel>
-            <RibbonPanel label="Modify">
-              <RibbonButton title="Draw" label="Draw" onClick={() => open('draw')} disabled={isLocked} iconImage={{ src: '/pencil.png', alt: 'Draw', size: 15 }} />
-              <RibbonButton title="Move" label="Move" onClick={() => open('move')} disabled={isLocked} icon={<MoveIcon sx={{ fontSize: 15 }} />} />
-            </RibbonPanel>
-            <RibbonPanel label="Generate">
-              <RibbonButton title="Warehouse generator" label="Warehouse" onClick={() => open('warehouseWizard')} disabled={isLocked} iconImage={{ src: '/warehouse.png', alt: 'Generator', size: 15 }} />
-              <RibbonButton title="Transmission tower generator (500 kV)" label="Tower" onClick={() => open('tower')} disabled={isLocked} icon={<CellTowerIcon sx={{ fontSize: 15 }} />} />
-            </RibbonPanel>
-            <RibbonPanel label="System">
-              <RibbonButton title="New structural grid" label="Grid" onClick={() => open('grids')} disabled={isLocked} icon={<GridOnIcon sx={{ fontSize: 15 }} />} />
-              <RibbonButton title="New level datum (Revit style)" label="Level" onClick={() => open('levels')} disabled={isLocked} icon={<HeightIcon sx={{ fontSize: 15 }} />} />
-              <RibbonButton title="Set the active drawing plane" label="Workplane" onClick={() => open('workplane')} disabled={isLocked} icon={<LayersIcon sx={{ fontSize: 15 }} />} />
-            </RibbonPanel>
-          </>
-        )}
-        {activeTab === 'view' && (
-          <RibbonPanel label="View">
-            <RibbonButton title="Settings" label="Settings" onClick={() => open('settings')} iconImage={{ src: '/engrenage.png', alt: 'Settings', size: 15 }} />
-          </RibbonPanel>
-        )}
-        {activeTab === 'result' && (
-          <RibbonPanel label="Results">
-            <RibbonButton title="View results" label="Results" onClick={() => open('results')} disabled={!hasResults || !isLocked} iconImage={{ src: '/growth.png', alt: 'Results', size: 15 }} />
-            <RibbonButton
-              title="View support reactions"
-              label="Reactions"
-              onClick={() => open('reactions')}
-              iconImage={{ src: '/supports.png', alt: 'Reactions', size: 15 }}
-              disabled={!hasResults || !isLocked}
-            />
-            <RibbonButton
-              title="Download analysis results"
-              label="Download"
-              onClick={downloadResults}
-              icon={<DownloadIcon sx={{ fontSize: 15 }} />}
-              disabled={!hasResults}
-            />
-          </RibbonPanel>
-        )}
-        {activeTab === 'analysis' && (
-          <>
-            <RibbonPanel label="Solve">
-              <RibbonButton title="Run Analysis" label="Run" onClick={runAnalysis} iconImage={{ src: '/run.png', alt: 'Run', size: 15 }} />
-              <RibbonButton
-                title={isLocked ? 'Unlock — clear results and edit the model' : 'Model unlocked'}
-                label={isLocked ? 'Locked' : 'Unlocked'}
-                onClick={() => { if (model && isLocked) setConfirmUnlock(true); }}
-                icon={isLocked ? <LockIcon sx={{ fontSize: 15 }} /> : <LockOpenIcon sx={{ fontSize: 15 }} />}
-                active={isLocked}
-                disabled={!isLocked && !hasResults}
-              />
-            </RibbonPanel>
-          </>
-        )}
+        ))}
       </Box>
 
       <Settings open={dialogs.settings} onClose={close} />

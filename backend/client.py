@@ -2,8 +2,7 @@ import asyncio
 from typing import Optional
 from contextlib import AsyncExitStack
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -18,22 +17,22 @@ class MCPClient:
         self.anthropic = Anthropic()
 
     async def connect_to_server(self, server_url="http://localhost:8000"):
-      # Connect to a streamable HTTP server
-      async with streamablehttp_client(f"{server_url}/ mcp") as (
-          read_stream,
-          write_stream,
-          _,
-      ):
-          # Create a session using the client streams
-          async with ClientSession(read_stream, write_stream) as session:
-              # Initialize the connection
-              await session.initialize()
-              # List available tools
-              tools = await session.list_tools()
-              print(f"Available tools: {[tool.name for tool in tools.tools]}")
+        # Keep both transport and session alive until cleanup(); the previous
+        # nested context managers closed the connection before chat_loop began.
+        read_stream, write_stream, _ = await self.exit_stack.enter_async_context(
+            streamablehttp_client(f"{server_url.rstrip('/')}/mcp")
+        )
+        self.session = await self.exit_stack.enter_async_context(
+            ClientSession(read_stream, write_stream)
+        )
+        await self.session.initialize()
+        tools = await self.session.list_tools()
+        print(f"Available tools: {[tool.name for tool in tools.tools]}")
 
     async def process_query(self, query: str) -> str:
         """Process a query using Claude and available tools"""
+        if self.session is None:
+            raise RuntimeError("MCP client is not connected")
         messages = [
             {
                 "role": "user",

@@ -19,6 +19,8 @@ import TextField from '../../../components/TextField';
 import { Node, ElasticBeamColumn, Load, Shell } from '../../../model';
 import BoundaryCondition from '../../../model/BoundaryCondition/BoundaryCondition';
 import { Section } from '../../../types';
+import { COMMAND_SCHEMA_VERSION, prepareParametricRegeneration } from '../../../core/structural';
+import { generateWarehouseGraph, type WarehouseParameters } from '../../../model/Generators/WarehouseGenerator';
 
 interface WarehouseWizardProps {
   open: boolean;
@@ -69,7 +71,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     snowMagnitude: 0.8, // kN/m2 (Pressure)
     addMembrane: true,
     membraneThickness: 0.002,
-    clearExisting: true,
+    clearExisting: false, // legacy-only; parametric regeneration preserves unrelated entities
     // Targeted shell loads
     windOnRoof: true,
     windOnSideWalls: true,
@@ -78,6 +80,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
   });
 
   const [tabIndex, setTabIndex] = useState(0);
+  const [previewSummary, setPreviewSummary] = useState<string>('');
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabIndex(newValue);
@@ -134,12 +137,8 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     return areaMm2 * 1e-6; // Convert mm2 to m2
   };
 
-  const handleGenerate = () => {
+  const handleGenerateLegacy = () => {
     if (!model) return;
-
-    if (params.clearExisting) {
-      model.clear();
-    }
 
     const { 
         width, length, height, pitch, numBays, numPurlins, hasBracing, 
@@ -152,6 +151,28 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         alert("Please define at least one section first.");
         return;
     }
+    const existingNodeIds = model.nodes.map(node => node.id);
+    const nodeRecords: any[] = [];
+    const memberRecords: any[] = [];
+    const shellRecords: any[] = [];
+    const boundaryConditionRecords: any[] = [];
+    const loadRecords: any[] = [];
+    const registerMember = (member: ElasticBeamColumn) => {
+      memberRecords.push({
+        id: member.id, label: member.label,
+        nodeI: member.nodes[0].id, nodeJ: member.nodes[1].id,
+        sectionId: member.section.id,
+        referenceAxis: [member.vecxz.x, member.vecxz.z, member.vecxz.y],
+        gammaDegrees: member.gamma, release: member.release,
+      });
+    };
+    const registerShell = (shell: Shell) => {
+      shellRecords.push({
+        id: shell.id, name: shell.label,
+        nodeIds: shell.nodes.map(node => node.id),
+        thickness: shell.thickness, materialId: shell.material.id,
+      });
+    };
 
     const bayLength = length / numBays;
     const pitchRad = (pitch * Math.PI) / 180;
@@ -176,9 +197,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         // Helper to create & register node
         const createNode = (x: number, y: number, z: number, name: string) => {
             const node = new Node(new THREE.Vector3(x, y, z), name);
-            node.model = model;
-            node.create();
-            model.nodes.push(node);
+            nodeRecords.push({ id: node.id, name, position: [x, z, y] });
             return node;
         };
 
@@ -188,11 +207,18 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         const eaveR = createNode(width, height, z, `Eave-R-${i}`);
         const ridge = createNode(width / 2, ridgeHeight, z, `Ridge-${i}`);
 
-        // Rafter nodes - Left side (from Eave to Ridge)
+        // Rafter nodes - Left side (from Eave to Ridge).
+        // NOTE: interpolate from node coordinates (x/y/z), NOT node.mesh.position —
+        // Node meshes only exist in the 'solid-extrude' render mode and are
+        // undefined otherwise (crash: "can't access property position").
         const raftNodesL: Node[] = [eaveL];
         for (let p = 1; p < numPurlins; p++) {
             const ratio = p / numPurlins;
-            const pos = new THREE.Vector3().lerpVectors(eaveL.mesh.position, ridge.mesh.position, ratio);
+            const pos = {
+                x: eaveL.x + (ridge.x - eaveL.x) * ratio,
+                y: eaveL.y + (ridge.y - eaveL.y) * ratio,
+                z: eaveL.z + (ridge.z - eaveL.z) * ratio,
+            };
             raftNodesL.push(createNode(pos.x, pos.y, pos.z, `Raft-L-Node-${i}-${p}`));
         }
         raftNodesL.push(ridge);
@@ -201,7 +227,11 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         const raftNodesR: Node[] = [eaveR];
         for (let p = 1; p < numPurlins; p++) {
             const ratio = p / numPurlins;
-            const pos = new THREE.Vector3().lerpVectors(eaveR.mesh.position, ridge.mesh.position, ratio);
+            const pos = {
+                x: eaveR.x + (ridge.x - eaveR.x) * ratio,
+                y: eaveR.y + (ridge.y - eaveR.y) * ratio,
+                z: eaveR.z + (ridge.z - eaveR.z) * ratio,
+            };
             raftNodesR.push(createNode(pos.x, pos.y, pos.z, `Raft-R-Node-${i}-${p}`));
         }
         raftNodesR.push(ridge);
@@ -212,40 +242,36 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
 
         // Columns
         const colL = new ElasticBeamColumn(model, `Col-L-${i}`, [baseL, eaveL], section);
-        colL.create();
-        model.members.push(colL);
+        registerMember(colL);
         columns.push(colL);
 
         const colR = new ElasticBeamColumn(model, `Col-R-${i}`, [baseR, eaveR], section);
-        colR.create();
-        model.members.push(colR);
+        registerMember(colR);
         columns.push(colR);
 
         // Segmented Rafters L
         for (let s = 0; s < raftNodesL.length - 1; s++) {
             const raftSeg = new ElasticBeamColumn(model, `Raft-L-Seg-${i}-${s}`, [raftNodesL[s], raftNodesL[s+1]], section);
-            raftSeg.create();
-            model.members.push(raftSeg);
+            registerMember(raftSeg);
             rafters.push(raftSeg);
         }
 
         // Segmented Rafters R
         for (let s = 0; s < raftNodesR.length - 1; s++) {
             const raftSeg = new ElasticBeamColumn(model, `Raft-R-Seg-${i}-${s}`, [raftNodesR[s], raftNodesR[s+1]], section);
-            raftSeg.create();
-            model.members.push(raftSeg);
+            registerMember(raftSeg);
             rafters.push(raftSeg);
         }
 
         // --- Boundary Conditions ---
         [baseL, baseR].forEach((node, idx) => {
-            const bc = new BoundaryCondition(model, {
+            boundaryConditionRecords.push({
+                id: Math.floor(Math.random() * 0x7fffffff),
                 name: `Support-${idx === 0? 'L':'R'}-${i}`,
-                targets: [node.id],
+                targetNodeIds: [node.id],
                 type: 'fixed',
                 dx: 1, dy: 1, dz: 1, rx: 1, ry: 1, rz: 1
-            } as any);
-            bc.createOrUpdate();
+            });
         });
 
         frameData.push({ baseL, baseR, eaveL, eaveR, ridge, raftNodesL, raftNodesR, columns, rafters });
@@ -260,16 +286,14 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         // Purlins on Left Rafters (skip last node as it's the Ridge, handled separately if needed or just part of loop)
         for (let p = 0; p < f1.raftNodesL.length; p++) {
             const purlin = new ElasticBeamColumn(model, `Purlin-L-${i}-${p}`, [f1.raftNodesL[p], f2.raftNodesL[p]], section);
-            purlin.create();
-            model.members.push(purlin);
+            registerMember(purlin);
             allPurlins.push(purlin);
         }
 
         // Purlins on Right Rafters (skip Ridge as it was already covered by Left Side raftNodesL[last] which IS ridge)
         for (let p = 0; p < f1.raftNodesR.length - 1; p++) {
             const purlin = new ElasticBeamColumn(model, `Purlin-R-${i}-${p}`, [f1.raftNodesR[p], f2.raftNodesR[p]], section);
-            purlin.create();
-            model.members.push(purlin);
+            registerMember(purlin);
             allPurlins.push(purlin);
         }
     }
@@ -285,8 +309,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
 
             const addBrace = (n1: Node, n2: Node, label: string) => {
                 const bMember = new ElasticBeamColumn(model, label, [n1, n2], section);
-                bMember.create();
-                model.members.push(bMember);
+                registerMember(bMember);
                 allBracings.push(bMember);
             };
 
@@ -320,8 +343,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             for (let p = 0; p < f1.raftNodesL.length - 1; p++) {
                 const shellNodes = [f1.raftNodesL[p], f2.raftNodesL[p], f2.raftNodesL[p+1], f1.raftNodesL[p+1]];
                 const shell = new Shell(model, `Membrane-L-${i}-${p}`, shellNodes, params.membraneThickness, material);
-                shell.create();
-                model.shells.push(shell);
+                registerShell(shell);
                 roofShells.push(shell);
             }
 
@@ -329,20 +351,17 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             for (let p = 0; p < f1.raftNodesR.length - 1; p++) {
                 const shellNodes = [f1.raftNodesR[p], f2.raftNodesR[p], f2.raftNodesR[p+1], f1.raftNodesR[p+1]];
                 const shell = new Shell(model, `Membrane-R-${i}-${p}`, shellNodes, params.membraneThickness, material);
-                shell.create();
-                model.shells.push(shell);
+                registerShell(shell);
                 roofShells.push(shell);
             }
 
             // Side Walls
             const shellL = new Shell(model, `Wall-L-${i}`, [f1.baseL, f2.baseL, f2.eaveL, f1.eaveL], params.membraneThickness, material);
-            shellL.create();
-            model.shells.push(shellL);
+            registerShell(shellL);
             sideWallShells.push(shellL);
 
             const shellR = new Shell(model, `Wall-R-${i}`, [f1.baseR, f2.baseR, f2.eaveR, f1.eaveR], params.membraneThickness, material);
-            shellR.create();
-            model.shells.push(shellR);
+            registerShell(shellR);
             sideWallShells.push(shellR);
         }
 
@@ -354,8 +373,7 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             // NOTE: Gable triangle (eaveL-eaveR-ridge) is NOT created as a shell because
             // ShellMITC4 requires 4 UNIQUE nodes; coincident nodes cause singular stiffness.
             const shellBottom = new Shell(model, `EndWall-Bottom-${i}`, [f.baseL, f.baseR, f.eaveR, f.eaveL], params.membraneThickness, material);
-            shellBottom.create();
-            model.shells.push(shellBottom);
+            registerShell(shellBottom);
             endWallShells.push(shellBottom);
         });
     }
@@ -365,14 +383,14 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
     const weight = (area * 7850 * 9.81) / 1000; // kN/m
 
     if (addSelfWeight) {
-        const allMembers = model.members;
-        const selfWeightLoad = new Load(model, {
+        const existingMemberIds = params.clearExisting ? [] : model.members.map(member => member.id);
+        loadRecords.push({
+            id: Math.floor(Math.random() * 0x7fffffff),
             name: "Self-Weight",
-            targets: allMembers.map(m => m.id),
+            targetIds: [...existingMemberIds, ...memberRecords.map(member => member.id)],
             type: 'linear',
-            value: new THREE.Vector3(0, -weight, 0)
-        } as any);
-        selfWeightLoad.createOrUpdate();
+            value: [0, 0, -weight]
+        });
     }
 
     if (addWindLoad && params.addMembrane) {
@@ -383,32 +401,120 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         if (windOnEndWalls) windTargets.push(...endWallShells.map(s => s.id));
 
         if (windTargets.length > 0) {
-            new Load(model, { 
+            loadRecords.push({
+                id: Math.floor(Math.random() * 0x7fffffff),
                 name: "Wind-Pressure", 
-                targets: windTargets, 
+                targetIds: windTargets,
                 type: 'pressure', 
                 magnitude: q,           // scalar → normal pressure on shell surface
-                value: new THREE.Vector3(0, 0, 0) // fallback to avoid null in JSON
-            } as any).createOrUpdate();
+                value: [0, 0, 0]
+            });
         }
     }
 
     if (addSnowLoad && params.addMembrane && snowOnRoof) {
         const s = snowMagnitude;
-        new Load(model, {
+        loadRecords.push({
+            id: Math.floor(Math.random() * 0x7fffffff),
             name: "Snow-Load",
-            targets: roofShells.map(s => s.id),
+            targetIds: roofShells.map(s => s.id),
             type: 'pressure',
             magnitude: 0,               // explicitly 0 → route via vector path in backend
-            value: new THREE.Vector3(0, -s, 0) // Downward in global -Y (Three.js Y-up = gravity)
-        } as any).createOrUpdate();
+            value: [0, 0, -s]
+        });
     }
+
+    model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: model.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        ...(params.clearExisting && existingNodeIds.length
+          ? [{ type: 'DeleteNodes' as const, payload: { ids: existingNodeIds, cascade: true } }]
+          : []),
+        { type: 'CreateNodes', payload: { nodes: nodeRecords } },
+        { type: 'CreateMembers', payload: { members: memberRecords } },
+        ...(shellRecords.length ? [{ type: 'CreateOrUpdateShells' as const, payload: { shells: shellRecords } }] : []),
+        { type: 'CreateOrUpdateBoundaryConditions', payload: { boundaryConditions: boundaryConditionRecords } },
+        ...(loadRecords.length ? [{ type: 'CreateOrUpdateLoads' as const, payload: { loads: loadRecords } }] : []),
+      ] },
+    });
 
     // Frame the generated warehouse so long spans are fully visible
     model.camera.fitModelToView();
 
     onClose();
   };
+
+  const prepareWarehousePlan = () => {
+    if (!model) return;
+    const section = model.sections[0];
+    if (!section) {
+      alert('Please define at least one section first.');
+      return;
+    }
+    const warehouseParams: WarehouseParameters = {
+      ...params,
+      sectionId: section.id,
+      materialId: section.material.id,
+      sectionArea: calculateArea(section),
+    };
+    const existing = [...model.structuralDocument.parametricObjects.values()]
+      .find(object => object.kind === 'Warehouse');
+    return prepareParametricRegeneration(model.structuralDocument, {
+        objectId: existing?.id,
+        kind: 'Warehouse',
+        version: 1,
+        parameters: warehouseParams,
+        generatorVersion: 'warehouse@1',
+        generator: generateWarehouseGraph,
+        constraints: [
+          { type: 'positive', parameters: ['width', 'length', 'height'] },
+          { type: 'integer', parameters: ['numBays', 'numPurlins'] },
+        ],
+        provenance: { source: 'WarehouseWizard' },
+      });
+  };
+
+  const handlePreview = () => {
+    if (!model) return;
+    try {
+      const plan = prepareWarehousePlan();
+      if (!plan) return;
+      model.executeCommand({
+        commandId: crypto.randomUUID(), type: plan.command.type,
+        schemaVersion: COMMAND_SCHEMA_VERSION, dryRun: true,
+        modelRevision: model.structuralDocument.revision, source: 'ui',
+        payload: plan.command.payload,
+      });
+      setPreviewSummary(`Add ${plan.total.created} · Update ${plan.total.updated} · Delete ${plan.total.deleted}`);
+    } catch (error) {
+      setPreviewSummary('');
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const handleGenerate = () => {
+    if (!model) return;
+    try {
+      const plan = prepareWarehousePlan();
+      if (!plan) return;
+      model.executeCommand({
+        commandId: crypto.randomUUID(), type: plan.command.type,
+        schemaVersion: COMMAND_SCHEMA_VERSION,
+        modelRevision: model.structuralDocument.revision, source: 'ui',
+        payload: plan.command.payload,
+      });
+      setPreviewSummary('');
+      model.camera.fitModelToView();
+      onClose();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  // Kept temporarily as a reference while the new semantic generator reaches
+  // feature parity; it is deliberately not called by the UI.
+  void handleGenerateLegacy;
 
   return (
     <Dialog
@@ -445,8 +551,8 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
             <Grid item xs={12}><TextField label="Number of Bays" name="numBays" type="number" value={params.numBays} onChange={handleChange} fullWidth size="small" placeholder="" /></Grid>
             <Grid item xs={12}>
               <FormControlLabel
-                control={<Checkbox name="clearExisting" checked={params.clearExisting} onChange={handleChange} sx={{ color: colors.textFaint, '&.Mui-checked': { color: colors.danger } }} />}
-                label={<Typography variant="body2" sx={{ color: colors.text, fontWeight: 500 }}>Clear existing model before generation</Typography>}
+                control={<Checkbox checked disabled />}
+                label={<Typography variant="body2" sx={{ color: colors.text, fontWeight: 500 }}>Preserve entities outside this Warehouse</Typography>}
               />
             </Grid>
           </Grid>
@@ -525,7 +631,9 @@ const WarehouseWizard = ({ open, onClose }: WarehouseWizardProps) => {
         </CustomTabPanel>
 
         <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end', gap: 2, p: 2 }}>
+          {previewSummary && <Typography variant="caption" sx={{ color: colors.textDim, alignSelf: 'center', mr: 'auto' }}>{previewSummary}</Typography>}
           <Button onClick={onClose} sx={{ color: colors.textFaint }}>Cancel</Button>
+          <Button onClick={handlePreview} variant="outlined" sx={{ textTransform: 'none' }}>Preview changes</Button>
           <Button
             onClick={handleGenerate}
             variant="contained"

@@ -14,6 +14,7 @@ import ElasticBeamColumn from '../../../model/Elements/ElasticBeamColumn/Elastic
 import TextField from '../../../components/TextField/TextField';
 import Select from '../../../components/Select';
 import { colors, fieldLabelSx } from '../../../theme';
+import { COMMAND_SCHEMA_VERSION } from '../../../core/structural';
 
 interface AddOrEditProps {
   open: boolean;
@@ -89,20 +90,35 @@ const AddOrEdit = observer(({ open, onClose, selectedMember = null }: AddOrEditP
       return;
     }
 
-    const nodes = [nodeI, nodeJ];
     const gamma = Number(member.gamma) || 0;
     const label = member.label;
     const release = member.release;
 
     if (selectedMember) {
-      // Update existing member
-      selectedMember.update(nodes, section, gamma, label, release);
+      model.executeCommand({
+        commandId: crypto.randomUUID(),
+        type: 'UpdateMembers',
+        schemaVersion: COMMAND_SCHEMA_VERSION,
+        modelRevision: model.structuralDocument.revision,
+        payload: { members: [{ id: selectedMember.id, patch: {
+          nodeI: nodeI.id, nodeJ: nodeJ.id, sectionId: section.id,
+          gammaDegrees: gamma, label, release,
+        } }] },
+        source: 'ui',
+      });
     } else {
-      // Create new member
       const memberLabel = member.label || `Member ${model.members.length + 1}`;
-      const newMember = new ElasticBeamColumn(model, memberLabel, nodes, section);
-      newMember.create();
-      model.members.push(newMember);
+      model.executeCommand({
+        commandId: crypto.randomUUID(),
+        type: 'CreateMembers',
+        schemaVersion: COMMAND_SCHEMA_VERSION,
+        modelRevision: model.structuralDocument.revision,
+        payload: { members: [{
+          label: memberLabel, nodeI: nodeI.id, nodeJ: nodeJ.id,
+          sectionId: section.id, gammaDegrees: gamma, release,
+        }] },
+        source: 'ui',
+      });
     }
 
     reset();

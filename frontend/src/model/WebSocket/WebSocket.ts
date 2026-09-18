@@ -1,22 +1,48 @@
+import { isToolAllowed, type AiMode, type AiToolExecutor } from '../../core/ai'
+import { createParametricGeneratorCatalogue } from '../Generators/ParametricCatalogue'
 import { exportModelJson } from '../../helpers';
 import Model from '../Model';
-import { Node, ElasticBeamColumn, BoundaryCondition, Load } from '..';
-import * as THREE from 'three'
+import type { BoundaryConditionDto, LoadDto } from '../../contracts/structuralModel';
+
+interface WebSocketPayload {
+  message: string;
+  id?: string;
+  data?: unknown;
+}
+
+interface NodeMutation {
+  id: number;
+  name?: string;
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface MemberMutation {
+  id: number;
+  label?: string;
+  nodei: number;
+  nodej: number;
+  section: number;
+  vecxz?: [number, number, number];
+  gamma?: number;
+  release?: string;
+}
+
 export default class WebSocketHandler {
   private ws: WebSocket | null = null;
-  private url: string;
-  private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 5;
-  private reconnectInterval: number = 3000;
-  private model : Model
-  constructor(url: string, model : Model) {
+  private toolExecutor?: AiToolExecutor;
+  private readonly url: string;
+  private reconnectAttempts = 0;
+  private readonly maxReconnectAttempts = 5;
+  private readonly reconnectInterval = 3000;
+  private readonly model: Model;
+
+  constructor(url: string, model: Model) {
     this.url = url;
-    this.model = model
+    this.model = model;
   }
 
-  /**
-   * Establishes a WebSocket connection
-   */
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
@@ -28,103 +54,118 @@ export default class WebSocketHandler {
           resolve();
         };
 
-        this.ws.onmessage = (event) => {
-          console.log('WebSocket message received:', event.data);
+        this.ws.onmessage = async (event) => {
           try {
-            const parsedData = JSON.parse(event.data);
-            const { message, id , data } = parsedData;
-            let answer : any; 
+            const { message, id, data } = JSON.parse(event.data) as WebSocketPayload;
+            let answer: object | undefined;
+
             switch (message) {
-              case 'get_scene_info':
-                const model = exportModelJson(this.model)
+              case 'list_ai_tools':
+              case 'call_ai_tool': {
+                const request = (data ?? {}) as { mode?: AiMode; name?: string; arguments?: Record<string, unknown>; callId?: string }
+                const mode = request.mode ?? 'Inspect'
+                if (!['Inspect', 'Edit', 'Modeling', 'Generate', 'Agent'].includes(mode)) throw new Error('Invalid AI mode')
+                const executor = this.toolExecutor ??= this.model.createAiToolExecutor(createParametricGeneratorCatalogue(this.model.structuralDocument), {}, 'mcp')
+                if (message === 'list_ai_tools') answer = { id, success: true, tools: executor.registry.list().filter(tool => isToolAllowed(mode, tool)) }
+                else {
+                  if (!request.name || !request.callId || !request.arguments) throw new Error('name, arguments and callId are required')
+                  const result = await executor.executeAsync({ id: request.callId, name: request.name, arguments: request.arguments }, mode)
+                  answer = { id, success: result.ok, result }
+                }
+                break;
+              }
+              case 'get_scene_info': {
                 answer = {
                   message: 'This is the scene state',
-                  data: model,
-                  id : id,
+                  data: exportModelJson(this.model),
+                  id,
                 };
-                console.log('get scene state answer', answer)
                 break;
-              case 'add_nodes':
-                for (let item of data as Node[]) {
-                  const coordinates = new THREE.Vector3(item.x, item.y, item.z)
-                  const name = item?.name
-                  const id = item.id
-                  const node  = new Node(coordinates, name, id)
-                  node.model = this.model
-                  node.create()
-                  this.model.nodes.push(node)
-
-                }
-                answer = {
-                  message : 'The nodes have been created',
-                  id : id, 
-                  success : true
-                }
+              }
+              case 'add_nodes': {
+                if (!Array.isArray(data)) throw new Error('add_nodes data must be an array');
+                this.model.executeCommand({
+                  commandId: id ? `${id}:add_nodes` : crypto.randomUUID(), type: 'CreateNodes', schemaVersion: '1.0',
+                  modelRevision: this.model.structuralDocument.revision, source: 'mcp',
+                  payload: { nodes: (data as NodeMutation[]).map(item => ({
+                    id: item.id, name: item.name, position: [item.x, item.y, item.z],
+                  })) },
+                });
+                answer = { message: 'The nodes have been created', id, success: true };
                 break;
-              case 'add_members':
-                for(let item of data){
-                  const {nodei, nodej, section, label, id} = item
-                  const iNode = this.model.nodes.find((item) => item.id === nodei)
-                  const jNode = this.model.nodes.find((item) => item.id === nodej)
-                  // const sec = this.model.sections.find((item) => item.id === section)
-                  const sec = this.model.sections[0]
-                  // const sec = this.model.mock
-                  if(!iNode || !jNode || !sec) return 
-                  const nodes = [iNode, jNode]
-                  const member = new ElasticBeamColumn(this.model, label, nodes, sec, id)
-                  member.create()
-                  this.model.members.push(member)
-                }
-                
-                answer = {
-                  message : 'The members have been created',
-                  id : id, 
-                  success : true
-                }
-                console.log('LET ADD MEMBERS', data)
-              break
-              case 'add_bc':
-                for(let item of data as BoundaryCondition[]){
-                  const bc = new BoundaryCondition(this.model, item)
-                  bc.createOrUpdate()
-                }
-                answer = {
-                  message : 'The boundary conditions have been created',
-                  id : id, 
-                  success : true
-                }
-                
+              }
+              case 'add_members': {
+                if (!Array.isArray(data)) throw new Error('add_members data must be an array');
+                this.model.executeCommand({
+                  commandId: id ? `${id}:add_members` : crypto.randomUUID(), type: 'CreateMembers', schemaVersion: '1.0',
+                  modelRevision: this.model.structuralDocument.revision, source: 'mcp',
+                  payload: { members: (data as MemberMutation[]).map(item => ({
+                    id: item.id, label: item.label ?? `Member ${item.id}`,
+                    nodeI: item.nodei, nodeJ: item.nodej, sectionId: item.section,
+                    referenceAxis: item.vecxz, gammaDegrees: item.gamma ?? 0, release: item.release ?? '',
+                  })) },
+                });
+                answer = { message: 'The members have been created', id, success: true };
                 break;
-              case 'add_linear_load':
-                for(let item of data as Load[]){
-                  const load = new Load(this.model, item)
-                  load.createOrUpdate()
-                }
-                answer = {
-                  message : 'The linear loads have been created',
-                  id : id, 
-                  success : true
-                }
-                break
-              case 'analysis_progress':
+              }
+              case 'add_bc': {
+                if (!Array.isArray(data)) throw new Error('add_bc data must be an array');
+                this.model.executeCommand({
+                  commandId: id ? `${id}:add_bc` : crypto.randomUUID(), type: 'CreateOrUpdateBoundaryConditions', schemaVersion: '1.0',
+                  modelRevision: this.model.structuralDocument.revision, source: 'mcp',
+                  payload: { boundaryConditions: (data as BoundaryConditionDto[]).map(item => ({
+                    id: item.id ?? Math.floor(Math.random() * 0x7fffffff), name: item.name,
+                    type: item.type, targetNodeIds: item.targets,
+                    dx: item.dx ?? 0, dy: item.dy ?? 0, dz: item.dz ?? 0,
+                    rx: item.rx ?? 0, ry: item.ry ?? 0, rz: item.rz ?? 0,
+                    rotationDegrees: item.rotation ?? 0,
+                  })) },
+                });
+                answer = { message: 'The boundary conditions have been created', id, success: true };
+                break;
+              }
+              case 'add_linear_load': {
+                if (!Array.isArray(data)) throw new Error('add_linear_load data must be an array');
+                this.model.executeCommand({
+                  commandId: id ? `${id}:add_linear_load` : crypto.randomUUID(), type: 'CreateOrUpdateLoads', schemaVersion: '1.0',
+                  modelRevision: this.model.structuralDocument.revision, source: 'mcp',
+                  payload: { loads: (data as LoadDto[]).map(item => ({
+                    id: item.id, name: item.name, type: item.type, targetIds: item.targets,
+                    value: [item.value.x, item.value.y, item.value.z], magnitude: item.magnitude,
+                  })) },
+                });
+                answer = { message: 'The linear loads have been created', id, success: true };
+                break;
+              }
+              case 'analysis_progress': {
                 this.model.console.create({
-                  id: Date.now().toString() + Math.random().toString(),
-                  message: data,
+                  id: `${Date.now()}${Math.random()}`,
+                  message: String(data ?? ''),
                   timestamp: new Date(),
-                  type: 'INFO'
+                  type: 'INFO',
                 });
                 break;
+              }
               default:
                 console.log('Unknown message type:', message);
-                break;
-              
             }
-            if (answer !== undefined) {
-              this.send(answer)
-            }
+
+            if (answer !== undefined) this.send(answer);
           } catch (error) {
-            console.error('Error parsing message:', error);
-            console.log('Raw message data:', event.data);
+            console.error('Error handling WebSocket message:', error, event.data);
+            let requestId: string | undefined;
+            try {
+              requestId = (JSON.parse(event.data) as WebSocketPayload).id;
+            } catch {
+              // A malformed frame has no request ID to correlate.
+            }
+            if (requestId) {
+              this.send({
+                id: requestId,
+                message: error instanceof Error ? error.message : String(error),
+                success: false,
+              });
+            }
           }
         };
 
@@ -132,35 +173,22 @@ export default class WebSocketHandler {
           console.error('WebSocket error:', error);
           reject(error);
         };
-
-        this.ws.onclose = (event) => {
-          console.log('WebSocket closed:', event);
-          this.handleReconnect();
-        };
-
+        this.ws.onclose = () => this.handleReconnect();
       } catch (error) {
         reject(error);
       }
     });
   }
 
-  /**
-   * Sends a message through the WebSocket connection
-   */
   send(message: string | object): boolean {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const data = typeof message === 'string' ? message : JSON.stringify(message);
-      console.log('SENDING DATA',data)
-      this.ws.send(data);
+      this.ws.send(typeof message === 'string' ? message : JSON.stringify(message));
       return true;
     }
     console.warn('WebSocket is not connected');
     return false;
   }
 
-  /**
-   * Closes the WebSocket connection
-   */
   disconnect(): void {
     if (this.ws) {
       this.ws.close();
@@ -168,38 +196,22 @@ export default class WebSocketHandler {
     }
   }
 
-  /**
-   * Gets the current connection status
-   */
   getConnectionState(): number {
     return this.ws ? this.ws.readyState : WebSocket.CLOSED;
   }
 
-  /**
-   * Checks if the WebSocket is connected
-   */
   isConnected(): boolean {
-    return this.ws ? this.ws.readyState === WebSocket.OPEN : false;
+    return this.ws?.readyState === WebSocket.OPEN;
   }
 
-  /**
-   * Handles automatic reconnection
-   */
   private handleReconnect(): void {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-      
-      setTimeout(() => {
-        this.connect().catch((error) => {
-          console.error('Reconnection failed:', error);
-        });
-      }, this.reconnectInterval);
-    } else {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.error('Max reconnection attempts reached');
+      return;
     }
+    this.reconnectAttempts++;
+    setTimeout(() => {
+      this.connect().catch((error) => console.error('Reconnection failed:', error));
+    }, this.reconnectInterval);
   }
-
-  
 }
-

@@ -1,3 +1,5 @@
+import { AnalysisRunStore } from '../core/ai/AnalysisResults'
+import { archiveAnalysis, loadAnalysisArchive } from '../core/ai/AnalysisArchive'
 import * as THREE from "three";
 import { ViewportGizmo } from "three-viewport-gizmo";
 import { 
@@ -9,8 +11,6 @@ import {
   Light, 
   PostProcessing,
   Snapper,
-  Line,
-  ElasticBeamColumn,
   Console,
   Visibility,
   WebSocketHandler,
@@ -21,16 +21,60 @@ import {
   LevelVisual,
 } from "./index";
 import ReactionViz from "./PostProcessing/ReactionViz";
-import { makeAutoObservable } from "mobx";
+import { makeAutoObservable, runInAction, toJS } from "mobx";
 import { Material, mockMaterials, mockSections, Section, NavTool } from "../types";
 import { GUI } from "lil-gui";
-import { Line3D, Member, Level, mockLevels } from "../types";
+import { Member, Level, mockLevels } from "../types";
 import BoundaryCondition from "./BoundaryCondition/BoundaryCondition";
 import Load from "./Load/Load";
-import { buildModelOnjson } from "../helpers";
+import { buildModelFromJson } from "../helpers";
 import ToolsController from "./Geometry/Tools/Controller";
 import ZoomTool from "./Geometry/Tools/Zoom";
 import { preloadToolCursors, toolCursor } from "./Utils/CursorIcons";
+import ViewerBenchmark from "./Benchmark/viewerBenchmark";
+import { generateStructuralBenchmarkFixture } from "./Benchmark/structuralFixture";
+import {
+  isQualityProfile,
+  isRenderMode,
+  isSelectionMode,
+  type QualityProfile,
+  type RenderMode,
+  type SelectionMode,
+} from "./Rendering/contracts";
+import { ENTITY_SELECTED, ENTITY_VISIBLE, StructuralSceneDB } from "./Rendering/StructuralSceneDB";
+import {
+  CommandGateway,
+  StructuralDocument,
+  type AnalysisSnapshot,
+  type CommandEnvelope,
+  type PluginPermission,
+  type CommandGatewayContext,
+  type CommandResult,
+  type CommandTransactionOperation,
+  type EntityReference,
+  type SelectionSetKind,
+  type SelectionSetRecord,
+  type StructuralDocumentSeed,
+} from "../core/structural";
+import { StructuralDocumentBridge } from "./Rendering/StructuralDocumentBridge";
+import { legacyModelToDocumentSeed } from "./Structural/legacyStructuralDocumentAdapter";
+import { applyStructuralChangeToLegacy } from "./Structural/StructuralLegacyProjection";
+import { WorkspaceContext } from "./Workspace/WorkspaceContext";
+import { SHRINK_RATIO_PER_END } from "./Utils/shrink";
+import { buildLoadInstances } from "./Load/loadInstances";
+import LoadGpuRenderer from "./Rendering/LoadGpuRenderer";
+import CenterlineRenderer from "./Rendering/CenterlineRenderer";
+import ThinShellRenderer from "./Rendering/ThinShellRenderer";
+import StructuralGpuPicker from "./Rendering/StructuralGpuPicker";
+import ResultStore, { type ResultBinding } from "./Rendering/ResultStore";
+import DiagramRenderer from "./Rendering/DiagramRenderer";
+import GpuAnnotations, { releaseEnds, SYMBOL_KIND_RELEASE, type SymbolCandidate as GpuSymbolCandidate } from "./Rendering/GpuAnnotations";
+import { estimateSolidTriangles, shouldEvictSolidResources } from "./Rendering/solidResourcePolicy";
+import { computeMemberFrame } from "./Rendering/memberFrame";
+import type { AnalysisOutput } from '../contracts/structuralModel';
+import { AiToolExecutor, type AgentBudget, type ParametricGeneratorBinding } from '../core/ai';
+import { PluginEventBus, type PluginCommandServices } from '../core/plugins';
+import { ModelViewportInteractions } from './Geometry/Helpers/ModelViewportInteractions';
 export type PointerCoords = {
   x: number;
   y: number;
@@ -39,6 +83,21 @@ export type PointerCoords = {
 
 const SIZE_VECTOR = new THREE.Vector2()
 
+const storedRenderMode = (): RenderMode => {
+  const value = typeof localStorage === 'undefined' ? null : localStorage.getItem('buckle.renderMode')
+  return isRenderMode(value) ? value : 'solid-extrude'
+}
+
+const storedQualityProfile = (): QualityProfile => {
+  const value = typeof localStorage === 'undefined' ? null : localStorage.getItem('buckle.qualityProfile')
+  return isQualityProfile(value) ? value : 'balanced'
+}
+
+const storedSelectionMode = (): SelectionMode => {
+  const value = typeof localStorage === 'undefined' ? null : localStorage.getItem('buckle.selectionMode')
+  return isSelectionMode(value) ? value : 'element1d'
+}
+
 
 
 export class Model {
@@ -46,13 +105,54 @@ export class Model {
 
   enabled = true
   showVolumes = true
-  /** On-screen FPS readout toggle (Settings → View → Show FPS). */
-  showFps = false
+  /** On-screen FPS readout toggle (Settings → View → Show FPS). On by default. */
+  showFps = true
+  /** Midas-style Shrink display toggle (BottomBar → Shrink). Off by default. */
+  shrinkEnabled = false
+  /** Viewer/editor canvas background hex (Settings → View → Background). */
+  viewerBackground = '#212830'
+  /** Goal-0 schema only: legacy rendering remains unchanged until Goal 2. */
+  renderMode: RenderMode = storedRenderMode()
+  qualityProfile: QualityProfile = storedQualityProfile()
+  selectionMode: SelectionMode = storedSelectionMode()
+  performanceBenchmark: ViewerBenchmark
+  /** Canonical Z-up engineering state. Legacy UI objects are migration adapters. */
+  structuralDocument = new StructuralDocument()
+  /** The only supported mutation entry point for canonical engineering state. */
+  commandGateway = new CommandGateway(this.structuralDocument)
+  /** Renderer-facing SoA projection of StructuralDocument. */
+  structuralSceneDB = new StructuralSceneDB()
+  structuralDocumentBridge = new StructuralDocumentBridge(this.structuralDocument, this.structuralSceneDB)
+  workspaceContext = new WorkspaceContext()
+  /** Host event bus for plugin sessions — publishes coalesced document and
+   *  workspace events; excluded from MobX observability on purpose. */
+  pluginEvents = new PluginEventBus()
+  analysisRevision: number | null = null
+  analysisSnapshotHash: string | null = null
+  currentAnalysisRunId: string | null = null
+  analysisRuns = new AnalysisRunStore()
+  analysisArchiveError = ''
+  analysisRunning = false
+  resultStore = new ResultStore()
+  structuralSceneDBBuildMs = 0
+  structuralSceneSyncScheduled = false
+  centerlineRenderer: CenterlineRenderer
+  thinShellRenderer: ThinShellRenderer
+  diagramRenderer: DiagramRenderer
+  gpuAnnotations: GpuAnnotations
+  loadGpuRenderer: LoadGpuRenderer
+  structuralPicker: StructuralGpuPicker
+  private activeResultBinding: ResultBinding | null = null
+  solidPreparation = { active: false, progress: 0, estimatedTriangles: 0 }
+  private solidPreparationToken = 0
+  contextLost = false
   /** Last measured frame rate, refreshed ~2×/s from the render loop (0 = not
    *  measured yet). Kept as a low-frequency observable so the HUD re-render
    *  cost stays negligible. */
   fps = 0
   public scene = new THREE.Scene()
+  /** Detached as one unit in centerline mode to avoid traversing legacy objects. */
+  public legacyStructuralRoot = new THREE.Group()
   public camera : Camera
   public renderer =  new THREE.WebGLRenderer();
   public container !: HTMLDivElement
@@ -82,6 +182,8 @@ export class Model {
   // axes : Axes
   nodes : Node[]
   members : Member[]
+  /** Highest member `index` ever assigned — O(1) source for the next index. */
+  memberIndexHighWater = 0
   shells : Shell[] = []
   boundaryConditions : BoundaryCondition[] = []
   // lines : Line3D[]
@@ -93,7 +195,7 @@ export class Model {
   reactionViz : ReactionViz
   labeler : Labeler
   loads : Load[] = []
-  output : any
+  output: AnalysisOutput | null = null
   sections : Section[] = mockSections
   materials : Material[] = mockMaterials
   // SAP2000/ETABS style structural axis grids
@@ -107,6 +209,9 @@ export class Model {
   gui : GUI | null = null
   toolsController : ToolsController = new ToolsController()
   console : Console = new Console()
+  /** Model-backed viewport interaction host (Goal 3) — created lazily so it
+   *  never participates in the Model bootstrap order. */
+  private viewportInteractions : ModelViewportInteractions | undefined
   visibility : Visibility
   contextMenu = {
     visible: false,
@@ -123,6 +228,21 @@ export class Model {
   // Members being batch-edited in the right dock (context menu "Edit element(s)").
   // Empty = single-edit mode (only the focused member is touched).
   editingMemberIds: number[] = [];
+  /** Incremented only when the canonical viewport selection changes. Panels
+   *  use this to refresh selection-linked targets without re-seeding drafts. */
+  workspaceSelectionRevision = 0;
+  /** Incremented when the hidden-entity set changes (show/hide commands and
+   *  their undo). Tree rows read it to refresh show/hide icons without
+   *  observable Sets. */
+  workspaceHiddenRevision = 0;
+  /** Incremented after every commit that changes the `selectionSets` collection
+   *  (including undo/redo). The Selection Sets left-panel tab reads it as a MobX
+   *  dependency and re-renders the folder tree from the plain Maps. */
+  selectionSetRevision = 0;
+  /** True while the right dock is bound to the live viewport selection: every
+   *  entity dock and draft follows later selection changes (node/member docks
+   *  rebind, support/load targets restage). clearFocus resets it. */
+  rightPanelTargetsFollowSelection = false;
   selectedNodeId: number | null = null;
   selectedBoundaryConditionId: number | null = null;
   selectedLoadId: number | null = null;
@@ -220,6 +340,7 @@ export class Model {
   focusMember = (id: number | null) => {
     this.selectedMemberId = id;
     this.editingMemberIds = [];
+    this.rightPanelTargetsFollowSelection = true;
     if (id != null) { this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -235,8 +356,30 @@ export class Model {
     this.editingMemberIds = [...ids];
   };
 
+  /** Keep the right dock bound to the live viewport selection. The member and
+   *  node docks rebind to the swept entities (a multi-member sweep turns the
+   *  member dock into a batch edit); the support/load docks restage their
+   *  targets from the same workspaceSelectionRevision signal in RightPanel.
+   *  An empty sweep is a no-op: the dock keeps its current entity and stays
+   *  open. */
+  private syncSelectionLinkedPanel = () => {
+    if (!this.rightPanelOpen || !this.rightPanelTargetsFollowSelection) return;
+    if (this.selectedMemberId != null || this.editingMemberIds.length > 0) {
+      const ids = [...this.workspaceContext.selectedMemberIds];
+      if (!ids.length) return;
+      this.editingMemberIds = ids.length > 1 ? ids : [];
+      this.selectedMemberId = ids[0];
+      return;
+    }
+    if (this.selectedNodeId != null) {
+      const ids = [...this.workspaceContext.selectedNodeIds];
+      if (ids.length) this.selectedNodeId = ids[0];
+    }
+  };
+
   focusNode = (id: number | null) => {
     this.selectedNodeId = id;
+    this.rightPanelTargetsFollowSelection = true;
     if (id != null) { this.selectedMemberId = null; this.selectedBoundaryConditionId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -246,15 +389,18 @@ export class Model {
   /** Focus a support / boundary condition in the right dock, by id. */
   focusBoundaryCondition = (id: number | null) => {
     this.selectedBoundaryConditionId = id;
+    this.rightPanelTargetsFollowSelection = true;
     if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedLoadId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
   };
 
-  /** Focus a load in the right dock, by id. */
+  /** Focus a load in the right dock, by id. The dock follows the live viewport
+   *  selection: sweeping other elements restages the load's targets. */
   focusLoad = (id: number | null) => {
     this.selectedLoadId = id;
+    this.rightPanelTargetsFollowSelection = true;
     if (id != null) { this.selectedMemberId = null; this.selectedNodeId = null; this.selectedBoundaryConditionId = null; this.exitResults(); }
     this.newEntityDraft = null;
     this.rightPanelOpen = true;
@@ -287,6 +433,7 @@ export class Model {
     this.selectedBoundaryConditionId = null;
     this.selectedLoadId = null;
     this.newEntityDraft = null;
+    this.rightPanelTargetsFollowSelection = false;
     this.updateGizmoOffset();
   };
 
@@ -320,6 +467,7 @@ export class Model {
     this.selectedLoadId = null;
     this.exitResults();
     this.newEntityDraft = 'load';
+    this.rightPanelTargetsFollowSelection = true;
     this.newEntityDraftNonce++;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
@@ -335,6 +483,7 @@ export class Model {
     this.selectedLoadId = null;
     this.exitResults();
     this.newEntityDraft = 'support';
+    this.rightPanelTargetsFollowSelection = true;
     this.newEntityDraftNonce++;
     this.rightPanelOpen = true;
     this.updateGizmoOffset();
@@ -342,8 +491,9 @@ export class Model {
 
   /** Collect the node ids currently selected in the viewport. */
   get selectedNodeIds(): number[] {
+    if (this.renderMode !== 'solid-extrude') return [...this.selector.selectedNodeIds];
     return this.selector.selected
-      .map((item: any) => {
+      .map((item) => {
         const ud = item.object.userData;
         if (ud?.type === 'node') return ud.id;
         if (item.object.parent?.userData?.type === 'node') return item.object.parent.userData.id;
@@ -354,30 +504,246 @@ export class Model {
 
   /** Collect the member ids currently selected in the viewport. */
   get selectedMemberIds(): number[] {
-    return this.selector.selected
-      .map((item: any) => {
+    if (this.renderMode !== 'solid-extrude') return [...this.selector.selectedCenterlineIds];
+    const ids = this.selector.selected
+      .map((item) => {
         const ud = item.object.userData;
         if (ud?.type === 'elasticBeamColumn') return ud.id;
         if (item.object.parent?.userData?.type === 'elasticBeamColumn') return item.object.parent.userData.id;
         return null;
       })
       .filter((id: number | null): id is number => id != null);
+    return [...new Set(ids)];
+  }
+
+  get selectedShellIds(): number[] {
+    const ids = this.selector.selected
+      .map((item) => item.object.userData?.type === 'shell' ? item.object.userData.id : null)
+      .filter((id: number | null): id is number => id != null)
+    return [...new Set(ids)]
+  }
+
+  deleteNodesById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteNodes', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { ids, cascade: true },
+    })
+  }
+
+  deleteMembersById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteMembers', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { ids },
+    })
+  }
+
+  deleteShellsById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteShells', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { ids },
+    })
+  }
+
+  createOrUpdateLoads = (loads: readonly {
+    id: number; name?: string; type: 'nodal' | 'linear' | 'area' | 'pressure';
+    targets: readonly number[]; value: { x: number; y: number; z: number }; magnitude?: number;
+  }[]) => {
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateLoads', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { loads: loads.map(load => ({
+        id: load.id, name: load.name, type: load.type, targetIds: [...load.targets],
+        value: [load.value.x, load.value.z, load.value.y], magnitude: load.magnitude,
+      })) },
+    })
+  }
+
+  deleteLoadsById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteLoads', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { ids },
+    })
+  }
+
+  createOrUpdateBoundaryConditions = (items: readonly {
+    id: number; name?: string; type: BoundaryCondition['type']; targets: readonly number[];
+    dx?: number; dy?: number; dz?: number; rx?: number; ry?: number; rz?: number; rotation?: number;
+  }[]) => {
+    const normalized = items.map(item => {
+      const preset = item.type === 'fixed'
+        ? { dx: 1, dy: 1, dz: 1, rx: 1, ry: 1, rz: 1 }
+        : item.type === 'pinned'
+          ? { dx: 1, dy: 1, dz: 1, rx: 1, ry: 0, rz: 0 }
+          : item.type === 'roller'
+            ? { dx: 0, dy: 1, dz: 1, rx: 1, ry: 0, rz: 0 }
+          : { dx: item.dx ?? 0, dy: item.dy ?? 0, dz: item.dz ?? 0, rx: item.rx ?? 0, ry: item.ry ?? 0, rz: item.rz ?? 0 }
+      return {
+        id: item.id, name: item.name, type: item.type, targetNodeIds: [...item.targets],
+        ...preset, rotationDegrees: item.rotation ?? 0,
+      }
+    })
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateBoundaryConditions', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { boundaryConditions: normalized },
+    })
+  }
+
+  deleteBoundaryConditionsById = (ids: readonly number[]) => {
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteBoundaryConditions', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { ids },
+    })
   }
 
   /** Delete the nodes currently selected whose own mesh (or parent) carries a node type. */
   deleteSelectedNodes = () => {
-    const ids = new Set(this.selectedNodeIds);
-    const nodesToDelete = this.nodes.filter((n) => ids.has(n.id));
-    nodesToDelete.forEach((node) => node?.delete());
+    const ids = this.selectedNodeIds;
+    if (!ids.length) return;
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'DeleteNodes', payload: { ids, cascade: true } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    });
     this.selector.clear();
   };
 
   /** Delete the members currently selected whose own mesh (or parent) carries a member type. */
   deleteSelectedMembers = () => {
-    const ids = new Set(this.selectedMemberIds);
-    const membersToDelete = this.members.filter((m) => ids.has(m.id));
-    membersToDelete.forEach((member) => member?.remove());
+    const ids = this.selectedMemberIds;
+    if (!ids.length) return;
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'DeleteMembers', payload: { ids } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    });
     this.selector.clear();
+  };
+
+  deleteSelectedShells = () => {
+    const ids = this.selectedShellIds
+    if (!ids.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'DeleteShells', payload: { ids } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    })
+    this.selector.clear()
+  };
+
+  /** Hide selected members through the shared render flag as well as retained
+   * legacy resources, so the state is stable across Render Mode switches. */
+  hideSelectedMembers = () => {
+    const entities = this.selectedMemberIds.map(id => ({ collection: 'members' as const, id }))
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'HideEntities', payload: { entities } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    })
+    this.selector.clear();
+  };
+
+  /** Replace the viewport selection with a single node / member (model tree
+   *  click): the element lights up through the shared selection flag. */
+  selectInViewport = (collection: 'nodes' | 'members', id: number) => {
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { entities: [{ collection, id }] },
+    })
+  };
+
+  /** Hide / show specific nodes or members (model tree show-hide toggle)
+   *  through the shared render flag, so the state is stable across Render
+   *  Mode switches. */
+  setEntitiesHidden = (collection: 'nodes' | 'members', ids: number[], hidden: boolean) => {
+    const entities = ids.map(id => ({ collection, id }))
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [hidden
+        ? { type: 'HideEntities', payload: { entities } }
+        : { type: 'ShowEntities', payload: { entities } },
+      ] },
+    })
+  };
+
+  /** Zoom the camera to a node / member (model tree quick-zoom): frames the
+   *  element's world-space bounds while keeping the current view direction. */
+  zoomToEntity = (collection: 'nodes' | 'members', id: number) => {
+    const box = new THREE.Box3()
+    if (collection === 'nodes') {
+      const node = this.nodes.find((n) => n.id === id)
+      if (!node) return
+      box.expandByPoint(new THREE.Vector3(node.x, node.y, node.z))
+    } else {
+      const member = this.members.find((m) => m.id === id)
+      if (!member) return
+      for (const endpoint of member.nodes) {
+        box.expandByPoint(new THREE.Vector3(endpoint.x, endpoint.y, endpoint.z))
+      }
+    }
+    this.camera.fitBoxToView(box)
+  };
+
+  /** Whether the node / member id is in the canonical viewport selection.
+   *  Reads the selection revision so MobX observers calling this re-render
+   *  when the (plain, non-observable) selection Sets change. */
+  isEntitySelected = (collection: 'nodes' | 'members', id: number) => {
+    const revision = this.workspaceSelectionRevision
+    const selected = collection === 'nodes'
+      ? this.workspaceContext.selectedNodeIds
+      : this.workspaceContext.selectedMemberIds
+    return revision >= 0 && selected.has(id)
+  };
+
+  /** Whether the node / member id is hidden (model tree show-hide toggle).
+   *  Reads the hidden revision so MobX observers calling this re-render when
+   *  the (plain, non-observable) hidden Set changes. */
+  isEntityHidden = (collection: 'nodes' | 'members', id: number) => {
+    const revision = this.workspaceHiddenRevision
+    return revision >= 0 && this.workspaceContext.hiddenEntityRefs.has(`${collection}:${id}`)
+  };
+
+  /** True while at least one node / member / shell is hidden. Reads the
+   *  hidden revision so MobX observers calling this re-render on show/hide
+   *  changes (the hidden Set is plain, non-observable render data). */
+  hasHiddenEntities = () => {
+    const revision = this.workspaceHiddenRevision
+    return revision >= 0 && this.workspaceContext.hiddenEntityRefs.size > 0
+  };
+
+  /** Show every hidden node / member / shell (bottom bar "Show all"): one
+   *  undoable transaction that clears the whole hidden set. */
+  showAllEntities = () => {
+    const entities = this.workspaceContext.getCommandState().hidden
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'ShowEntities', payload: { entities } },
+      ] },
+    })
   };
 
   /** Add the currently selected nodes to the selection (used by hover quick-actions). */
@@ -391,7 +757,7 @@ export class Model {
       this.selector.selected = [...this.selector.selected, {
         object: node.mesh,
         originalColor: ((node.mesh.material as THREE.MeshStandardMaterial)?.color?.getHex?.() ?? 0x0000ff),
-      } as any];
+      }];
     }
   };
 
@@ -415,7 +781,7 @@ export class Model {
       type: 'nodal',
       targets: nodeIds,
       value: new THREE.Vector3(0, 0, 0),
-    } as any);
+    });
     load.createOrUpdate();
     this.focusLoad(load.id);
   };
@@ -429,18 +795,34 @@ export class Model {
       type: 'linear',
       targets: memberIds,
       value: new THREE.Vector3(0, 0, 0),
-    } as any);
+    });
     load.createOrUpdate();
     this.focusLoad(load.id);
   };
 
+  addPressureLoadToShells = (shellIds: number[]) => {
+    if (!shellIds.length) return
+    const id = Math.floor(Math.random() * 0x7fffffff)
+    this.createOrUpdateLoads([{
+      id,
+      name: `Load ${this.loads.length + 1}`,
+      type: 'pressure',
+      targets: shellIds,
+      value: new THREE.Vector3(0, -1, 0),
+      magnitude: 0,
+    }])
+    this.focusLoad(id)
+  };
+
   /** Create a node at the origin and focus it. */
   addNewNode = () => {
-    const node = new Node(new THREE.Vector3(0, 0, 0), undefined);
-    node.model = this;
-    node.create();
-    this.nodes.push(node);
-    this.focusNode(node.id);
+    const id = Math.floor(Math.random() * 0x7fffffff)
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateNodes', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { nodes: [{ id, position: [0, 0, 0] }] },
+    })
+    this.focusNode(id);
   };
   // Active bottom-bar navigation tool (select / zoom / pan / orbit)
   navTool: NavTool = 'select';
@@ -462,6 +844,9 @@ export class Model {
     if (this.isLocked && this.editingDialogs.includes(dialog)) {
       return false;
     }
+    if ((dialog === 'copy' || dialog === 'move') && this.renderMode !== 'solid-extrude') {
+      this.selector.syncLegacySelectionFromCenterline();
+    }
     this.activeDialog = dialog;
     this.updateGizmoOffset();
     return true;
@@ -469,6 +854,13 @@ export class Model {
 
   /** Lock the model after a successful analysis: results become active, editing is disabled. */
   lockResults = () => {
+    if (!this.output) return
+    const snapshot = this.createAnalysisSnapshot()
+    if (this.analysisRevision !== snapshot.revision || this.analysisSnapshotHash !== snapshot.hash) throw new Error('Cannot archive stale analysis output')
+    const run = this.analysisRuns.add({ revision: snapshot.revision, hash: snapshot.hash, input: snapshot.model, output: toJS(this.output) })
+    this.currentAnalysisRunId = run.id
+    void archiveAnalysis(run).catch(error => runInAction(() => { this.analysisArchiveError = `Results remain available in this session, but archive failed: ${String(error)}` }))
+    this.resultStore.ingestAnalysisOutput(this.output, this.structuralSceneDB)
     this.isLocked = true;
     // Remember the model-mode visibility BEFORE any result view hides the
     // member centre lines / solid sections / loads, so unlock can restore it.
@@ -505,6 +897,7 @@ export class Model {
   setNavTool = (tool: NavTool) => {
     if (this.navTool === tool) return;
     this.navTool = tool;
+    this.workspaceContext.activeTool = tool
     this.applyNavTool();
   }
 
@@ -588,12 +981,39 @@ export class Model {
 
       window.addEventListener("resize", this.onResize);
       window.addEventListener('pointermove', this.updatePointerCoords);
+      window.addEventListener('keydown', this.onGlobalKeyDown);
     } else {
       window.removeEventListener("resize", this.onResize);
+      window.removeEventListener('pointermove', this.updatePointerCoords);
+      window.removeEventListener('keydown', this.onGlobalKeyDown);
     }
   }
 
+  /** Global keyboard shortcuts: Escape re-arms select mode, Ctrl+Z / Ctrl+Y
+   *  (and Shift variants) drive the command history. Form fields are skipped. */
+  private onGlobalKeyDown = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null
+    if (target?.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+    // Escape ends the active navigation tool (zoom / pan / orbit / ...) and
+    // re-arms select mode - the keyboard twin of the bottom bar Select button.
+    if (event.key === 'Escape') {
+      if (this.navTool !== 'select') {
+        event.preventDefault()
+        this.setNavTool('select')
+      }
+      return
+    }
+    if (!(event.ctrlKey || event.metaKey)) return
+    const key = event.key.toLowerCase()
+    const undo = key === 'z' && !event.shiftKey
+    const redo = key === 'y' || (key === 'z' && event.shiftKey)
+    if (!undo && !redo) return
+    const result = undo ? this.undoCommand() : this.redoCommand()
+    if (result) event.preventDefault()
+  }
+
   private constructor() {
+    this.workspaceContext.activeTool = this.navTool
     this.camera = new Camera(this)
     this.gridHelper = new GridHelper(this.scene)
     this.light = new Light(this.scene)
@@ -602,6 +1022,7 @@ export class Model {
     
     this.snapper = new Snapper(this)
     this.workingPlane = new WorkingPlane(this)
+    this.performanceBenchmark = new ViewerBenchmark(this)
  
     this.update()
     this.init()
@@ -649,14 +1070,53 @@ export class Model {
     this.rootGizmoCanvas();
     this.nodes = []
     this.members = []
+    this.memberIndexHighWater = 0
     this.shells = []
     this.layer = 0
+    this.legacyStructuralRoot.name = 'LegacyStructuralRoot'
+    this.legacyStructuralRoot.layers.set(this.layer)
+    this.scene.add(this.legacyStructuralRoot)
+    this.centerlineRenderer = new CenterlineRenderer(this.scene, this.layer)
+    this.centerlineRenderer.setQualityProfile(this.qualityProfile)
+    this.thinShellRenderer = new ThinShellRenderer(this.scene, this.layer)
+    this.thinShellRenderer.setQualityProfile(this.qualityProfile)
+    // Keep the renderers in sync with the shrink toggle state (no-op while off).
+    const shrinkPerEnd = this.shrinkEnabled ? SHRINK_RATIO_PER_END : 0
+    this.centerlineRenderer.setShrink(shrinkPerEnd)
+    this.thinShellRenderer.setShrink(shrinkPerEnd)
+    this.diagramRenderer = new DiagramRenderer(this.scene, this.layer)
+    this.gpuAnnotations = new GpuAnnotations(this.scene, this.layer)
+    this.loadGpuRenderer = new LoadGpuRenderer(this.scene, this.layer)
+    this.camera.controls.addEventListener('end', () => this.gpuAnnotations.markDirty())
+    this.structuralPicker = new StructuralGpuPicker(this.renderer)
+    // Seed the canonical authority with startup materials/sections before the
+    // first UI command is allowed to reference them.
+    this.reconcileStructuralDocument()
     // buildModelOnjson(this, '/examples/ipe330-cantilever-beam.json')
     // buildModelOnjson(this, '/examples/concrete-frame-nodal-load.json')
     makeAutoObservable(this, {
       fpsFrameCount: false,
       fpsAccumMs: false,
       fpsLastFrameTime: false,
+      memberIndexHighWater: false,
+      performanceBenchmark: false,
+      structuralDocument: false,
+      commandGateway: false,
+      structuralSceneDB: false,
+      structuralDocumentBridge: false,
+      workspaceContext: false,
+      pluginEvents: false,
+      resultStore: false,
+      analysisRuns: false,
+      structuralSceneDBBuildMs: false,
+      structuralSceneSyncScheduled: false,
+      centerlineRenderer: false,
+      thinShellRenderer: false,
+      diagramRenderer: false,
+      gpuAnnotations: false,
+      loadGpuRenderer: false,
+      structuralPicker: false,
+      legacyStructuralRoot: false,
     })
 
     // Rasterise the pan / orbit toolbar icons into custom PNG cursors up front,
@@ -678,6 +1138,8 @@ export class Model {
       this.renderer.setSize( width, height );
       this.container?.appendChild( this.renderer.domElement )
       this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+      this.renderer.domElement.addEventListener('webglcontextlost', this.onContextLost)
+      this.renderer.domElement.addEventListener('webglcontextrestored', this.onContextRestored)
       this.camera.handleResize();
       // The visible area also changes WITHOUT a window resize (left bar
       // collapse, right dock open/close) — watch the container itself.
@@ -686,7 +1148,7 @@ export class Model {
         this.containerResizeObserver.observe(this.container);
       }
       // AutoCAD-style dark blue-black viewport background
-      this.scene.background = new THREE.Color('#212830');
+      this.scene.background = new THREE.Color(this.viewerBackground);
       await this.ws.connect();
       if (this.ws.isConnected())  console.log('Connected!');
       
@@ -708,6 +1170,830 @@ export class Model {
     return (pixels * 2 * distance * Math.tan((perspective.fov * Math.PI) / 360)) / height
   }
 
+  /** Replace the current model with an explicit user-requested deterministic fixture. */
+  async loadBenchmarkFixture(beamCount: 1_000 | 10_000 | 100_000, seed = 0x4255434b) {
+    if (this.performanceBenchmark.running) throw new Error('Wait for the active benchmark to finish')
+    this.performanceBenchmark.fixtureLoading = true
+    this.performanceBenchmark.setFixture(null)
+    this.performanceBenchmark.setFixtureProgress(0, 'Generating fixture')
+    try {
+      // Yield between the long synchronous steps so the HUD can actually paint
+      // the progress bar — no rendering happens while main-thread work runs.
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const startedAt = performance.now()
+      const fixture = generateStructuralBenchmarkFixture({ beamCount, seed })
+      this.performanceBenchmark.setFixtureProgress(10, 'Committing document')
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      buildModelFromJson(this, fixture)
+      // The SceneDB upload is scheduled from the commit; give it two frames.
+      this.performanceBenchmark.setFixtureProgress(85, 'Uploading scene buffers')
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      this.performanceBenchmark.setFixtureProgress(100)
+      const loadMs = performance.now() - startedAt
+      this.performanceBenchmark.setFixture({
+        kind: fixture.metadata.fixture,
+        version: fixture.metadata.version,
+        seed: fixture.metadata.seed,
+        requestedBeamCount: fixture.metadata.requestedBeamCount,
+        loadMs: Number(loadMs.toFixed(2)),
+      })
+      return this.performanceBenchmark.fixture
+    } finally {
+      this.performanceBenchmark.fixtureLoading = false
+    }
+  }
+
+  /** Reconcile legacy editor objects into the canonical document, then upload dirty render buffers. */
+  syncStructuralSceneDB() {
+    const startedAt = performance.now()
+    const previousFlags = new Map<number, number>()
+    const previousNodeFlags = new Map<number, number>()
+    for (let index = 0; index < this.structuralSceneDB.nodeCount; index++) {
+      previousNodeFlags.set(this.structuralSceneDB.nodeIds[index], this.structuralSceneDB.nodeFlags[index])
+    }
+    for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
+      previousFlags.set(this.structuralSceneDB.memberIds[index], this.structuralSceneDB.memberFlags[index])
+    }
+    this.structuralDocument.reconcile(this.legacyDocumentSeedPreservingOrganizationalState())
+    this.selector.selectedCenterlineIds = this.selector.selectedCenterlineIds.filter(id =>
+      this.structuralSceneDB.memberIndexById.has(id),
+    )
+    this.selector.selectedNodeIds = this.selector.selectedNodeIds.filter(id =>
+      this.structuralSceneDB.nodeIndexById.has(id),
+    )
+    const selectedIds = new Set(this.selector.selectedCenterlineIds)
+    for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
+      const id = this.structuralSceneDB.memberIds[index]
+      const flags = previousFlags.get(id)
+      if (flags !== undefined) this.structuralSceneDB.memberFlags[index] = flags
+      if (selectedIds.has(id)) this.structuralSceneDB.memberFlags[index] |= ENTITY_SELECTED
+    }
+    const selectedNodeIds = new Set(this.selector.selectedNodeIds)
+    for (let index = 0; index < this.structuralSceneDB.nodeCount; index++) {
+      const id = this.structuralSceneDB.nodeIds[index]
+      const flags = previousNodeFlags.get(id)
+      if (flags !== undefined) this.structuralSceneDB.nodeFlags[index] = flags
+      if (selectedNodeIds.has(id)) this.structuralSceneDB.nodeFlags[index] |= ENTITY_SELECTED
+    }
+    this.structuralSceneDBBuildMs = performance.now() - startedAt
+    this.gpuAnnotations.setEntityLabels(
+      new Map(this.members.map(member => [member.id, member.label || `M${member.id}`])),
+      new Map(this.nodes.map(node => [node.id, node.name || `N${node.id}`])),
+    )
+    this.centerlineRenderer.upload(this.structuralSceneDB)
+    this.thinShellRenderer.upload(this.structuralSceneDB)
+    this.diagramRenderer.upload(this.structuralSceneDB)
+    this.structuralPicker.upload(this.structuralSceneDB)
+    this.structuralPicker.warmup(this.camera.cam)
+    // Member release pins are derived from the canonical document; rebuilding
+    // here keeps them reactive to every committed model edit (release change,
+    // node drag, member split…) while adding zero extra draw calls.
+    this.syncGpuAnnotations()
+    return this.structuralSceneDB
+  }
+
+  reconcileStructuralDocument() {
+    this.structuralDocument.reconcile(this.legacyDocumentSeedPreservingOrganizationalState())
+    return this.structuralDocument
+  }
+
+  /** The legacy adapter only knows the editor entity arrays; reconciling with it
+   *  alone would silently drop the canonical organizational collections
+   *  (groups, parametric objects, selection sets, grids, levels). Merge them in
+   *  from the current document so they survive Analyse / scene resyncs. */
+  private legacyDocumentSeedPreservingOrganizationalState = (): StructuralDocumentSeed => ({
+    ...legacyModelToDocumentSeed(this),
+    groups: [...this.structuralDocument.groups.values()],
+    parametricObjects: [...this.structuralDocument.parametricObjects.values()],
+    selectionSets: [...this.structuralDocument.selectionSets.values()],
+    ...(this.structuralDocument.grids.size ? { grids: [...this.structuralDocument.grids.values()] } : {}),
+    ...(this.structuralDocument.levels.size ? { levels: [...this.structuralDocument.levels.values()] } : {}),
+  })
+
+  /** Root/child folders and sets, sorted by id (deterministic tree order). The
+   *  revision read keeps the Selection Sets tab reactive to commits/undo. */
+  selectionSetChildren = (parentId: number | null): SelectionSetRecord[] => {
+    void this.selectionSetRevision
+    return [...this.structuralDocument.selectionSets.values()]
+      .filter(item => item.parentId === parentId)
+      .sort((a, b) => a.id - b.id)
+  }
+
+  createSelectionSet = (name: string, kind: SelectionSetKind, parentId: number | null, entityRefs: readonly EntityReference[] = []) => {
+    const ids = [...this.structuralDocument.selectionSets.keys()]
+    const id = ids.length ? Math.max(...ids) + 1 : 1
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateSelectionSets', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: {
+        selectionSets: [{
+          id,
+          name: name.trim() || (kind === 'folder' ? `Folder ${id}` : `Selection Set ${id}`),
+          kind,
+          parentId,
+          entityRefs,
+        }],
+      },
+    })
+    return id
+  }
+
+  updateSelectionSet = (id: number, patch: Partial<Omit<SelectionSetRecord, 'id'>>) => {
+    const current = this.structuralDocument.selectionSets.get(id)
+    if (!current) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'CreateOrUpdateSelectionSets', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { selectionSets: [{ ...current, ...patch }] },
+    })
+  }
+
+  deleteSelectionSet = (id: number) => {
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'DeleteSelectionSets', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { ids: [id] },
+    })
+  }
+
+  /** Merge the current viewport members/shells into a set (idempotent union). */
+  assignSelectionToSelectionSet = (setId: number, refs: readonly EntityReference[]) => {
+    const current = this.structuralDocument.selectionSets.get(setId)
+    if (!current || current.kind !== 'set') return
+    const merged = new Map<string, EntityReference>()
+    for (const ref of [...current.entityRefs, ...refs]) {
+      if (ref.collection !== 'members' && ref.collection !== 'shells') continue
+      merged.set(`${ref.collection}:${ref.id}`, ref)
+    }
+    this.updateSelectionSet(setId, { entityRefs: [...merged.values()] })
+  }
+
+  /** Select the entities stored in a set in the viewport (resolving straight
+   *  from the canonical document, so stale refs are dropped silently). */
+  selectFromSelectionSet = (setId: number) => {
+    const current = this.structuralDocument.selectionSets.get(setId)
+    if (!current || current.kind !== 'set') return
+    const entities = current.entityRefs.filter(ref =>
+      (ref.collection === 'members' || ref.collection === 'shells') &&
+      this.structuralDocument[ref.collection].has(ref.id),
+    )
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { entities },
+    })
+  }
+
+  /** Remove one entity (member/shell) from a set without touching the rest. */
+  removeEntityFromSelectionSet = (setId: number, ref: EntityReference) => {
+    const current = this.structuralDocument.selectionSets.get(setId)
+    if (!current || current.kind !== 'set') return
+    const key = `${ref.collection}:${ref.id}`
+    const remaining = current.entityRefs.filter(item => `${item.collection}:${item.id}` !== key)
+    if (remaining.length !== current.entityRefs.length) {
+      this.updateSelectionSet(setId, { entityRefs: remaining })
+    }
+  }
+
+  /** Select a single entity (member/shell) in the viewport — used by the
+   *  entity rows nested inside a selection-set node. */
+  selectEntity = (ref: EntityReference) => {
+    this.selectEntityRefs([ref])
+  }
+
+  /** Select a list of members/shells in the viewport (open + dwell). Resolves
+   *  straight from the canonical document so dead refs drop silently. */
+  selectEntityRefs = (refs: readonly EntityReference[]) => {
+    const entities = refs.filter(ref =>
+      (ref.collection === 'members' || ref.collection === 'shells') &&
+      this.structuralDocument[ref.collection].has(ref.id),
+    )
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { entities },
+    })
+  }
+
+  /** Show / hide arbitrary members / shells in one undoable transaction. */
+  setRefsHidden = (refs: readonly EntityReference[], hidden: boolean) => {
+    const entities = refs.filter(ref =>
+      (ref.collection === 'members' || ref.collection === 'shells') &&
+      this.structuralDocument[ref.collection].has(ref.id),
+    )
+    if (!entities.length) return
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [hidden
+        ? { type: 'HideEntities', payload: { entities } }
+        : { type: 'ShowEntities', payload: { entities } },
+      ] },
+    })
+  }
+
+  /** Isolate entities: reveal [refs] and hide every other member/shell. */
+  isolateRefs = (refs: readonly EntityReference[]) => {
+    const keep = new Set(refs.filter(ref =>
+      (ref.collection === 'members' || ref.collection === 'shells') &&
+      this.structuralDocument[ref.collection].has(ref.id),
+    ).map(ref => `${ref.collection}:${ref.id}`))
+    if (!keep.size) return
+    const show: EntityReference[] = []
+    for (const key of keep) {
+      const [collection, rawId] = key.split(':') as ['members' | 'shells', string]
+      show.push({ collection, id: Number(rawId) })
+    }
+    const hide: EntityReference[] = [
+      ...[...this.structuralDocument.members.values()].map(member => ({ collection: 'members' as const, id: member.id })),
+      ...[...this.structuralDocument.shells.values()].map(shell => ({ collection: 'shells' as const, id: shell.id })),
+    ].filter(ref => !keep.has(`${ref.collection}:${ref.id}`))
+    const hideOperations: CommandTransactionOperation[] = hide.length
+      ? [{ type: 'HideEntities', payload: { entities: hide } }]
+      : []
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'ShowEntities', payload: { entities: show } },
+        ...hideOperations,
+      ] },
+    })
+  }
+
+  /** Frame the camera to a set of nodes/members/shells (union of world bounds). */
+  zoomToRefs = (refs: readonly EntityReference[]) => {
+    const box = new THREE.Box3()
+    for (const ref of refs) {
+      if (ref.collection === 'nodes') {
+        const node = this.nodes.find(n => n.id === ref.id)
+        if (!node) continue
+        box.expandByPoint(new THREE.Vector3(node.x, node.y, node.z))
+      } else if (ref.collection === 'members') {
+        const member = this.members.find(m => m.id === ref.id)
+        if (!member) continue
+        for (const endpoint of member.nodes) box.expandByPoint(new THREE.Vector3(endpoint.x, endpoint.y, endpoint.z))
+      } else if (ref.collection === 'shells') {
+        const shell = this.shells.find(s => s.id === ref.id)
+        if (!shell) continue
+        for (const node of shell.nodes) box.expandByPoint(new THREE.Vector3(node.x, node.y, node.z))
+      }
+    }
+    if (!box.isEmpty()) this.camera.fitBoxToView(box)
+  }
+
+  /** Zoom the camera to the current viewport selection (nodes/members/shells). */
+  zoomToSelected = () => {
+    const refs: EntityReference[] = [
+      ...[...this.selectedNodeIds].map(id => ({ collection: 'nodes' as const, id })),
+      ...[...this.selectedMemberIds].map(id => ({ collection: 'members' as const, id })),
+      ...[...this.selectedShellIds].map(id => ({ collection: 'shells' as const, id })),
+    ]
+    if (!refs.length) return
+    this.zoomToRefs(refs)
+  }
+
+  /** Whether the entity ref (members/shells) is currently hidden in the
+   *  workspace. Reads the hidden revision so observers re-render on change. */
+  isRefHidden = (ref: EntityReference) => {
+    const revision = this.workspaceHiddenRevision
+    return revision >= 0 && this.workspaceContext.hiddenEntityRefs.has(`${ref.collection}:${ref.id}`)
+  }
+
+  /** Collect the entity refs of every member / shell set that lives under the
+   *  folder `folderId` (children + grandchildren + …). A set that is itself a
+   *  child is included; the folder node (kind='folder') contributes nothing. */
+  selectionSetSubtreeRefs = (folderId: number): EntityReference[] => {
+    const refs: EntityReference[] = []
+    const visit = (id: number | null) => {
+      for (const node of this.selectionSetChildren(id)) {
+        if (node.kind === 'folder') visit(node.id)
+        else refs.push(...node.entityRefs)
+      }
+    }
+    visit(folderId)
+    return refs
+  }
+
+  /** Select all entities under a folder (recursively) in the viewport —
+   *  folder click behaviour. */
+  selectSelectionSetSubtree = (folderId: number) => {
+    this.selectEntityRefs(this.selectionSetSubtreeRefs(folderId))
+  }
+
+  /** Execute one validated canonical command and refresh renderer projections. */
+  executeCommand(command: CommandEnvelope, options: {
+    allowDestructive?: boolean
+    pluginPermissions?: readonly PluginPermission[]
+    /** Trusted-source payload budget override (e.g. ImportModel of a large
+     *  project file or benchmark fixture). Never forwarded to plugin sessions. */
+    maxPayloadBytes?: number
+  } = {}): CommandResult {
+    return this.commandGateway.execute(command, this.commandContext(
+      options.allowDestructive === true,
+      options.pluginPermissions,
+      options.maxPayloadBytes,
+    ))
+  }
+
+  async restoreAnalysisArchive() {
+    try { for (const run of await loadAnalysisArchive()) this.analysisRuns.restore(run) }
+    catch (error) { runInAction(() => { this.analysisArchiveError = `Cannot load analysis archive: ${String(error)}` }) }
+  }
+
+  async runAnalysis(signal?: AbortSignal) {
+    if (this.analysisRunning) throw new Error('Analysis is already running')
+    this.analysisRunning = true
+    try {
+      signal?.throwIfAborted()
+      const snapshot = this.createAnalysisSnapshot()
+      if (!snapshot.model.nodes.length) throw new Error('Analysis requires nodes')
+      const root = (import.meta.env.VITE_BACKEND_SERVER || 'http://localhost:8000').replace(/\/$/, '')
+      const response = await fetch(`${root}/analysis`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot.model), signal })
+      const body = await response.json()
+      if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail ?? body))
+      signal?.throwIfAborted()
+      this.reconcileStructuralDocument()
+      if (this.structuralDocument.revision !== snapshot.revision || this.createAnalysisSnapshot().hash !== snapshot.hash) throw new Error('Model changed during analysis; result was not applied')
+      runInAction(() => {
+        this.output = body.output
+        this.analysisRevision = snapshot.revision
+        this.analysisSnapshotHash = snapshot.hash
+        this.reactionViz.apply()
+        this.lockResults()
+      })
+      return this.analysisRuns.summary(undefined, this.structuralDocument.revision)
+    } finally { runInAction(() => { this.analysisRunning = false }) }
+  }
+
+  queryAnalysis(tool: string, args: Record<string, unknown>) {
+    args = { ...args, analysisRunId: args.analysisRunId ?? this.currentAnalysisRunId ?? this.analysisRuns.latestId }
+    const revision = this.structuralDocument.revision
+    const hash = this.createAnalysisSnapshot().hash
+    switch (tool) {
+      case 'unlock_analysis_results': this.unlockResults(); return { unlocked: true, archivedRunId: this.analysisRuns.latestId }
+      case 'show_result_view': {
+        const summary = this.analysisRuns.summary(args.analysisRunId as string | undefined, revision, hash)
+        if (summary.stale || !this.output || summary.snapshotHash !== this.analysisSnapshotHash) throw new Error('Cannot display historical results on a different model; run analysis first')
+        const ids = (args.memberIds ?? []) as number[]
+        for (const id of ids) if (!this.structuralDocument.members.has(id)) throw new Error(`Unknown member ${id}`)
+        if (ids.length) this.selectEntityRefs(ids.map(id => ({ collection: 'members', id })))
+        this.postProcessing.dispose(); this.reactionViz.dispose()
+        if (args.component === 'reactions') this.reactionViz.apply()
+        else if (args.component === 'deformation') this.postProcessing.showDeflectedShape(ids)
+        else this.postProcessing.showDiagram(String(args.component), ids)
+        return { analysisRunId: summary.analysisRunId, component: args.component, memberIds: ids }
+      }
+      case 'check_result_equilibrium': return this.analysisRuns.equilibrium(args, revision, hash)
+      case 'list_analysis_runs': return { runs: this.analysisRuns.list(), archiveWarning: this.analysisArchiveError || undefined }
+      case 'get_analysis_summary': return this.analysisRuns.summary(args.analysisRunId as string | undefined, revision, hash)
+      case 'query_analysis_results': return this.analysisRuns.query(args, revision, hash)
+      case 'check_result_threshold': return this.analysisRuns.checkThreshold(args, revision, hash)
+      case 'compare_analysis_runs': return this.analysisRuns.compare(String(args.baselineId), String(args.candidateId))
+      case 'create_analysis_report': return this.analysisRuns.report(args.analysisRunId as string | undefined, revision, hash)
+      default: throw new Error(`Unknown analysis tool ${tool}`)
+    }
+  }
+
+  /** Create a provider-neutral AI tool session wired to the live viewport projection. */
+  createAiToolExecutor(
+    parametricGenerators: Readonly<Record<string, ParametricGeneratorBinding>> = {},
+    agentBudget: AgentBudget = {},
+    source: 'ai' | 'mcp' = 'ai',
+  ) {
+    return new AiToolExecutor(this.structuralDocument, this.commandGateway, {
+      getWorkspaceState: () => this.workspaceContext.getCommandState(),
+      applyWorkspaceState: state => this.workspaceContext.applyCommandState(state),
+      executeCommand: command => this.executeCommand({ ...command, source }),
+      undoCommand: () => this.undoCommand(),
+      queryAnalysis: (tool, args) => this.queryAnalysis(tool, args),
+      runAnalysis: signal => this.runAnalysis(signal),
+      parametricGenerators,
+    }, agentBudget)
+  }
+
+  undoCommand(): CommandResult | null {
+    return this.commandGateway.undo(this.commandContext(false))
+  }
+
+  redoCommand(): CommandResult | null {
+    return this.commandGateway.redo(this.commandContext(false))
+  }
+
+  /** Model-backed services for plugin command sessions (Goal 2 broker bridge).
+   *  Pure reads plus the already policy-gated executeCommand path. */
+  pluginCommandServices(): PluginCommandServices {
+    return {
+      getRevision: () => this.structuralDocument.revision,
+      querySnapshot: () => this.structuralDocument.getSnapshot(),
+      getWorkspaceState: () => this.workspaceContext.getCommandState(),
+      execute: (command, options) => this.executeCommand(command, options),
+      // Host-owned viewport interaction backs (Goal 3): the Model owns the
+      // canvas, Snapper and GPU picker; plugins only get broker surfaces.
+      interactions: (this.viewportInteractions ??= new ModelViewportInteractions(this)).pluginViewportInteractions(),
+    };
+  }
+
+  /** Host event bus backing plugin session subscriptions (Goal 2). */
+  pluginEventBus(): PluginEventBus {
+    return this.pluginEvents;
+  }
+
+  private commandContext(allowDestructive: boolean, pluginPermissions?: readonly PluginPermission[], maxPayloadBytes?: number): CommandGatewayContext {
+    return {
+      getWorkspaceState: () => this.workspaceContext.getCommandState(),
+      applyWorkspaceState: state => {
+        const beforeSelection = this.workspaceContext.getCommandState().selection
+          .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+        const afterSelection = state.selection
+          .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+        const beforeHidden = this.workspaceContext.getCommandState().hidden
+          .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+        const afterHidden = state.hidden
+          .map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+        this.workspaceContext.applyCommandState(state)
+        if (!this.selector) return
+        this.selector.selectedNodeIds = [...this.workspaceContext.selectedNodeIds]
+        this.selector.selectedCenterlineIds = [...this.workspaceContext.selectedMemberIds]
+        if (beforeSelection !== afterSelection) {
+          this.workspaceSelectionRevision++
+          this.syncSelectionLinkedPanel()
+          this.pluginEvents.publish({ kind: 'workspace', revision: this.structuralDocument.revision })
+        }
+        if (beforeHidden !== afterHidden) {
+          this.workspaceHiddenRevision++
+          this.pluginEvents.publish({ kind: 'workspace', revision: this.structuralDocument.revision })
+        }
+      },
+      allowDestructive: () => allowDestructive,
+      policy: {
+        modelLocked: this.isLocked,
+        pluginPermissions,
+        allowPluginDestructive: allowDestructive,
+        ...(maxPayloadBytes !== undefined ? { maxPayloadBytes } : {}),
+      },
+      onCommitted: result => {
+        if (result.changed) {
+          this.pluginEvents.publish({
+            kind: 'document',
+            revision: result.revision,
+            snapshotHash: result.snapshotHash,
+          })
+        }
+        if (!result.changed) return
+        if (result.changes) {
+          this.invalidateResults()
+          applyStructuralChangeToLegacy(this, this.structuralDocument, result.changes)
+          this.refreshCommandRenderProjection()
+          const selectionSetsChanges = result.changes.changes.selectionSets
+          if (selectionSetsChanges.created.length || selectionSetsChanges.updated.length || selectionSetsChanges.deleted.length) {
+            this.selectionSetRevision++
+          }
+        } else {
+          this.refreshWorkspaceRenderProjection()
+        }
+      },
+    }
+  }
+
+  /** Upload the bridge-maintained DB without reconciling back from legacy arrays. */
+  private refreshCommandRenderProjection() {
+    if (!this.centerlineRenderer || !this.thinShellRenderer || !this.diagramRenderer || !this.structuralPicker) return
+    const selectedNodes = this.workspaceContext.selectedNodeIds
+    const selectedMembers = this.workspaceContext.selectedMemberIds
+    const hidden = this.workspaceContext.hiddenEntityRefs
+    for (let index = 0; index < this.structuralSceneDB.nodeCount; index++) {
+      const id = this.structuralSceneDB.nodeIds[index]
+      this.structuralSceneDB.setNodeFlag(id, ENTITY_SELECTED, selectedNodes.has(id))
+      this.structuralSceneDB.setNodeFlag(id, ENTITY_VISIBLE, !hidden.has(`nodes:${id}`))
+    }
+    for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
+      const id = this.structuralSceneDB.memberIds[index]
+      this.structuralSceneDB.setMemberFlag(id, ENTITY_SELECTED, selectedMembers.has(id))
+      this.structuralSceneDB.setMemberFlag(id, ENTITY_VISIBLE, !hidden.has(`members:${id}`))
+    }
+    this.centerlineRenderer.upload(this.structuralSceneDB)
+    this.thinShellRenderer.upload(this.structuralSceneDB)
+    this.diagramRenderer.upload(this.structuralSceneDB)
+    this.structuralPicker.upload(this.structuralSceneDB)
+    this.applyRenderModeVisibility()
+    // Release pins rest on the same single instanced GPU symbol batch; refresh
+    // them whenever a document command was committed (release edits, member
+    // moves, splits...) so they stay in sync at zero extra draw calls.
+    this.syncGpuAnnotations()
+  }
+
+  /** Selection/visibility commands do not alter topology or geometry. Update
+   * their compact flag streams without rebuilding any renderer batches. */
+  private refreshWorkspaceRenderProjection() {
+    if (!this.centerlineRenderer || !this.thinShellRenderer || !this.diagramRenderer || !this.structuralPicker) return
+    const selectedNodes = this.workspaceContext.selectedNodeIds
+    const selectedMembers = this.workspaceContext.selectedMemberIds
+    const hidden = this.workspaceContext.hiddenEntityRefs
+    for (let index = 0; index < this.structuralSceneDB.nodeCount; index++) {
+      const id = this.structuralSceneDB.nodeIds[index]
+      this.structuralSceneDB.setNodeFlag(id, ENTITY_SELECTED, selectedNodes.has(id))
+      this.structuralSceneDB.setNodeFlag(id, ENTITY_VISIBLE, !hidden.has(`nodes:${id}`))
+    }
+    for (let index = 0; index < this.structuralSceneDB.memberCount; index++) {
+      const id = this.structuralSceneDB.memberIds[index]
+      this.structuralSceneDB.setMemberFlag(id, ENTITY_SELECTED, selectedMembers.has(id))
+      this.structuralSceneDB.setMemberFlag(id, ENTITY_VISIBLE, !hidden.has(`members:${id}`))
+    }
+    this.centerlineRenderer.syncAllEntityStates()
+    this.thinShellRenderer.syncAllMemberStates()
+    this.diagramRenderer.syncAllMemberStates()
+    this.structuralPicker.syncAllEntityStates()
+    this.gpuAnnotations.markDirty()
+    this.applyRenderModeVisibility()
+  }
+
+  createAnalysisSnapshot(): AnalysisSnapshot {
+    this.reconcileStructuralDocument()
+    return this.structuralDocument.createAnalysisSnapshot()
+  }
+
+  /** Coalesce property edits/deletes made in one UI action into one render-DB rebuild. */
+  scheduleStructuralSceneSync() {
+    if (this.structuralSceneSyncScheduled || !this.centerlineRenderer || !this.thinShellRenderer || !this.diagramRenderer || !this.structuralPicker) return
+    this.structuralSceneSyncScheduled = true
+    queueMicrotask(() => {
+      this.structuralSceneSyncScheduled = false
+      this.syncStructuralSceneDB()
+      this.applyRenderModeVisibility()
+    })
+  }
+
+  /**
+   * Midas-style Shrink display: shorten every member at both of its ends so
+   * adjacent elements read as separate bodies around shared joints.
+   * Display-only — node coordinates, GPU picking and analysis are untouched.
+   */
+  setShrinkEnabled(value: boolean) {
+    this.shrinkEnabled = value
+    const perEnd = value ? SHRINK_RATIO_PER_END : 0
+    this.centerlineRenderer?.setShrink(perEnd)
+    this.thinShellRenderer?.setShrink(perEnd)
+    for (const member of this.members) member.applyShrink()
+  }
+
+  /** Change the viewer/editor canvas background colour (Settings → View). */
+  setViewerBackground(hex: string) {
+    this.viewerBackground = hex
+    this.scene.background = new THREE.Color(hex)
+  }
+
+  /** Coalesce load add/edit/delete into one instanced-batch rebuild (3 draw calls). */
+  scheduleLoadGpuSync() {
+    if (!this.loadGpuRenderer) return
+    queueMicrotask(() => {
+      if (!this.loadGpuRenderer) return
+      this.loadGpuRenderer.upload(buildLoadInstances(this))
+      this.loadGpuRenderer.setVisible(this.visibility?.loads ?? true)
+    })
+  }
+
+
+  async setRenderMode(mode: RenderMode) {
+    if (!isRenderMode(mode)) throw new Error(`Unsupported render mode: ${mode}`)
+    const wasDataDriven = this.renderMode !== 'solid-extrude'
+    const willBeDataDriven = mode !== 'solid-extrude'
+    if (willBeDataDriven && !wasDataDriven) {
+      this.selector?.syncCenterlineSelectionFromLegacy()
+    }
+    this.renderMode = mode
+    localStorage.setItem('buckle.renderMode', mode)
+    const token = ++this.solidPreparationToken
+    if (!willBeDataDriven && wasDataDriven) {
+      this.solidPreparation = {
+        active: true,
+        progress: 0,
+        // Conservative preview; exact renderer.info is available after upload.
+        estimatedTriangles: estimateSolidTriangles(this.members.length, this.nodes.length),
+      }
+      const entities = [...this.nodes, ...this.members]
+      for (let offset = 0; offset < entities.length; offset += 200) {
+        if (token !== this.solidPreparationToken || this.renderMode !== 'solid-extrude') return
+        for (const entity of entities.slice(offset, offset + 200)) entity.materializeSolid()
+        this.solidPreparation = { ...this.solidPreparation, progress: Math.round(100 * Math.min(entities.length, offset + 200) / Math.max(1, entities.length)) }
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      }
+      this.solidPreparation = { ...this.solidPreparation, active: false, progress: 100 }
+      this.selector?.syncLegacySelectionFromCenterline()
+    } else if (willBeDataDriven && shouldEvictSolidResources(this.members.length)) {
+      // Large solids are evicted immediately; small inspection models retain
+      // their shared cache for instant toggling.
+      this.legacyStructuralRoot.removeFromParent()
+      this.solidPreparation = { active: true, progress: 0, estimatedTriangles: 0 }
+      const entities = [...this.members, ...this.nodes]
+      for (let offset = 0; offset < entities.length; offset += 500) {
+        if (token !== this.solidPreparationToken) return
+        for (const entity of entities.slice(offset, offset + 500)) entity.releaseSolid()
+        this.solidPreparation = { ...this.solidPreparation, progress: Math.round(100 * Math.min(entities.length, offset + 500) / Math.max(1, entities.length)) }
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      }
+      this.members[0]?.evictUnusedSolidCache()
+      this.solidPreparation = { active: false, progress: 100, estimatedTriangles: 0 }
+    }
+    this.applyRenderModeVisibility()
+  }
+
+  setQualityProfile(profile: QualityProfile) {
+    if (!isQualityProfile(profile)) throw new Error(`Unsupported quality profile: ${profile}`)
+    this.qualityProfile = profile
+    localStorage.setItem('buckle.qualityProfile', profile)
+    this.centerlineRenderer.setQualityProfile(profile)
+    this.thinShellRenderer.setQualityProfile(profile)
+  }
+
+  setSelectionMode(mode: SelectionMode) {
+    if (!isSelectionMode(mode) || mode === this.selectionMode) return
+    this.selector.clear()
+    this.closeContextMenu()
+    this.selectionMode = mode
+    localStorage.setItem('buckle.selectionMode', mode)
+  }
+
+  setStructuralMemberState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
+    this.centerlineRenderer.setMemberState(entityId, state)
+    this.thinShellRenderer.syncMemberState(entityId)
+    this.diagramRenderer.syncMemberState(entityId)
+    this.structuralPicker.syncMemberState(entityId)
+    this.gpuAnnotations.markDirty()
+  }
+
+  setStructuralNodeState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
+    this.centerlineRenderer.setNodeState(entityId, state)
+    this.structuralPicker.syncNodeState(entityId)
+    this.gpuAnnotations.markDirty()
+  }
+
+  /** Rebuild the compact support-symbol stream. Other structural symbol kinds
+   * use this same renderer as their data paths are migrated. */
+  syncGpuAnnotations() {
+    // Support glyphs honour the Settings → Boundary → Supports toggle;
+    // reactions and local-axis triads below are analysis feedback rather than
+    // model content, so they stay visible regardless of this flag.
+    const symbols: import('./Rendering/GpuAnnotations').SymbolCandidate[] = []
+    if (this.visibility?.supports ?? true) {
+      symbols.push(...this.boundaryConditions.flatMap((condition) =>
+        condition.targets.flatMap((target) => {
+          const node = this.nodes.find(item => item.id === target)
+          const dofs = [condition.dx, condition.dy, condition.dz, condition.rx, condition.ry, condition.rz]
+          const state = dofs.reduce<number>((mask, value, index) => mask | (value ? 1 << index : 0), 0)
+          return node ? [{ anchor: [node.x, node.y, node.z] as const, kind: 0, state, color: [0.08, 0.82, 0.28] as const }] : []
+        }),
+      ))
+    }
+    const labels: import('./Rendering/GpuAnnotations').WorldLabelCandidate[] = []
+    if ((this.visibility?.loads ?? true) && (this.visibility?.loadValues ?? true)) for (const load of this.loads) {
+      for (const target of load.targets) {
+        const node = this.nodes.find(item => item.id === target)
+        const memberIndex = this.structuralSceneDB.memberIndexById.get(target)
+        const shell = this.shells.find(item => item.id === target)
+        let anchor: readonly [number, number, number] | null = node ? [node.x, node.y, node.z] : null
+        if (!anchor && memberIndex !== undefined) {
+          const o = memberIndex * 6
+          anchor = [
+            (this.structuralSceneDB.memberEndpoints[o] + this.structuralSceneDB.memberEndpoints[o + 3]) * .5,
+            (this.structuralSceneDB.memberEndpoints[o + 1] + this.structuralSceneDB.memberEndpoints[o + 4]) * .5,
+            (this.structuralSceneDB.memberEndpoints[o + 2] + this.structuralSceneDB.memberEndpoints[o + 5]) * .5,
+          ]
+        }
+        if (!anchor && shell?.nodes.length) {
+          const center = shell.nodes.reduce((sum, item) => [sum[0] + item.x, sum[1] + item.y, sum[2] + item.z] as [number, number, number], [0, 0, 0])
+          anchor = [center[0] / shell.nodes.length, center[1] / shell.nodes.length, center[2] / shell.nodes.length]
+        }
+        if (!anchor) continue
+        const components = [load.value.x, load.value.y, load.value.z].filter(value => Math.abs(value) > 1e-9)
+        const text = load.magnitude !== undefined
+          ? load.magnitude.toFixed(3)
+          : components.length <= 1
+            ? (components[0] ?? 0).toFixed(3)
+            : `(${load.value.x.toFixed(3)}, ${load.value.y.toFixed(3)}, ${load.value.z.toFixed(3)})`
+        labels.push({ id: `load-${load.id}-${target}`, text, anchor, priority: 'value', forceVisible: true, color: [1, .86, .12] })
+      }
+    }
+    const active = (['Fx', 'Fy', 'Fz', 'Mx', 'My', 'Mz'] as const).filter(key => this.reactionViz?.show[key])
+    for (const reaction of this.output?.reactions ?? []) for (const component of active) {
+        const value = Number(reaction[component] ?? 0)
+        if (Math.abs(value) < 1e-9) continue
+        const anchor = [Number(reaction.x ?? 0), Number(reaction.z ?? 0), Number(reaction.y ?? 0)] as const
+        const sign = value >= 0 ? 1 : -1
+        const direction = component[1] === 'x' ? [sign, 0, 0] as const : component[1] === 'y' ? [0, 0, sign] as const : [0, sign, 0] as const
+        symbols.push({ anchor, direction, kind: component[0] === 'M' ? 3 : 2, color: component[0] === 'M' ? [1, .62, .05] : [0.2, .45, 1] })
+        labels.push({ id: `reaction-${component}-${reaction.id}`, text: `${component} ${value.toPrecision(4)}`, anchor, priority: 'value', forceVisible: true, color: [1, .45, .72] })
+    }
+    // Selected member local axes share the same symbol batch (RGB = local
+    // x/y/z); there is no Line/ArrowHelper allocation per selected member.
+    for (let i = 0; i < this.structuralSceneDB.memberCount; i++) if (this.structuralSceneDB.memberFlags[i] & ENTITY_SELECTED) {
+      const o = i * 6
+      const anchor = [
+        (this.structuralSceneDB.memberEndpoints[o] + this.structuralSceneDB.memberEndpoints[o + 3]) * .5,
+        (this.structuralSceneDB.memberEndpoints[o + 1] + this.structuralSceneDB.memberEndpoints[o + 4]) * .5,
+        (this.structuralSceneDB.memberEndpoints[o + 2] + this.structuralSceneDB.memberEndpoints[o + 5]) * .5,
+      ] as const
+      const r = i * 3
+      const start = [this.structuralSceneDB.memberEndpoints[o], this.structuralSceneDB.memberEndpoints[o + 1], this.structuralSceneDB.memberEndpoints[o + 2]] as const
+      const end = [this.structuralSceneDB.memberEndpoints[o + 3], this.structuralSceneDB.memberEndpoints[o + 4], this.structuralSceneDB.memberEndpoints[o + 5]] as const
+      const reference = [this.structuralSceneDB.memberReferenceAxes[r], this.structuralSceneDB.memberReferenceAxes[r + 1], this.structuralSceneDB.memberReferenceAxes[r + 2]] as const
+      const frame = computeMemberFrame(start, end, reference, this.structuralSceneDB.memberGammaRadians[i])
+      symbols.push(
+        { anchor, direction: frame.x, kind: 4, color: [1, .15, .15] },
+        { anchor, direction: frame.y, kind: 5, color: [.15, 1, .3] },
+        { anchor, direction: frame.z, kind: 6, color: [.2, .5, 1] },
+      )
+    }
+    // Member release pins ride the same single instanced GPU symbol batch.
+    this.collectReleaseSymbols(symbols)
+    this.gpuAnnotations.setData(symbols, labels)
+  }
+
+  /** Collect the release pin glyphs (small green circles) for every member end
+   *  flagged as released ("pinned"). Pure assembly from the canonical document —
+   *  positions are resolved through the render database so a single instanced
+   *  GPU batch paints all pins with zero extra draw calls. */
+  private collectReleaseSymbols = (symbols: GpuSymbolCandidate[]) => {
+    if (!(this.visibility?.releases ?? true)) return
+    const green: readonly [number, number, number] = [0.16, 0.92, 0.36]
+    for (const member of this.structuralDocument.members.values()) {
+      const { start, end } = releaseEnds(member.release)
+      if (!start && !end) continue
+      const index = this.structuralSceneDB.memberIndexById.get(member.id)
+      if (index === undefined) continue
+      const o = index * 6
+      const begin: readonly [number, number, number] = [
+        this.structuralSceneDB.memberEndpoints[o],
+        this.structuralSceneDB.memberEndpoints[o + 1],
+        this.structuralSceneDB.memberEndpoints[o + 2],
+      ]
+      const finish: readonly [number, number, number] = [
+        this.structuralSceneDB.memberEndpoints[o + 3],
+        this.structuralSceneDB.memberEndpoints[o + 4],
+        this.structuralSceneDB.memberEndpoints[o + 5],
+      ]
+      // Offset the pin a short distance *into* the member so the glyph clearly
+      // belongs to this member instead of overlapping the shared node.
+      const dx = finish[0] - begin[0], dy = finish[1] - begin[1], dz = finish[2] - begin[2]
+      const length = Math.hypot(dx, dy, dz) || 1
+      // ~12% of the member length, clamped to sane absolute bounds (SI metres).
+      const inset = Math.min(Math.max(length * 0.12, 0.05), 0.4)
+      const ux = dx / length, uy = dy / length, uz = dz / length
+      const along = (from: readonly [number, number, number], sign: number): readonly [number, number, number] =>
+        [from[0] + ux * inset * sign, from[1] + uy * inset * sign, from[2] + uz * inset * sign]
+      if (start) symbols.push({ anchor: along(begin, + 0.75), kind: SYMBOL_KIND_RELEASE, color: green })
+      if (end) symbols.push({ anchor: along(finish, - 0.75), kind: SYMBOL_KIND_RELEASE, color: green })
+    }
+  }
+
+  isStructuralMemberVisible(entityId: number) {
+    const index = this.structuralSceneDB.memberIndexById.get(entityId)
+    return index === undefined || Boolean(this.structuralSceneDB.memberFlags[index] & ENTITY_VISIBLE)
+  }
+
+  /** Keep legacy objects resident so switching mode is immediate and lossless. */
+  applyRenderModeVisibility() {
+    const useCenterlines = this.renderMode === 'centerline-only'
+    const useThinShell = this.renderMode === 'thin-shell'
+    const useDataDriven = useCenterlines || useThinShell
+    this.centerlineRenderer.setVisible(useDataDriven)
+    this.centerlineRenderer.setMembersVisible(useCenterlines && (this.visibility?.members ?? true))
+    this.centerlineRenderer.setNodesVisible(useDataDriven && (this.visibility?.nodes ?? true))
+    this.thinShellRenderer.setVisible(useThinShell)
+    this.thinShellRenderer.setMembersVisible(
+      (this.visibility?.members ?? true) && (this.visibility?.sections ?? true),
+    )
+
+    if (useDataDriven) {
+      this.legacyStructuralRoot.removeFromParent()
+    } else if (this.legacyStructuralRoot.parent !== this.scene) {
+      this.scene.add(this.legacyStructuralRoot)
+    }
+
+    for (const member of this.members) {
+      const entityVisible = this.isStructuralMemberVisible(member.id)
+      if (member.group) member.group.visible = !useDataDriven && entityVisible
+      if (member.mesh) member.mesh.visible = !useDataDriven && entityVisible && (this.visibility?.sections ?? true)
+      if (member.edges) member.edges.visible = !useDataDriven && entityVisible && (this.visibility?.sections ?? true)
+      if (member.line) member.line.mesh.visible = !useDataDriven && entityVisible && (this.visibility?.members ?? true)
+    }
+    for (const node of this.nodes) if (node.mesh) node.mesh.visible = !useDataDriven && (this.visibility?.nodes ?? true)
+    // 2D shell elements keep their own legacy meshes — gate them by the shared
+    // workspace hidden set so the tree / context menu Show/Hide works for shells.
+    for (const shell of this.shells) {
+      if (shell.mesh) shell.mesh.visible = !useDataDriven && !this.workspaceContext.hiddenEntityRefs.has(`shells:${shell.id}`)
+    }
+    // Loads intentionally remain true 3D geometry in every structural render
+    // mode. Only their numeric text is emitted by the GPU annotation stream.
+    // Loads render through ONE instanced batch (3 draw calls total); the whole
+    // layer flips via group.visible. Numeric labels ride the annotation stream.
+    this.loadGpuRenderer.setVisible(this.visibility?.loads ?? true)
+    this.reactionViz?.refresh()
+    this.syncGpuAnnotations()
+  }
+
   private onResize = () => 
 
   {
@@ -724,6 +2010,7 @@ export class Model {
     // The first frame only seeds the baseline so the initial sample is not
     // polluted by the time spent before the loop started.
     const now = performance.now()
+    const frameUpdateStartedAt = now
     if (this.fpsLastFrameTime) {
       this.fpsFrameCount++
       this.fpsAccumMs += now - this.fpsLastFrameTime
@@ -751,10 +2038,22 @@ export class Model {
     this.camera.updateOrbitTargetMarker(); // orbit pivot bubble follows the target
     this.camera.cam.updateProjectionMatrix();
     this.reactionViz?.onFrame();
-    this.nodes?.forEach((node: any) => node.updateScreenScale?.());
+    if (this.renderMode === 'thin-shell') this.thinShellRenderer?.syncDirty()
+    if (this.renderMode !== 'solid-extrude') this.centerlineRenderer?.syncDirty()
+    this.nodes?.forEach((node) => node.updateScreenScale?.());
+    this.gpuAnnotations?.update(
+      this.structuralSceneDB,
+      this.camera.cam,
+      this.container?.clientWidth || window.innerWidth,
+      this.container?.clientHeight || window.innerHeight,
+    )
     // Grid end bubbles keep a constant on-screen size, just like the nodes.
     this.grids?.forEach((grid) => grid.updateScreenScale());
+    const renderStartedAt = performance.now()
+    const updateMs = renderStartedAt - frameUpdateStartedAt
     this.renderer.render(this.scene, this.camera.cam);
+    const renderSubmitMs = performance.now() - renderStartedAt
+    this.performanceBenchmark?.recordFrame(now, updateMs, renderSubmitMs)
     // While the nav cube animates a face-click it owns the camera pose; a
     // concurrent OrbitControls update() would re-roll the orientation mid-flight.
     if (!this.gizmo?.animating) this.camera.controls.update()
@@ -762,17 +2061,19 @@ export class Model {
     this.camera.directionalLight.target.updateMatrixWorld()
     requestAnimationFrame(this.update);
     this.gizmo?.render()
+    const labelRenderStartedAt = performance.now()
     this.labeler?.renderer.render(this.scene, this.camera.cam)
+    this.performanceBenchmark?.recordLabelRender(performance.now() - labelRenderStartedAt)
   }
 
   public dispose = () => {
-    function removeObjWithChildren(obj : any) {
+    function removeObjWithChildren(obj: THREE.Object3D) {
       if (obj.children.length > 0) {
-        for (var x = obj.children.length - 1; x >= 0; x--) {
+        for (let x = obj.children.length - 1; x >= 0; x--) {
           removeObjWithChildren(obj.children[x])
         }
       }
-      if (obj.isMesh) {
+      if (obj instanceof THREE.Mesh) {
         obj.geometry.dispose();
         if( Array.isArray(obj.material)){
           for(let i = 0; i < obj.material.length; i++){
@@ -789,6 +2090,8 @@ export class Model {
     this.scene.traverse(function(obj) {
       removeObjWithChildren(obj)
     });
+    this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost)
+    this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored)
     this.container.removeChild(this.renderer.domElement)
     this.containerResizeObserver?.disconnect()
     this.containerResizeObserver = null
@@ -796,6 +2099,15 @@ export class Model {
     this.labeler.dispose()
     this.levelVisual?.dispose()
     this.workPlaneReferenceVisual?.dispose()
+    this.centerlineRenderer?.dispose()
+    this.thinShellRenderer?.dispose()
+    this.diagramRenderer?.dispose()
+    this.gpuAnnotations?.dispose()
+    this.loadGpuRenderer?.dispose()
+    this.resultStore?.dispose()
+    this.structuralPicker?.dispose()
+    this.structuralDocumentBridge.dispose()
+    this.legacyStructuralRoot.clear()
     this.gizmo.dispose()
     // Tear down the dedicated nav-cube canvas + its WebGL context. (The canvas
     // lived inside the gizmo's overlay, which gizmo.dispose() already removed.)
@@ -816,63 +2128,243 @@ export class Model {
   }
 
   public clear = () => {
-    // Clear all existing model data
-    console.log('Clearing existing this...')
-    
-    // Dispose of all loads
-    this.loads.forEach(load => load.dispose())
-    this.loads = []
-    
-    // Dispose of all boundary conditions
-    this.boundaryConditions.forEach(bc => bc.delete())
-    this.boundaryConditions = []
-    
-    // Dispose of all members
-    console.log('MEMBERS TO DISPOSE', this.members.length)
-    const members = [...this.members]
-    members.forEach(member => {
-      console.log('disposing', member)
-      member.remove()
-    })
-    this.members = []
-    
-    // Dispose of all shells
-    const shells = [...this.shells]
-    shells.forEach(shell => shell.remove())
-    this.shells = []
-    
-    // Dispose of grid systems
+    this.executeCommand({
+      commandId: crypto.randomUUID(), type: 'ClearModel', schemaVersion: '1.0',
+      modelRevision: this.structuralDocument.revision, source: 'ui', payload: { confirmed: true },
+    }, { allowDestructive: true })
+    this.selector?.clear()
+    // GridSystem remains a legacy editor datum until its own command lands.
     const grids = [...this.grids]
     grids.forEach(grid => grid.delete())
     this.grids = []
-    
-    // Dispose of all nodes
-    // Create a copy of the array to avoid issues when dispose() modifies the original array
-    const nodes = [...this.nodes]
-    nodes.forEach(node => node.dispose())
-    this.nodes = []
-    
-    // Clear post processing
-    this.postProcessing.dispose()
-    this.reactionViz.dispose()
-    
-    // Clear labeler
     this.labeler.deleteAll('effort')
-    
-    console.log('Model cleared successfully')
   }
 
   public invalidateResults = () => {
     this.postProcessing.dispose()
     this.reactionViz.dispose()
+    this.resultStore.clear()
+    this.clearStructuralResult()
     this.output = null
+    this.analysisRevision = null
+    this.analysisSnapshotHash = null
+    this.currentAnalysisRunId = null
+  }
+
+  private onContextLost = (event: Event) => {
+    event.preventDefault()
+    this.contextLost = true
+  }
+
+  private onContextRestored = () => {
+    this.contextLost = false
+    this.syncStructuralSceneDB()
+    this.gpuAnnotations.markDirty()
+    if (this.activeResultBinding) this.bindStructuralResult(this.resultStore.getBinding(
+      this.activeResultBinding.caseKey,
+      this.activeResultBinding.component,
+    ))
+    this.applyRenderModeVisibility()
+  }
+
+  public bindStructuralResult = (binding: ResultBinding | null, min?: number, max?: number) => {
+    this.activeResultBinding = binding
+    this.gpuAnnotations?.setSelectedValueProvider(binding ? (entityId) => {
+      const value = this.resultStore.sample(binding.caseKey, binding.component, entityId)
+      return Number.isFinite(value) ? `${binding.component}=${value.toPrecision(5)}` : null
+    } : null)
+    this.centerlineRenderer.bindResult(binding)
+    this.thinShellRenderer.bindResult(binding)
+    if (binding && min !== undefined && max !== undefined) {
+      this.centerlineRenderer.setResultRange(min, max)
+      this.thinShellRenderer.setResultRange(min, max)
+    }
+  }
+
+  public clearStructuralResult = () => {
+    this.centerlineRenderer?.bindResult(null)
+    this.thinShellRenderer?.bindResult(null)
+    this.diagramRenderer?.hide()
+    this.gpuAnnotations?.setResultLabels([])
+  }
+
+  public setDiagramExtremaLabels(
+    component: string,
+    scale: number,
+    extrema: { min: number; max: number; minMemberId: number | null; maxMemberId: number | null; minU: number; maxU: number },
+    unit = '',
+  ) {
+    const at = (entityId: number | null, u: number, value: number, prefix: 'MIN' | 'MAX') => {
+      if (entityId === null) return null
+      const index = this.structuralSceneDB.memberIndexById.get(entityId)
+      if (index === undefined) return null
+      const o = index * 6
+      const start = [this.structuralSceneDB.memberEndpoints[o], this.structuralSceneDB.memberEndpoints[o + 1], this.structuralSceneDB.memberEndpoints[o + 2]] as const
+      const end = [this.structuralSceneDB.memberEndpoints[o + 3], this.structuralSceneDB.memberEndpoints[o + 4], this.structuralSceneDB.memberEndpoints[o + 5]] as const
+      const r = index * 3
+      const reference = [this.structuralSceneDB.memberReferenceAxes[r], this.structuralSceneDB.memberReferenceAxes[r + 1], this.structuralSceneDB.memberReferenceAxes[r + 2]] as const
+      const frame = computeMemberFrame(start, end, reference, this.structuralSceneDB.memberGammaRadians[index])
+      const direction = component === 'V3' || component === 'M2' ? frame.z : frame.y
+      const anchor = [
+        start[0] + (end[0] - start[0]) * u + direction[0] * value * scale,
+        start[1] + (end[1] - start[1]) * u + direction[1] * value * scale,
+        start[2] + (end[2] - start[2]) * u + direction[2] * value * scale,
+      ] as const
+      return {
+        id: `result-${prefix}-${entityId}`,
+        text: `${prefix} ${component} ${Number(value.toPrecision(5))}${unit ? ` ${unit}` : ''}`,
+        anchor,
+        priority: 'extrema' as const,
+        color: [1, .75, .14] as const,
+      }
+    }
+    this.gpuAnnotations.setResultLabels([
+      at(extrema.minMemberId, extrema.minU, extrema.min, 'MIN'),
+      at(extrema.maxMemberId, extrema.maxU, extrema.max, 'MAX'),
+    ].filter(Boolean) as import('./Rendering/GpuAnnotations').WorldLabelCandidate[])
+  }
+
+  public runResultBenchmark = async () => {
+    const benchmark = this.performanceBenchmark
+    if (benchmark.resultRunning || this.structuralSceneDB.memberCount === 0) return
+    benchmark.resultRunning = true
+    try {
+      const stationCount = 20
+      const caseInput = (key: string, phase: number) => ({
+        key,
+        members: Array.from({ length: this.structuralSceneDB.memberCount }, (_, memberIndex) => ({
+          entityId: this.structuralSceneDB.memberIds[memberIndex],
+          stations: Array.from({ length: stationCount }, (_, stationIndex) => {
+            const u = stationIndex / (stationCount - 1)
+            const wave = Math.sin(u * Math.PI * (1 + memberIndex % 3) + phase)
+            return {
+              position: u,
+              values: {
+                N: wave * 800, V2: wave * 240, V3: -wave * 180,
+                T: wave * 90, M2: wave * 420, M3: -wave * 360,
+                stress: wave * 500, strain: wave * .002,
+              },
+            }
+          }),
+        })),
+      })
+      const ingestStarted = performance.now()
+      this.resultStore.ingest(caseInput('benchmark-LC1', 0), this.structuralSceneDB)
+      this.resultStore.ingest(caseInput('benchmark-LC2', Math.PI / 3), this.structuralSceneDB)
+      const ingestMs = performance.now() - ingestStarted
+      const lineGeometry = this.centerlineRenderer.lineGeometry
+      const shellKeys = ['h', 'channel', 'angle', 'box', 'pipe']
+      const shellGeometries = shellKeys.map(key => this.thinShellRenderer.batchGeometry(key))
+      const diagramRibbonGeometry = this.diagramRenderer.ribbonGeometry
+      const diagramLineGeometry = this.diagramRenderer.lineGeometry
+      const switches: Array<{ caseKey: string; component: string; durationMs: number }> = []
+      for (const [caseKey, component] of [
+        ['benchmark-LC1', 'N'], ['benchmark-LC1', 'M2'], ['benchmark-LC2', 'stress'], ['benchmark-LC2', 'strain'],
+      ] as const) {
+        const started = performance.now()
+        const binding = this.resultStore.getBinding(caseKey, component)
+        this.bindStructuralResult(binding, binding?.min, binding?.max)
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        switches.push({ caseKey, component, durationMs: Number((performance.now() - started).toFixed(2)) })
+      }
+      const identitiesStable = lineGeometry === this.centerlineRenderer.lineGeometry &&
+        shellKeys.every((key, index) => shellGeometries[index] === this.thinShellRenderer.batchGeometry(key))
+      const diagramSwitches: Array<{ component: string; durationMs: number }> = []
+      for (const component of ['N', 'V2', 'V3', 'T', 'M2', 'M3']) {
+        const started = performance.now()
+        const binding = this.resultStore.getBinding('benchmark-LC1', component)
+        if (!binding) continue
+        this.diagramRenderer.show(binding, {
+          component, scale: .01, min: binding.min, max: binding.max,
+          contour: true, ribbon: true, hatch: true,
+        })
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        diagramSwitches.push({ component, durationMs: Number((performance.now() - started).toFixed(2)) })
+      }
+      const diagramFrameSamples: number[] = []
+      let previousFrame = performance.now()
+      for (let index = 0; index < 30; index++) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+        const now = performance.now()
+        diagramFrameSamples.push(now - previousFrame)
+        previousFrame = now
+      }
+      const sortedFrames = [...diagramFrameSamples].sort((a, b) => a - b)
+      const diagramFrameAvgMs = diagramFrameSamples.reduce((total, value) => total + value, 0) / diagramFrameSamples.length
+      const diagramFrameP95Ms = sortedFrames[Math.min(sortedFrames.length - 1, Math.ceil(sortedFrames.length * .95) - 1)]
+      const diagramIdentitiesStable = diagramRibbonGeometry === this.diagramRenderer.ribbonGeometry &&
+        diagramLineGeometry === this.diagramRenderer.lineGeometry
+      runInAction(() => {
+        benchmark.resultReport = JSON.stringify({
+          benchmarkVersion: 'viewer3d-result-v2',
+          timestamp: new Date().toISOString(),
+          backend: 'webgl2',
+          fixture: { members: this.structuralSceneDB.memberCount, stationsPerMember: stationCount, cases: 2 },
+          ingestMs: Number(ingestMs.toFixed(2)),
+          switches,
+          maxSwitchMs: Math.max(...switches.map(item => item.durationMs)),
+          targetMs: 150,
+          identitiesStable,
+          diagram: {
+            switches: diagramSwitches,
+            maxSwitchMs: Math.max(...diagramSwitches.map(item => item.durationMs)),
+            frameMsAvg: Number(diagramFrameAvgMs.toFixed(2)),
+            frameMsP95: Number(diagramFrameP95Ms.toFixed(2)),
+            fpsApprox: Number((1000 / diagramFrameAvgMs).toFixed(2)),
+            drawCalls: this.renderer.info.render.calls,
+            objects: 2,
+            identitiesStable: diagramIdentitiesStable,
+            targetFrameMs: 33.34,
+          },
+          pass: identitiesStable && diagramIdentitiesStable &&
+            switches.every(item => item.durationMs <= 150) &&
+            diagramSwitches.every(item => item.durationMs <= 150) && diagramFrameP95Ms <= 33.34,
+        }, null, 2)
+      })
+    } finally {
+      runInAction(() => { benchmark.resultRunning = false })
+    }
+  }
+
+  public runAnnotationBenchmark = async () => {
+    const benchmark = this.performanceBenchmark
+    if (benchmark.resultRunning || this.structuralSceneDB.memberCount === 0) return
+    benchmark.resultRunning = true
+    try {
+      this.visibility.showOrHideMemberLabels(true)
+      const syntheticSymbols: import('./Rendering/GpuAnnotations').SymbolCandidate[] = []
+      for (let i = 0; i < this.structuralSceneDB.memberCount; i++) {
+        const o = i * 6
+        syntheticSymbols.push({ anchor: [
+          (this.structuralSceneDB.memberEndpoints[o] + this.structuralSceneDB.memberEndpoints[o + 3]) * .5,
+          (this.structuralSceneDB.memberEndpoints[o + 1] + this.structuralSceneDB.memberEndpoints[o + 4]) * .5,
+          (this.structuralSceneDB.memberEndpoints[o + 2] + this.structuralSceneDB.memberEndpoints[o + 5]) * .5,
+        ], kind: 1, color: [1, .2, .15] })
+      }
+      this.gpuAnnotations.setData(syntheticSymbols)
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const stats = this.gpuAnnotations.getStats()
+      benchmark.resultReport = JSON.stringify({
+        benchmarkVersion: 'viewer3d-annotations-v1',
+        timestamp: new Date().toISOString(),
+        model: { members: this.structuralSceneDB.memberCount, nodes: this.structuralSceneDB.nodeCount },
+        ...stats,
+        cssEntityLabels: this.labeler.count,
+        pass: stats.drawObjects === 2 && stats.labelBudget <= 200 && this.labeler.count === 0,
+      }, null, 2)
+      this.syncGpuAnnotations()
+    } finally {
+      runInAction(() => { benchmark.resultRunning = false })
+    }
   }
 
   updatePointerCoords = (event : MouseEvent) =>
   {
 
     const mouseLoc =  this.getMouseLocation(event)
-    this.pointerCoords = new THREE.Vector3(mouseLoc.x, mouseLoc.y, this.pointerCoords.z);
+    runInAction(() => {
+      this.pointerCoords = new THREE.Vector3(mouseLoc.x, mouseLoc.y, this.pointerCoords.z)
+    })
     if(this.snapper.enabled){
       this.snapper.update()
     }

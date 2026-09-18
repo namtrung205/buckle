@@ -10,6 +10,8 @@ import { ElementType, Line3D, mockSections, Section } from '../../../types';
 import { Vector3 } from 'three';
 import { makeAutoObservable } from 'mobx';
 import { findNodeAtPosition } from '../Helpers/utils';
+import type { SnappedMemberPoint } from '../Helpers/Snapper';
+import type { StructuralCommandOperation } from '../../../core/structural/commands';
 type Label = {
   id : string
   position : Vector3
@@ -25,7 +27,7 @@ export default class Line implements Tool {
   state : number = 0;
   inputMode: "point" | "lengthAndAngle" = 'point'
   inputState: 'length' | 'angle' = 'length';
-  uuid : String = 'Line3D'
+  uuid : string = 'Line3D'
   mesh : Line2 | THREE.Mesh | null = null;
   model : Model = Model.getInstance()
   currentPointerCoord : THREE.Vector3;
@@ -38,6 +40,9 @@ export default class Line implements Tool {
   positions: Array<number> = []
   section : Section
   colLength : number = 4
+  private previousSelectionMode: 'node' | 'element1d' | 'shell2d' | null = null
+  private startMemberSnap: SnappedMemberPoint | undefined
+  private endMemberSnap: SnappedMemberPoint | undefined
 
   static getInstance(): Line {
     if (Line.instance === null) {
@@ -93,6 +98,7 @@ export default class Line implements Tool {
     if(this.state === 0) return
     const snappedCoords =  this.model.snapper.snappedCoords
     const snappedNode = this.model.snapper.snappedNode
+    const snappedMemberPoint = this.model.snapper.snappedMemberPoint
     // 3D mode (no active workplane): EVERY member endpoint must be an existing
     // node — free points on the world grid / plane never create members here.
     const threeD = !this.model.hasActiveWorkPlane
@@ -101,12 +107,13 @@ export default class Line implements Tool {
     if (this.state === 1) {
       if (threeD) {
         // 3D mode: the stroke can only start from an existing node, at the
-        // node's true 3D position (no clamping onto any plane).
-        if (!snappedNode) return
-        this.startPoint = new Node(
-          new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)
-        )
-        this.startPoint.id = snappedNode.id
+        // node's true 3D position, or from a special station on a member.
+        if (!snappedNode && !snappedMemberPoint) return
+        const position = snappedNode
+          ? new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)
+          : snappedMemberPoint!.position.clone()
+        this.startPoint = new Node(position)
+        if (snappedNode) this.startPoint.id = snappedNode.id
       }
       else if(snappedCoords){
         this.startPoint = new Node(this.clampToPlane(snappedCoords))
@@ -117,10 +124,17 @@ export default class Line implements Tool {
         this.startPoint =  new Node(this.clampToPlane(this.currentPointerCoord))
       } 
 
+      this.startMemberSnap = snappedMemberPoint
+        ? { ...snappedMemberPoint, position: snappedMemberPoint.position.clone() }
+        : undefined
+
       // Reuse an existing node located at the same coordinates so members stay
       // structurally connected even when the node snap was missed
       const existingStart = findNodeAtPosition(this.model.nodes, new THREE.Vector3(this.startPoint.x, this.startPoint.y, this.startPoint.z))
-      if(existingStart) this.startPoint.id = existingStart.id
+      if(existingStart) {
+        this.startPoint.id = existingStart.id
+        this.startMemberSnap = undefined
+      }
 
       if(this.type === 'colDown' || this.type === 'colUp'){
         this.create()
@@ -138,11 +152,12 @@ export default class Line implements Tool {
     else if (this.state === 2) {
       
       if (threeD) {
-        // 3D mode: the member's end must snap to an existing node — no
-        // free-point member creation, no plane clamping.
-        if (!snappedNode) return
-        this.endPoint = new Node(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z))
-        this.endPoint.id = snappedNode.id
+        if (!snappedNode && !snappedMemberPoint) return
+        const position = snappedNode
+          ? new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)
+          : snappedMemberPoint!.position.clone()
+        this.endPoint = new Node(position)
+        if (snappedNode) this.endPoint.id = snappedNode.id
       }
       else if(snappedNode){
         this.endPoint = new Node(this.clampToPlane(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)))
@@ -156,17 +171,28 @@ export default class Line implements Tool {
         if(existingEnd) this.endPoint.id = existingEnd.id
       }
 
+      this.endMemberSnap = snappedMemberPoint
+        ? { ...snappedMemberPoint, position: snappedMemberPoint.position.clone() }
+        : undefined
+      const existingEnd = findNodeAtPosition(this.model.nodes, new THREE.Vector3(this.endPoint.x, this.endPoint.y, this.endPoint.z))
+      if (existingEnd) {
+        this.endPoint.id = existingEnd.id
+        this.endMemberSnap = undefined
+      }
       this.create()
       this.state = 3
     }
     else if(this.state === 3)
     {
       this.startPoint = this.endPoint
+      this.startMemberSnap = undefined
       if (threeD) {
-        // 3D mode: chain the next member only from another existing node.
-        if (!snappedNode) return
-        this.endPoint = new Node(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z))
-        this.endPoint.id = snappedNode.id
+        if (!snappedNode && !snappedMemberPoint) return
+        const position = snappedNode
+          ? new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)
+          : snappedMemberPoint!.position.clone()
+        this.endPoint = new Node(position)
+        if (snappedNode) this.endPoint.id = snappedNode.id
       }
       else if(snappedNode){
         this.endPoint = new Node(this.clampToPlane(new THREE.Vector3(snappedNode.x, snappedNode.y, snappedNode.z)))
@@ -177,6 +203,14 @@ export default class Line implements Tool {
         // Reuse an existing node at the same coordinates (missed snap)
         const existingEnd = findNodeAtPosition(this.model.nodes, point)
         if(existingEnd) this.endPoint.id = existingEnd.id
+      }
+      this.endMemberSnap = snappedMemberPoint
+        ? { ...snappedMemberPoint, position: snappedMemberPoint.position.clone() }
+        : undefined
+      const existingEnd = findNodeAtPosition(this.model.nodes, new THREE.Vector3(this.endPoint.x, this.endPoint.y, this.endPoint.z))
+      if (existingEnd) {
+        this.endPoint.id = existingEnd.id
+        this.endMemberSnap = undefined
       }
       this.create()
     }
@@ -201,6 +235,11 @@ export default class Line implements Tool {
   start = () => {
     if (this.model.isLocked) return;
     if(this.state === 0) {
+      // Drawing endpoints is a node-picking workflow in every render backend.
+      // Temporarily use Node select mode so the selector and snapper share the
+      // same GPU node-pick pass, then restore the user's mode on Stop/Escape.
+      this.previousSelectionMode = this.model.selectionMode
+      this.model.setSelectionMode('node')
       this.state = 1
       // this.type = type
       this.model.canvas.style.cursor = 'crosshair'
@@ -248,49 +287,7 @@ export default class Line implements Tool {
     switch(type) 
     {
       case 'elasticBeamColumn':
-        if(this.state === 2) {
-          const nodei = this.startPoint
-          const nodej = this.endPoint
-          const nodes : Node[] = [nodei, nodej]
-
-          // Ignore a click on the same point (would create a zero-length member)
-          if(nodei.id === nodej.id) return
-
-          if(!nodeIds.includes(nodei.id)) {
-            this.model.nodes.push(nodei)
-            nodei.model = this.model
-            nodei.create()
-          }
-          if(!nodeIds.includes(nodej.id)) {
-            this.model.nodes.push(nodej)
-            nodej.model = this.model
-            nodej.create()
-          }
-          const member = new ElasticBeamColumn(this.model, '', nodes, this.section)
-          member.create()
-          this.model.members = [
-            ...this.model.members,
-            member
-          ]
-
-        }
-        else if(this.state === 3) {
-          const nodei = this.startPoint
-          const nodej =  this.endPoint
-          const nodes = [nodei, nodej]
-
-          // Ignore a click on the same point (would create a zero-length member)
-          if(nodei.id === nodej.id) return
-
-          if(!nodeIds.includes(nodej.id)) {
-            this.model.nodes.push(nodej)
-            nodej.model = this.model
-            nodej.create()
-          }
-          const elasticBeamColumn = new ElasticBeamColumn(this.model,  '', nodes, this.section)
-          elasticBeamColumn.create()
-          this.model.members.push(elasticBeamColumn)
-        }
+        if(this.state === 2 || this.state === 3) this.createElasticMember()
         break;
       case 'colUp':
       case 'colDown':
@@ -305,24 +302,19 @@ export default class Line implements Tool {
           )
         }
 
-        if(!nodeIds.includes(nodei.id)) {
-          this.model.nodes.push(nodei)
-          nodei.model = this.model
-          nodei.create()
-        }
-        if(!nodeIds.includes(nodej.id)) {
-          this.model.nodes.push(nodej)
-          nodej.model = this.model
-          nodej.create()
-        }
-
-        const nodes = [nodei, nodej]
-        const column = new ElasticBeamColumn(this.model,  '', nodes, this.section)
-        column.create()
-        this.model.members = [
-          ...this.model.members,
-          column
-        ]
+        const createNodes = [nodei, nodej]
+          .filter(node => !nodeIds.includes(node.id))
+          .map(node => ({ id: node.id, name: node.name, position: [node.x, node.z, node.y] as const }))
+        this.model.executeCommand({
+          commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+          modelRevision: this.model.structuralDocument.revision, source: 'ui',
+          payload: { operations: [
+            ...(createNodes.length ? [{ type: 'CreateNodes' as const, payload: { nodes: createNodes } }] : []),
+            { type: 'CreateMembers', payload: { members: [{
+              nodeI: nodei.id, nodeJ: nodej.id, sectionId: this.section.id,
+            }] } },
+          ] },
+        })
         break
       default:
         // mesh.layers.set(layer)
@@ -330,11 +322,100 @@ export default class Line implements Tool {
     }   
   }
 
+  /** Split every internally snapped source member and create the drawn member
+   * in one command. The original member ID is retained for its I-side segment;
+   * that keeps document references stable and makes one Undo restore all edits. */
+  private createElasticMember() {
+    const nodei = this.startPoint
+    const nodej = this.endPoint
+    const startPosition = new THREE.Vector3(nodei.x, nodei.y, nodei.z)
+    const endPosition = new THREE.Vector3(nodej.x, nodej.y, nodej.z)
+    if (nodei.id === nodej.id || startPosition.distanceTo(endPosition) < 1e-9) return
+
+    const requests = [
+      this.startMemberSnap ? { snap: this.startMemberSnap, node: nodei } : null,
+      this.endMemberSnap ? { snap: this.endMemberSnap, node: nodej } : null,
+    ].filter((value): value is { snap: SnappedMemberPoint; node: Node } => value !== null)
+
+    // Two clicks on the same station must resolve to one structural node.
+    const stationNodes = new Map<string, Node>()
+    for (const request of requests) {
+      const key = `${request.snap.memberId}:${request.snap.ratio}`
+      const existing = stationNodes.get(key)
+      if (existing) request.node.id = existing.id
+      else stationNodes.set(key, request.node)
+    }
+    if (nodei.id === nodej.id) return
+
+    const knownNodeIds = new Set(this.model.nodes.map(node => node.id))
+    const nodesToCreate = new Map<number, Node>()
+    for (const node of [nodei, nodej]) {
+      if (!knownNodeIds.has(node.id)) nodesToCreate.set(node.id, node)
+    }
+
+    const grouped = new Map<number, { ratio: number; node: Node }[]>()
+    for (const request of requests) {
+      const points = grouped.get(request.snap.memberId) ?? []
+      if (!points.some(point => Math.abs(point.ratio - request.snap.ratio) < 1e-9)) {
+        points.push({ ratio: request.snap.ratio, node: request.node })
+      }
+      grouped.set(request.snap.memberId, points)
+    }
+
+    const updates: Extract<StructuralCommandOperation, { type: 'UpdateMembers' }>['payload']['members'][number][] = []
+    const replacementMembers: Extract<StructuralCommandOperation, { type: 'CreateMembers' }>['payload']['members'][number][] = []
+    const replacementEdges = new Set<string>()
+    const edgeKey = (a: number, b: number) => a < b ? `${a}:${b}` : `${b}:${a}`
+
+    for (const [memberId, points] of grouped) {
+      const record = this.model.structuralDocument.members.get(memberId)
+      if (!record) return
+      points.sort((a, b) => a.ratio - b.ratio)
+      updates.push({ id: memberId, patch: { nodeJ: points[0].node.id } })
+      replacementEdges.add(edgeKey(record.nodeI, points[0].node.id))
+
+      const { id: _id, nodeI: _nodeI, nodeJ: _nodeJ, ...properties } = record
+      for (let index = 0; index < points.length; index++) {
+        const from = points[index].node.id
+        const to = points[index + 1]?.node.id ?? record.nodeJ
+        replacementMembers.push({ ...properties, nodeI: from, nodeJ: to })
+        replacementEdges.add(edgeKey(from, to))
+      }
+    }
+
+    const operations: StructuralCommandOperation[] = []
+    if (nodesToCreate.size) operations.push({
+      type: 'CreateNodes',
+      payload: { nodes: [...nodesToCreate.values()].map(node => ({
+        id: node.id,
+        ...(node.name ? { name: node.name } : {}),
+        position: [node.x, node.z, node.y] as const,
+      })) },
+    })
+    if (updates.length) operations.push({ type: 'UpdateMembers', payload: { members: updates } })
+
+    // If both picked points lie on the same source member, splitting may have
+    // already produced the requested edge. Do not create an overlapping member.
+    if (!replacementEdges.has(edgeKey(nodei.id, nodej.id))) {
+      replacementMembers.push({ nodeI: nodei.id, nodeJ: nodej.id, sectionId: this.section.id })
+    }
+    if (replacementMembers.length) operations.push({ type: 'CreateMembers', payload: { members: replacementMembers } })
+    if (!operations.length) return
+
+    this.model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.model.structuralDocument.revision, source: 'ui',
+      payload: { operations },
+    })
+    this.startMemberSnap = undefined
+    this.endMemberSnap = undefined
+  }
+
   update(startPoint: Node, endPoint: Node)
   {
     if (!this.mesh) this.start()
     const type = this.type
-    let positions = [startPoint.x, startPoint.y, startPoint.z, endPoint.x, endPoint.y, endPoint.z]
+    const positions = [startPoint.x, startPoint.y, startPoint.z, endPoint.x, endPoint.y, endPoint.z]
     
     if (this.onOrthoMode && this.state >= 2) {
       const orthoEndPoint = this.getOrthogonalProjection(startPoint, endPoint)
@@ -453,8 +534,15 @@ export default class Line implements Tool {
   }
   stop() {
     this.state = 0
+    this.startMemberSnap = undefined
+    this.endMemberSnap = undefined
     this.model.canvas.style.cursor = 'default'
     this.model.snapper.disable()
+    if (this.previousSelectionMode) {
+      const mode = this.previousSelectionMode
+      this.previousSelectionMode = null
+      this.model.setSelectionMode(mode)
+    }
   }
   // HELPER FUNCTIONS
   // https://github.com/Immugio/three-math-extensions

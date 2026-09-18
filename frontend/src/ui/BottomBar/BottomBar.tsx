@@ -19,6 +19,9 @@ import {
   Home,
   GridOn,
   GridOff,
+  Compress,
+  Visibility as ShowAllIcon,
+  Settings as SettingsIcon,
 } from '@mui/icons-material';
 import { observer } from 'mobx-react-lite';
 import { useModel } from '../../model/Context';
@@ -214,6 +217,30 @@ const BottomBar = observer(() => {
             {model.gridHelper.enabled
               ? <GridOn sx={{ fontSize: 18 }} />
               : <GridOff sx={{ fontSize: 18 }} />}
+          </IconButton>
+        </Tooltip>
+
+        <Divider orientation="vertical" flexItem sx={{ bgcolor: colors.border, mx: 0.5 }} />
+
+        <Tooltip title={model.shrinkEnabled ? 'Shrink — ON (click to show elements at full length)' : 'Shrink — OFF (click to shorten elements at both ends, Midas-style)'}>
+          <IconButton onClick={() => model.setShrinkEnabled(!model.shrinkEnabled)} sx={activeStyle(model.shrinkEnabled)}>
+            <Compress sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+
+        <Divider orientation="vertical" flexItem sx={{ bgcolor: colors.border, mx: 0.5 }} />
+
+        <Tooltip title={model.hasHiddenEntities() ? 'Show all - reveal every hidden node, member and shell' : 'Show all - nothing is hidden'}>
+          <IconButton onClick={() => model.showAllEntities()} disabled={!model.hasHiddenEntities()} sx={activeStyle(false)}>
+            <ShowAllIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+
+        <Divider orientation="vertical" flexItem sx={{ bgcolor: colors.border, mx: 0.5 }} />
+
+        <Tooltip title="View settings — visibility, render mode and snapping">
+          <IconButton onClick={() => model.openDialog('settings')} sx={activeStyle(model.activeDialog === 'settings')}>
+            <SettingsIcon sx={{ fontSize: 18 }} />
           </IconButton>
         </Tooltip>
       </Box>

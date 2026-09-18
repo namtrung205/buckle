@@ -1,0 +1,35 @@
+{
+  "name": "@buckle/plugin-sdk",
+  "version": "0.1.0-alpha.1",
+  "description": "Plugin authoring SDK for Buckle",
+  "type": "module",
+  "engines": { "node": ">=22.12" },
+  "license": "UNLICENSED",
+  "files": [
+    "dist",
+    "README.md",
+    "DEVELOPER_GUIDE.vi.md",
+    "API_V1.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": { "buckle-plugin": "./dist/cli.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test --experimental-strip-types tests/cli.test.ts tests/signature.test.ts",
+    "test:external": "npm run build && node --test --experimental-strip-types tests/external.test.ts",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "esbuild": "^0.28.2",
+    "fflate": "^0.8.3"
+  }
+}

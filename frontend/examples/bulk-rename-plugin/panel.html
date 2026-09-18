@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="vi">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bulk Rename</title>
+<link rel="stylesheet" href="./panel.css">
+<main>
+  <h1>Bulk Rename</h1>
+  <p class="hint">Thêm tiền tố hoặc hậu tố vào tên node và element (member, shell).</p>
+
+  <fieldset>
+    <legend>Đối tượng</legend>
+    <label><input type="radio" name="kind" value="nodes" checked> Nodes</label>
+    <label><input type="radio" name="kind" value="elements"> Elements</label>
+  </fieldset>
+  <fieldset>
+    <legend>Phạm vi</legend>
+    <label><input type="radio" name="scope" value="selected" checked> Đang chọn</label>
+    <label><input type="radio" name="scope" value="all"> Toàn bộ model</label>
+  </fieldset>
+
+  <label class="field" for="prefix">Prefix
+    <input id="prefix" type="text" placeholder="Ví dụ: T1-" autocomplete="off">
+  </label>
+  <label class="field" for="suffix">Suffix
+    <input id="suffix" type="text" placeholder="Ví dụ: -REV" autocomplete="off">
+  </label>
+  <p class="hint">Có thể dùng cả hai. Nếu entity chưa có tên, plugin dùng Node/Member/Shell + ID làm tên gốc.</p>
+
+  <div class="actions">
+    <button id="preview" type="button">Xem trước</button>
+    <button id="apply" type="button" disabled>Đổi tên</button>
+  </div>
+  <div id="status" role="status" aria-live="polite">Nhập prefix hoặc suffix để xem trước.</div>
+  <div id="preview-list" aria-label="Danh sách tên trước và sau"></div>
+</main>
+<script type="module" src="./src/panel.ts"></script>
+</html>

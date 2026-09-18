@@ -10,7 +10,6 @@ import { colors, fieldLabelSx } from '../../../theme';
 import SectionFigure from './SectionFigure';
 import {
   StandardSection,
-  SECTION_STANDARDS,
   SECTION_CODES,
   sectionsForCode,
   groupBySeries,
@@ -163,6 +162,8 @@ const SectionChanger = observer(({ open, onClose, section, onSaved }: SectionCha
   const num = (v: unknown) => (v === '' || v == null ? 0 : Number(v));
 
   const defaultMaterial = (): Material => {
+    const existing = model.materials[0];
+    if (existing) return existing;
     const steel = MATERIAL_PRESETS.find((p) => p.key === 'steel_s355');
     return steel ? materialFromPreset(steel) : { id: 0, name: 'Steel', E: 210e9, nu: 0.3, rho: 7850 };
   };
@@ -448,7 +449,7 @@ const SectionChanger = observer(({ open, onClose, section, onSaved }: SectionCha
               <Box key={f.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Typography sx={fieldLabelSx}>{f.label}</Typography>
                 <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-                  <input type="number" value={(amorph as any)[f.id]}
+                  <input type="number" value={amorph[f.id as keyof typeof amorph]}
                     onChange={(e) => setAmorph((prev) => ({ ...prev, [f.id]: num(e.target.value) }))}
                     style={{ width: 120, padding: '5px 6px', borderRadius: '4px', border: `1px solid ${colors.borderDark}`, background: colors.surfaceAlt, color: colors.text, textAlign: 'right', fontSize: '0.8rem', outline: 'none' }} />
                   <span style={{ fontSize: '0.7rem', color: colors.textFaint, minWidth: '1.5rem' }}>{f.unit}</span>

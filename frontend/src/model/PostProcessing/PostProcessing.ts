@@ -9,6 +9,9 @@ import { makeAutoObservable } from 'mobx'
 import { valueToColor01 } from './Colormap'
 import DiagramHover, { HoverMember } from './DiagramHover'
 import { jsonArrayToThree, jsonToThree } from '../../utils/axis'
+import { canonicalResultComponent } from '../Rendering/ResultStore'
+import type { WorldLabelCandidate } from '../Rendering/GpuAnnotations'
+import type { AnalysisMember } from '../../contracts/structuralModel'
 
 export const DIAGRAM_TYPES = ['N', 'Vy', 'Vz', 'T', 'My', 'Mz'] as const
 export type DiagramType = (typeof DIAGRAM_TYPES)[number]
@@ -37,10 +40,12 @@ export type StationPoint = {
 type SolidSave = {
   mesh: THREE.Mesh
   material: THREE.MeshLambertMaterial
+  geometry: THREE.BufferGeometry
+  clonedGeometry: boolean
   color: number
   hadVertexColors: boolean
   hadOriginalColor: boolean
-  originalColor: any
+  originalColor: unknown
 }
 
 export type MemberDiagramData = {
@@ -63,7 +68,7 @@ const fmt = (v: number) => {
 
 class PostProcessing {
   model: Model
-  meshes: any[] = []
+  meshes: Array<THREE.Mesh | THREE.Line | Line2> = []
   hover: DiagramHover
 
   // Observable state consumed by the Results UI (legend, sliders, toggles)
@@ -78,6 +83,7 @@ class PostProcessing {
   showContour = false
   showLabels = true
   showRefLine = true
+  useDeformedDiagramReference = false
   /** On-canvas contour legend visibility — toggled from the Results tabs. */
   showLegend = true
   /** Stress: paint the full 3D extruded solid (true cross-section colours)
@@ -90,7 +96,7 @@ class PostProcessing {
 
   private membersData: MemberDiagramData[] = []
   private hoverMeshes: THREE.Mesh[] = []
-  private labels: any[] = []
+  private labels: WorldLabelCandidate[] = []
   private coloredSolids: Map<string, SolidSave[]> = new Map()
   private currentMin = 0
   private currentMax = 1
@@ -106,7 +112,7 @@ class PostProcessing {
       membersData: false,
       hoverMeshes: false,
       labels: false
-    } as any)
+    } as never)
   }
 
   /**
@@ -123,7 +129,7 @@ class PostProcessing {
    * Uses the intermediate `stations` provided by the backend when available and falls back
    * to the legacy end-node `node_efforts` (2 points) for older payloads.
    */
-  private buildMemberData(member: any): MemberDiagramData | null {
+  private buildMemberData(member: AnalysisMember): MemberDiagramData | null {
     let points: {
       coord: number[]
       plotPoints: Record<string, number[]>
@@ -131,16 +137,20 @@ class PostProcessing {
     }[] = []
     if (member.stations?.length) {
       points = member.stations
-        .filter((s: any) => s.values && Object.keys(s.values).length > 0)
-        .map((s: any) => ({ coord: s.coord, plotPoints: s.plot_points ?? {}, values: { ...s.values } }))
+        .filter((station) => station.values && Object.keys(station.values).length > 0)
+        .map((station) => ({
+          coord: station.coord,
+          plotPoints: station.plot_points ?? {},
+          values: { ...station.values },
+        }))
     } else if (member.node_efforts?.length) {
-      points = member.node_efforts.map((node: any) => {
+      points = member.node_efforts.map((node) => {
         const values: Record<string, number> = {}
         const plotPoints: Record<string, number[]> = {}
         for (const [key, effort] of Object.entries(node.efforts ?? {})) {
-          values[key] = (effort as any).value
+          values[key] = effort.value
           // displaced_positions = coord + value * SFAC * localAxis (the backend plot point)
-          if ((effort as any).displaced_positions) plotPoints[key] = (effort as any).displaced_positions
+          if (effort.displaced_positions) plotPoints[key] = effort.displaced_positions
         }
         return { coord: node.coord, plotPoints, values }
       })
@@ -160,7 +170,7 @@ class PostProcessing {
     // Section local axes in three.js coords, following the OpenSees element orientation:
     // ylocal = vecxz orthogonalised against the member axis, zlocal = ylocal x xlocal.
     // Used when the backend payload has no per-force plot points (older runs).
-    const element = (this.model.members as any[]).find((m: any) => String(m?.id) === String(member.id))
+    const element = this.model.members.find((candidate) => String(candidate.id) === String(member.id))
     const vecxz = element?.vecxz as THREE.Vector3 | undefined
     let vPerp: THREE.Vector3 | null = null
     if (vecxz) {
@@ -258,14 +268,14 @@ class PostProcessing {
   }
 
   /** Real end-node displacements (three.js axes) of the member, for the deflected-shape mode. */
-  private getMemberEndDisplacements(member: any): [THREE.Vector3, THREE.Vector3] | null {
-    const element = (this.model.members as any[]).find((m: any) => String(m?.id) === String(member.id))
+  private getMemberEndDisplacements(member: AnalysisMember): [THREE.Vector3, THREE.Vector3] | null {
+    const element = this.model.members.find((candidate) => String(candidate.id) === String(member.id))
     const nodes = element?.nodes
     if (!nodes || nodes.length < 2) return null
     const outputNodes = this.model.output?.nodes ?? []
     const result: (THREE.Vector3 | null)[] = []
     for (const node of nodes.slice(0, 2)) {
-      const outputNode = outputNodes.find((n: any) => n.id === node.id)
+      const outputNode = outputNodes.find((candidate) => candidate.id === node.id)
       const d = outputNode?.displacements
       if (!d) {
         result.push(null)
@@ -287,15 +297,17 @@ class PostProcessing {
    * three.js frame and report its arc position along the member axis, giving a
    * cubic-accurate deflected shape instead of a straight end-to-end lerp.
    */
-  private getMemberDisplacementStations(member: any, axis: THREE.Vector3, p0: THREE.Vector3): { s: number, vec: THREE.Vector3 }[] {
+  private getMemberDisplacementStations(member: AnalysisMember, axis: THREE.Vector3, p0: THREE.Vector3): { s: number, vec: THREE.Vector3 }[] {
     const raw = member?.displacement_stations
     if (!Array.isArray(raw) || raw.length < 2) return []
     const out: { s: number, vec: THREE.Vector3 }[] = []
     for (const st of raw) {
       const coord = this.toThreeCoord(st.coord)
-      const d = st.disp ?? {}
       const s = coord.sub(p0).dot(axis)
-      out.push({ s, vec: jsonToThree(d.ux ?? 0, d.uy ?? 0, d.uz ?? 0) })
+      out.push({
+        s,
+        vec: jsonToThree(st.disp?.ux ?? 0, st.disp?.uy ?? 0, st.disp?.uz ?? 0),
+      })
     }
     out.sort((a, b) => a.s - b.s)
     return out
@@ -308,8 +320,8 @@ class PostProcessing {
     const members = this.model.output?.members ?? []
     for (const member of members) {
       const coords = member.stations?.length
-        ? member.stations.map((s: any) => s.coord)
-        : (member.node_efforts ?? []).map((n: any) => n.coord)
+        ? member.stations.map((station) => station.coord)
+        : (member.node_efforts ?? []).map((node) => node.coord)
       for (const c of coords) box.expandByPoint(v.set(c[0], c[1], c[2]))
     }
     if (box.isEmpty()) return 10
@@ -365,8 +377,13 @@ class PostProcessing {
     const isStress = (STRESS_TYPES as readonly string[]).includes(type)
     this.unit = type === DEFLECTION_TYPE ? 'mm' : isStress ? STRESS_UNIT : (FORCE_UNITS[type] ?? '')
 
+    if (this.model.renderMode !== 'solid-extrude' && type !== DEFLECTION_TYPE && !isStress) {
+      this.renderProceduralDiagram(type, selectedMemberIds)
+      return
+    }
+
     const selected = output.members.filter(
-      (member: any) => selectedMemberIds.length === 0 || selectedMemberIds.includes(member.id)
+      (member) => selectedMemberIds.length === 0 || selectedMemberIds.includes(member.id)
     )
     const membersData: MemberDiagramData[] = []
     for (const member of selected) {
@@ -402,11 +419,17 @@ class PostProcessing {
     this.extremeMax = maxHolder ? { label: maxHolder.label, value: max } : null
     this.extremeMin = minHolder ? { label: minHolder.label, value: min } : null
 
+    const gpuResultActive = this.model.renderMode !== 'solid-extrude' &&
+      type !== DEFLECTION_TYPE && (isStress || this.showContour)
+    if (gpuResultActive) {
+      const binding = this.model.resultStore.getBinding('analysis', canonicalResultComponent(type))
+      this.model.bindStructuralResult(binding, this.min, this.max)
+    }
+
     this.modelSize = this.computeModelSize()
     const maxAbs = Math.max(Math.abs(min), Math.abs(max)) || 1
     // Auto-fit: at multiplier 1 the largest |value| occupies 8% of the model size
     const scale = ((this.modelSize * 0.08) / maxAbs) * this.scaleMultiplier
-
     for (const data of membersData) {
       for (const station of data.stations) {
         // Stress contours colour the member itself — no diagram offset geometry
@@ -422,18 +445,77 @@ class PostProcessing {
         this.buildBaseline(data)
         this.buildOutline(data, this.showContour)
       }
-      if (isStress) {
+      if (isStress && this.model.renderMode === 'solid-extrude') {
         // Full cross-section extrude: paint the member solid mesh itself so the
         // stress colouring is seen on the real 3D member, or fall back to the
         // centreline strip for a line-only stress contour.
         if (this.showStressSolid) this.colorMemberSolids(data)
         else if (this.showContour) this.colorMemberLine(type, data)
-      } else if (this.showContour) this.colorMemberLine(type, data)
+      } else if (this.showContour && this.model.renderMode === 'solid-extrude') this.colorMemberLine(type, data)
       if (this.showLabels) this.collectExtremes(data, type)
     }
 
     this.membersData = membersData
-    this.model.labeler.batchUpdateOrCreate(this.labels)
+    // Solid, deformation and stress paths share the same single GPU glyph
+    // batch as procedural diagrams. No per-value DOM/CSS2DObject is created.
+    this.model.gpuAnnotations.setResultLabels(this.labels)
+    this.updateHoverTargets()
+  }
+
+  private renderProceduralDiagram(type: string, selectedMemberIds: number[]) {
+    const component = canonicalResultComponent(type)
+    const binding = this.model.resultStore.getBinding('analysis', component)
+    const extrema = this.model.resultStore.getExtrema('analysis', component, selectedMemberIds)
+    if (!binding || !extrema) {
+      this.model.gpuAnnotations.setResultLabels([])
+      return
+    }
+    let { min, max } = extrema
+    if (min === max) { min -= 1; max += 1 }
+    this.min = min
+    this.max = max
+    this.currentMin = min
+    this.currentMax = max
+    const labelFor = (entityId: number | null) => {
+      if (entityId === null) return ''
+      const member = this.model.members.find(item => item.id === entityId)
+      return member?.label || `Member ${entityId}`
+    }
+    this.extremeMin = extrema.minMemberId === null ? null : { label: labelFor(extrema.minMemberId), value: extrema.min }
+    this.extremeMax = extrema.maxMemberId === null ? null : { label: labelFor(extrema.maxMemberId), value: extrema.max }
+    this.modelSize = this.computeModelSize()
+    const maxAbs = Math.max(Math.abs(min), Math.abs(max)) || 1
+    const scale = ((this.modelSize * .08) / maxAbs) * this.scaleMultiplier
+    this.model.bindStructuralResult(this.showContour ? binding : null, min, max)
+    this.model.diagramRenderer.show(binding, {
+      component: type, scale, min, max, contour: this.showContour,
+      ribbon: this.showRibbon, hatch: this.showHatch, memberIds: selectedMemberIds,
+    })
+    this.model.diagramRenderer.setExtrema(extrema.minMemberId, extrema.maxMemberId)
+    if (this.showLabels) this.model.setDiagramExtremaLabels(component, scale, extrema, this.unit)
+    else this.model.gpuAnnotations.setResultLabels([])
+    const dx = this.model.resultStore.getBinding('analysis', 'dX')
+    const dy = this.model.resultStore.getBinding('analysis', 'dY')
+    const dz = this.model.resultStore.getBinding('analysis', 'dZ')
+    this.model.diagramRenderer.bindDeformedReference(
+      this.useDeformedDiagramReference && dx && dy && dz ? { x: dx, y: dy, z: dz } : null,
+      this.deflectionMultiplier,
+    )
+    // Goal 8 replaces labels with SDF/LOD. Avoid the legacy O(N) CSS2D path;
+    // the legend and renderer extrema hook still expose global max/min now.
+        // Rebuild per-member station data + thin hit ribbons so the hover tooltip
+    // works over the batched GPU diagram again (one batch has no per-member id).
+    const hoverData: MemberDiagramData[] = []
+    for (const member of this.model.output?.members ?? []) {
+      if (selectedMemberIds.length && !selectedMemberIds.includes(member.id)) continue
+      const data = this.buildMemberData(member)
+      if (!data) continue
+      for (const station of data.stations) station.value = this.stationValue(type, station)
+      for (const station of data.stations) station.offset.copy(this.stationOffset(type, data, station, scale))
+      hoverData.push(data)
+    }
+    this.membersData = hoverData
+    this.buildHoverMeshes(hoverData)
     this.updateHoverTargets()
   }
 
@@ -446,6 +528,41 @@ class PostProcessing {
     mesh.userData.type = 'diagram'
     mesh.userData.memberId = memberId
     mesh.userData.hoverable = true
+  }
+
+  /** Transparent per-member ribbons exclusively for the hover raycast. The GPU
+   *  procedural diagram is ONE batched mesh (no per-member identity), so the
+   *  hover controller needs its own thin hit geometry following the same
+   *  station offsets. Fully transparent (opacity 0) — never drawn, only picked. */
+  private buildHoverMeshes(dataList: MemberDiagramData[]) {
+    for (const data of dataList) {
+      const stations = data.stations
+      if (stations.length < 2) continue
+      const vertices: number[] = []
+      const indices: number[] = []
+      for (const station of stations) vertices.push(station.base.x, station.base.y, station.base.z)
+      for (const station of stations) vertices.push(station.offset.x, station.offset.y, station.offset.z)
+      const n = stations.length
+      for (let i = 0; i < n - 1; i++) {
+        const b1 = i, b2 = i + 1, t1 = n + i, t2 = n + i + 1
+        indices.push(b1, t1, b2, b2, t1, t2)
+      }
+      const geometry = new THREE.BufferGeometry()
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+      geometry.setIndex(indices)
+      geometry.computeVertexNormals()
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+      const mesh = new THREE.Mesh(geometry, material)
+      this.addHoverable(mesh, data.memberId)
+      this.model.scene.add(mesh)
+      this.meshes.push(mesh)
+    }
   }
 
   /** Filled area between the member axis and the diagram curve, coloured per-vertex. */
@@ -602,29 +719,37 @@ class PostProcessing {
 
   /** Colour the member solid meshes with the per-station colormap (replaces the contour tube). */
   private colorMemberSolids(data: MemberDiagramData) {
-    const element = (this.model.members as any[]).find(
-      (m: any) => String(m?.id) === String(data.memberId)
+    const element = this.model.members.find(
+      (member) => String(member.id) === String(data.memberId)
     )
     const group = element?.mesh
     if (!group?.traverse) return
     const key = String(data.memberId)
     const saves: SolidSave[] = this.coloredSolids.get(key) ?? []
 
-    group.traverse((child: any) => {
-      if (!child.isMesh || !child.geometry?.attributes?.position) return
-      const solid = child as THREE.Mesh
+    group.traverse((child) => {
+      if (!(child instanceof THREE.Mesh) || !child.geometry?.attributes?.position) return
+      const solid = child
       const material = solid.material as THREE.MeshLambertMaterial
       if (!material) return
 
       if (!saves.some(save => save.mesh === solid)) {
+        const originalGeometry = solid.geometry
+        const clonedGeometry = originalGeometry.userData.sharedSolidGeometry === true
         saves.push({
           mesh: solid,
           material,
+          geometry: originalGeometry,
+          clonedGeometry,
           color: material.color.getHex(),
           hadVertexColors: material.vertexColors,
           hadOriginalColor: 'originalColor' in solid.userData,
           originalColor: solid.userData.originalColor
         })
+        // Stress colours are per member. Shared exact solids stay shared for
+        // normal viewing, then use copy-on-write only while a vertex-colour
+        // result is active.
+        if (clonedGeometry) solid.geometry = originalGeometry.clone()
       }
 
       // Map the local z extent to the station arc position (works for centred or 0-based extrusions)
@@ -673,6 +798,10 @@ class PostProcessing {
         save.material.needsUpdate = true
         if (save.hadOriginalColor) save.mesh.userData.originalColor = save.originalColor
         else delete save.mesh.userData.originalColor
+        if (save.clonedGeometry) {
+          if (save.mesh.geometry !== save.geometry) save.mesh.geometry.dispose()
+          save.mesh.geometry = save.geometry
+        }
         delete save.mesh.userData.hoverable
         delete save.mesh.userData.memberId
       }
@@ -766,7 +895,7 @@ class PostProcessing {
     }
   }
 
-  /** Max/min tags for a member — pill labels coloured to match the diverging colormap. */
+  /** Per-member max/min tags uploaded to the shared GPU glyph batch. */
   private collectExtremes(data: MemberDiagramData, type: string) {
     let max = { value: -Infinity, station: null as StationPoint | null }
     let min = { value: Infinity, station: null as StationPoint | null }
@@ -774,9 +903,6 @@ class PostProcessing {
       if (station.value > max.value) max = { value: station.value, station }
       if (station.value < min.value) min = { value: station.value, station }
     }
-    // Colours follow the diagram colormap: red = positive lobe, blue = negative lobe
-    const POS = '#c62828'
-    const NEG = '#1e56b4'
     const suffix = type === DEFLECTION_TYPE ? 'defl' : type
     if (max.station) {
       const isDefl = type === DEFLECTION_TYPE
@@ -784,19 +910,21 @@ class PostProcessing {
       const text = isDefl ? fmt(max.value * 1000) : fmt(max.value)
       this.labels.push({
         id: `max-${suffix}-label-${data.memberId}`,
-        position: max.station.offset.clone(),
+        anchor: [max.station.offset.x, max.station.offset.y, max.station.offset.z],
         text,
-        type: 'effort',
-        backgroundColor: isDefl ? POS : (max.value >= 0 ? POS : NEG)
+        priority: 'extrema',
+        forceVisible: true,
+        color: [1, .75, .14],
       })
     }
     if (min.station && min.station !== max.station && type !== DEFLECTION_TYPE) {
       this.labels.push({
         id: `min-${suffix}-label-${data.memberId}`,
-        position: min.station.offset.clone(),
+        anchor: [min.station.offset.x, min.station.offset.y, min.station.offset.z],
         text: fmt(min.value),
-        type: 'effort',
-        backgroundColor: min.value >= 0 ? POS : NEG
+        priority: 'extrema',
+        forceVisible: true,
+        color: [1, .75, .14],
       })
     }
   }
@@ -805,14 +933,14 @@ class PostProcessing {
   private updateHoverTargets() {
     // Solid meshes currently coloured by the contour mode are hoverable too
     const solidTargets: THREE.Mesh[] = []
-    for (const element of this.model.members as any[]) {
+    for (const element of this.model.members) {
       if (!this.coloredSolids.has(String(element?.id))) continue
-      element.mesh?.traverse?.((child: any) => {
-        if (child.isMesh) solidTargets.push(child as THREE.Mesh)
+      element.mesh?.traverse?.((child) => {
+        if (child instanceof THREE.Mesh) solidTargets.push(child)
       })
     }
     this.hoverMeshes = [
-      ...this.meshes.filter((mesh: any) => mesh.isMesh && mesh.userData?.hoverable),
+      ...this.meshes.filter((mesh): mesh is THREE.Mesh => mesh instanceof THREE.Mesh && mesh.userData?.hoverable),
       ...solidTargets
     ] as THREE.Mesh[]
     const hoverMembers: HoverMember[] = this.membersData.map(data => ({
@@ -829,6 +957,7 @@ class PostProcessing {
   }
 
   dispose() {
+    this.model.clearStructuralResult()
     this.meshes.forEach(mesh => {
       mesh.geometry?.dispose()
       if (Array.isArray(mesh.material)) {

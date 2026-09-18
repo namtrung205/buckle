@@ -24,6 +24,11 @@ class Selector {
   colorOnHover: number
   isCtrlPressed: boolean
   selected: Mesh[]
+  selectedCenterlineIds: number[] = []
+  selectedNodeIds: number[] = []
+  hoveredCenterlineId: number | null = null
+  hoveredNodeId: number | null = null
+  hoverFrame: number | null = null
   selectionBox: SelectionBox | null = null;
   selectionHtmlElement: HTMLDivElement | null = null;
   pointerDownPoint: THREE.Vector2 = new THREE.Vector2();
@@ -57,7 +62,6 @@ class Selector {
     }
   }
   constructor(model: Model) {
-    this.setupEvent = true;
     this.model = model;
     this.enableHover = true
     this.enableClick = true
@@ -69,10 +73,189 @@ class Selector {
     this.isCtrlPressed = false
     this.selected = []
     makeAutoObservable(this)
+    // Bind DOM callbacks only after MobX has wrapped methods as actions.
+    this.setupEvent = true;
+  }
+
+  private pickStructuralMember() {
+    if (!this.model.visibility?.members) return null
+    if (this.model.renderMode === 'thin-shell' && !this.model.visibility?.sections) return null
+    return this.model.structuralPicker.pick(
+      this.model.pointerCoords.x,
+      this.model.pointerCoords.y,
+      this.model.camera.cam,
+    )
+  }
+
+  private pickStructuralNode() {
+    if (!this.model.visibility?.nodes) return null
+    return this.model.structuralPicker.pick(
+      this.model.pointerCoords.x,
+      this.model.pointerCoords.y,
+      this.model.camera.cam,
+      'node',
+    )
+  }
+
+  private syncWorkspaceSelection() {
+    const refs = new Map<string, { collection: 'nodes' | 'members' | 'shells'; id: number }>()
+    for (const id of this.selectedCenterlineIds) refs.set(`members:${id}`, { collection: 'members', id })
+    for (const id of this.selectedNodeIds) refs.set(`nodes:${id}`, { collection: 'nodes', id })
+    for (const item of this.selected) {
+      const parentData = item.object.parent instanceof THREE.Group ? item.object.parent.userData : undefined
+      const data = item.object.userData?.type ? item.object.userData : parentData
+      if (typeof data?.id !== 'number') continue
+      if (data.type === 'elasticBeamColumn') refs.set(`members:${data.id}`, { collection: 'members', id: data.id })
+      if (data.type === 'node') refs.set(`nodes:${data.id}`, { collection: 'nodes', id: data.id })
+      if (data.type === 'shell') refs.set(`shells:${data.id}`, { collection: 'shells', id: data.id })
+    }
+    const entities = [...refs.values()]
+    const current = this.model.workspaceContext.getCommandState().selection
+    const keys = (values: readonly { collection: string; id: number }[]) =>
+      values.map(ref => `${ref.collection}:${ref.id}`).sort().join('|')
+    if (keys(current) === keys(entities)) return
+    this.model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'SetSelection', schemaVersion: '1.0',
+      modelRevision: this.model.structuralDocument.revision, source: 'ui', payload: { entities },
+    })
+  }
+
+  private setWorkspaceHover(kind: 'node' | 'member', id: number | null) {
+    this.model.workspaceContext.hovered = id === null ? null : { kind, id }
+  }
+
+  private hoverCenterline() {
+    const startedAt = performance.now()
+    const entityId = this.pickStructuralMember()?.entityId ?? null
+    this.model.performanceBenchmark?.recordRaycast(
+      performance.now() - startedAt,
+      this.model.structuralSceneDB.memberCount,
+    )
+    if (entityId === this.hoveredCenterlineId) return
+    if (this.hoveredCenterlineId !== null) {
+      this.model.setStructuralMemberState(this.hoveredCenterlineId, { hovered: false })
+    }
+    this.hoveredCenterlineId = entityId
+    if (entityId !== null) this.model.setStructuralMemberState(entityId, { hovered: true })
+    this.setWorkspaceHover('member', entityId)
+  }
+
+  private clickCenterline() {
+    const entityId = this.pickStructuralMember()?.entityId ?? null
+    if (entityId === null) {
+      if (!this.isCtrlPressed) this.clearCenterlineSelection()
+      return
+    }
+    if (!this.isCtrlPressed) {
+      this.selectedCenterlineIds = [entityId]
+      this.syncWorkspaceSelection()
+      return
+    }
+    const selected = this.selectedCenterlineIds.includes(entityId)
+    this.selectedCenterlineIds = selected
+      ? this.selectedCenterlineIds.filter(id => id !== entityId)
+      : [...this.selectedCenterlineIds, entityId]
+    this.model.setStructuralMemberState(entityId, { selected: !selected })
+    this.syncWorkspaceSelection()
+  }
+
+  private hoverNode() {
+    const startedAt = performance.now()
+    const entityId = this.pickStructuralNode()?.entityId ?? null
+    this.model.performanceBenchmark?.recordRaycast(
+      performance.now() - startedAt,
+      this.model.structuralSceneDB.nodeCount,
+    )
+    if (entityId === this.hoveredNodeId) return
+    if (this.hoveredNodeId !== null) {
+      this.model.setStructuralNodeState(this.hoveredNodeId, { hovered: false })
+    }
+    this.hoveredNodeId = entityId
+    if (entityId !== null) this.model.setStructuralNodeState(entityId, { hovered: true })
+    this.setWorkspaceHover('node', entityId)
+  }
+
+  private clickNode() {
+    const entityId = this.pickStructuralNode()?.entityId ?? null
+    if (entityId === null) {
+      if (!this.isCtrlPressed) this.clearNodeSelection()
+      return
+    }
+    if (!this.isCtrlPressed) {
+      this.selectedNodeIds = [entityId]
+      this.syncWorkspaceSelection()
+      return
+    }
+    const selected = this.selectedNodeIds.includes(entityId)
+    this.selectedNodeIds = selected
+      ? this.selectedNodeIds.filter(id => id !== entityId)
+      : [...this.selectedNodeIds, entityId]
+    this.model.setStructuralNodeState(entityId, { selected: !selected })
+    this.syncWorkspaceSelection()
+  }
+
+  private clearCenterlineSelection(sync = true) {
+    this.selectedCenterlineIds = []
+    if (sync) this.syncWorkspaceSelection()
+  }
+
+  private clearNodeSelection(sync = true) {
+    this.selectedNodeIds = []
+    if (sync) this.syncWorkspaceSelection()
+  }
+
+  replaceStructuralSelection(ids: readonly number[]) {
+    const unique = [...new Set(ids)].filter(id => this.model.structuralSceneDB.memberIndexById.has(id))
+    this.selectedCenterlineIds = unique
+    this.syncWorkspaceSelection()
+  }
+
+  syncCenterlineSelectionFromLegacy() {
+    const memberIds = new Set<number>()
+    const nodeIds = new Set<number>()
+    for (const item of this.selected) {
+      const parentData = item.object.parent instanceof THREE.Group ? item.object.parent.userData : undefined
+      const data = item.object.userData?.type ? item.object.userData : parentData
+      if (data?.type === 'elasticBeamColumn' && typeof data.id === 'number') memberIds.add(data.id)
+      if (data?.type === 'node' && typeof data.id === 'number') nodeIds.add(data.id)
+    }
+    this.selectedCenterlineIds = [...memberIds]
+    this.selectedNodeIds = [...nodeIds]
+    this.syncWorkspaceSelection()
+  }
+
+  syncLegacySelectionFromCenterline() {
+    this.clearLegacySelection(false)
+    for (const id of this.selectedCenterlineIds) {
+      const member = this.model.members.find(candidate => candidate.id === id)
+      if (!member?.mesh || this.isMeshSelected(member.mesh)) continue
+      this.selected.push({ object: member.mesh, originalColor: this.originalColor })
+      const material = member.mesh.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[]
+      if (Array.isArray(material)) material[0].color.setHex(this.colorOnHover)
+      else material.color.setHex(this.colorOnHover)
+    }
+    for (const id of this.selectedNodeIds) {
+      const node = this.model.nodes.find(candidate => candidate.id === id)
+      if (!node?.mesh || this.isMeshSelected(node.mesh)) continue
+      this.selected.push({ object: node.mesh, originalColor: node.mesh.userData.originalColor ?? 0x0000ff })
+      ;(node.mesh.material as THREE.MeshStandardMaterial).color.setHex(this.colorOnHover)
+    }
   }
 
   onHover() {
     if (this.enableHover) {
+      if (this.model.renderMode !== 'solid-extrude' && this.model.selectionMode !== 'shell2d') {
+        if (this.isBoxActive || this.hoverFrame !== null) return
+        this.hoverFrame = requestAnimationFrame(() => {
+          this.hoverFrame = null
+          if (this.enableHover && this.model.renderMode !== 'solid-extrude' && !this.isBoxActive) {
+            if (this.model.selectionMode === 'node') this.hoverNode()
+            else this.hoverCenterline()
+          }
+        })
+        return
+      }
+      const raycastStartedAt = performance.now()
       const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
       this.rayCaster.setFromCamera(pointer, this.model.camera.cam)
       if (this.model.camera.viewMode == '2d') {
@@ -86,6 +269,7 @@ class Selector {
       this.model.scene.children.forEach(element => this.getMeshes(element, meshesArray))
       // https://github.com/ThatOpen/engine_components/blob/main/packages/front/src/fragments/Highlighter/index.ts
       const intersects = this.rayCaster.intersectObjects(meshesArray, false)
+      this.model.performanceBenchmark?.recordRaycast(performance.now() - raycastStartedAt, meshesArray.length)
       let materialOnHover = null
       if (intersects.length > 0) {
 
@@ -111,6 +295,11 @@ class Selector {
             }
           }
           this.hovered = intersects[0].object as THREE.Mesh;
+          const hoverParentData = this.hovered.parent instanceof THREE.Group ? this.hovered.parent.userData : undefined
+          const hoverData = this.hovered.userData?.type ? this.hovered.userData : hoverParentData
+          this.model.workspaceContext.hovered = typeof hoverData?.id === 'number'
+            ? { kind: hoverData.type === 'node' ? 'node' : hoverData.type === 'shell' ? 'shell' : 'member', id: hoverData.id }
+            : null
           materialOnHover = this.hovered.material as THREE.MeshLambertMaterial | THREE.MeshLambertMaterial[]
 
           if (Array.isArray(materialOnHover)) {
@@ -140,11 +329,17 @@ class Selector {
         }
         // (this.hovered.material as THREE.MeshBasicMaterial).color.setHex( this.originalColor );
         this.hovered = null;
+        this.model.workspaceContext.hovered = null
       }
     }
   }
   onClick() {
     if (this.enableClick) {
+      if (this.model.renderMode !== 'solid-extrude' && this.model.selectionMode !== 'shell2d') {
+        if (this.model.selectionMode === 'node') this.clickNode()
+        else this.clickCenterline()
+        return
+      }
       const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
       this.rayCaster.setFromCamera(pointer, this.model.camera.cam)
       const meshesArray = [] as THREE.Mesh[]
@@ -185,6 +380,7 @@ class Selector {
                 }
               )
             }
+            this.syncWorkspaceSelection()
           }
         }
       }
@@ -265,7 +461,7 @@ class Selector {
 
     if (distance <= 5) {
       if (event.button === 2) {
-        if (this.selected.length > 0) {
+        if (this.selected.length > 0 || this.selectedCenterlineIds.length > 0 || this.selectedNodeIds.length > 0) {
           this.model.openContextMenu(event.clientX, event.clientY);
         }
         return;
@@ -291,6 +487,32 @@ class Selector {
           -((event.clientY - rect.top) / rect.height) * 2 + 1,
           0.5
         );
+
+        if (this.model.renderMode !== 'solid-extrude' && this.model.selectionMode !== 'shell2d') {
+          if (this.model.selectionMode === 'node') {
+            const ids = this.model.structuralPicker.windowSelector.selectNodes(
+              this.model.camera.cam,
+              this.selectionBox.startPoint,
+              this.selectionBox.endPoint,
+            )
+            const selected = new Set(this.isCtrlPressed ? this.selectedNodeIds : [])
+            for (const id of ids) selected.add(id)
+            this.selectedNodeIds = [...selected]
+          } else {
+            const ids = this.model.structuralPicker.windowSelector.select(
+              this.model.camera.cam,
+              this.selectionBox.startPoint,
+              this.selectionBox.endPoint,
+            )
+            const selected = new Set(this.isCtrlPressed ? this.selectedCenterlineIds : [])
+            for (const id of ids) selected.add(id)
+            this.selectedCenterlineIds = [...selected]
+          }
+          this.syncWorkspaceSelection()
+          this.model.closeContextMenu()
+          this.isDragging = false
+          return
+        }
 
         const allSelected = this.selectionBox.select();
         const meshesArray: THREE.Mesh[] = [];
@@ -327,6 +549,7 @@ class Selector {
             }
           }
         });
+        this.syncWorkspaceSelection()
         
         this.model.closeContextMenu();
       }
@@ -335,6 +558,7 @@ class Selector {
     this.isDragging = false;
   }
   dispose() {
+    if (this.hoverFrame !== null) cancelAnimationFrame(this.hoverFrame)
     window.removeEventListener('pointermove', this.onHover);
     window.removeEventListener('pointermove', this.onPointerMove);
     window.removeEventListener('pointerdown', this.onPointerDown);
@@ -371,7 +595,12 @@ class Selector {
         }
       }
 
-      if (type === 'elasticBeamColumn' || type === '3dLine' || type === 'node') {
+      const selectable = this.model.selectionMode === 'node'
+        ? type === 'node'
+        : this.model.selectionMode === 'element1d'
+          ? type === 'elasticBeamColumn' || type === '3dLine'
+          : type === 'shell'
+      if (selectable) {
         switch (viewMode) {
           case '2d':
             if (objectOnLayer && visible && object.uuid !== meshInProgress?.uuid)
@@ -426,6 +655,21 @@ class Selector {
   }
 
   clear() {
+    this.clearCenterlineSelection(false)
+    this.clearNodeSelection(false)
+    if (this.hoveredCenterlineId !== null) {
+      this.model.setStructuralMemberState(this.hoveredCenterlineId, { hovered: false })
+      this.hoveredCenterlineId = null
+    }
+    if (this.hoveredNodeId !== null) {
+      this.model.setStructuralNodeState(this.hoveredNodeId, { hovered: false })
+      this.hoveredNodeId = null
+    }
+    this.clearLegacySelection(false)
+    this.syncWorkspaceSelection()
+  }
+
+  private clearLegacySelection(sync = true) {
     this.selected.forEach(m => {
       if (Array.isArray(m.object.material)) {
         const material = m.object.material as THREE.MeshLambertMaterial[]
@@ -436,6 +680,7 @@ class Selector {
       }
     })
     this.selected = []
+    if (sync) this.syncWorkspaceSelection()
   }
   isMeshSelected(mesh: THREE.Mesh) {
     return this.selected.some(m => m.object === mesh)
@@ -454,11 +699,14 @@ class Selector {
     } else {
       material.color.setHex(originalColor)
     }
+    this.syncWorkspaceSelection()
   }
   divideSelection() {
-    const members = this.model.members;
     const parts = 5
-    for (let item of this.selected) {
+    const memberIds = new Set<number>()
+    const nodeRecords: any[] = []
+    const memberRecords: any[] = []
+    for (const item of this.selected) {
       const object = item.object
       // Check userData on object, or on parent group if object is a mesh in a group
       let userData = object.userData
@@ -466,7 +714,10 @@ class Selector {
         userData = object.parent.userData
       }
       const { id } = userData
-      const member = members.find(el => el.id === id)
+      if (memberIds.has(id)) continue
+      const member = this.model.members.find(el => el.id === id)
+      if (!member) continue
+      memberIds.add(id)
       const section = member!.section
       const memberNodes = member!.nodes;
       const nodei = memberNodes[0]
@@ -477,45 +728,48 @@ class Selector {
         nodej.y - nodei.y,
         nodej.z - nodei.z,
       )
-      const direction = vector.clone().normalize()
-      const length = vector.length()
-
-      const nodes: Node[] = []
-      nodes.push(nodei)
-      // Remove the group if the object is a mesh in a group, otherwise remove the object itself
-      if (object instanceof THREE.Mesh && object.parent instanceof THREE.Group && object.parent.userData?.type === 'elasticBeamColumn') {
-        this.model.scene.remove(object.parent)
-      } else {
-        this.model.scene.remove(object)
-      }
-      for (let i = 0; i < parts; i++) {
-        const ratio = (i + 1) / parts
+      const nodes: Node[] = [nodei]
+      for (let i = 1; i < parts; i++) {
+        const ratio = i / parts
         const point = new THREE.Vector3(
-          nodei.x + direction.x * ratio * length,
-          nodei.y + direction.y * ratio * length,
-          nodei.z + direction.z * ratio * length
+          nodei.x + vector.x * ratio,
+          nodei.y + vector.y * ratio,
+          nodei.z + vector.z * ratio,
         )
-
         const node = new Node(point)
-
         nodes.push(node)
+        nodeRecords.push({ id: node.id, position: [node.x, node.z, node.y] })
       }
-
-      // console.log('NODES', nodes)
+      nodes.push(nodej)
       for (let i = 0; i < nodes.length - 1; i++) {
         const iNode = nodes[i]
         const jNode = nodes[i + 1]
-        const newBeam = new ElasticBeamColumn(this.model, '', [iNode, jNode], section)
-        newBeam.create()
-        this.model.members.push(newBeam)
+        memberRecords.push({
+          id: Math.floor(Math.random() * 0x7fffffff), label: member.label,
+          nodeI: iNode.id, nodeJ: jNode.id, sectionId: section.id,
+          referenceAxis: [member.vecxz.x, member.vecxz.z, member.vecxz.y],
+          gammaDegrees: member.gamma, release: member.release,
+        })
       }
     }
+    if (!memberIds.size) return
+    this.model.executeCommand({
+      commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+      modelRevision: this.model.structuralDocument.revision, source: 'ui',
+      payload: { operations: [
+        { type: 'DeleteMembers', payload: { ids: [...memberIds] } },
+        { type: 'CreateNodes', payload: { nodes: nodeRecords } },
+        { type: 'CreateMembers', payload: { members: memberRecords } },
+        { type: 'SetSelection', payload: { entities: [] } },
+      ] },
+    })
+    this.clear()
   }
   copyToLevel(level: Level) {
     const meshes = this.selected.map(item => item.object)
     const layer = this.model.levels.map(l => l.value).indexOf(level.value)
     const y = level.value
-    for (let mesh of meshes) {
+    for (const mesh of meshes) {
       if (mesh instanceof Line2) {
         const line = Line.getInstance()
         const geometry = mesh.geometry

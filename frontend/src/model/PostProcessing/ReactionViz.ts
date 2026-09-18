@@ -102,7 +102,7 @@ class ReactionViz {
       model: false,
       group: false,
       items: false,
-    } as any)
+    } as never)
   }
 
   get isAnyActive(): boolean {
@@ -131,6 +131,12 @@ class ReactionViz {
 
   render() {
     this.clearScene()
+
+    // Reactions now share the constant-draw-call GPU annotation stream. The
+    // legacy construction below remains as a temporary reference/fallback but
+    // is intentionally skipped so 10k reactions never create 10k Groups.
+    this.model.syncGpuAnnotations()
+    return
 
     const reactions: ReactionEntry[] = this.model.output?.reactions ?? []
     if (!reactions.length || !this.isAnyActive) return
@@ -220,6 +226,7 @@ class ReactionViz {
 
   dispose() {
     this.clearScene()
+    this.model.syncGpuAnnotations()
   }
 
   /** Per-frame hook (Model.update): keep every symbol pixel-sized and the
@@ -255,10 +262,11 @@ class ReactionViz {
 
   private clearScene() {
     if (this.group) {
-      this.group.traverse((obj: any) => {
-        if (obj.geometry) obj.geometry.dispose()
-        if (Array.isArray(obj.material)) obj.material.forEach((material: THREE.Material) => material.dispose())
-        else if (obj.material) obj.material.dispose()
+      this.group.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh || obj instanceof THREE.Line)) return
+        obj.geometry.dispose()
+        if (Array.isArray(obj.material)) obj.material.forEach((material) => material.dispose())
+        else obj.material.dispose()
       })
       this.model.scene.remove(this.group)
       this.group = null

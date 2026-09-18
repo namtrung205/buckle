@@ -1,5 +1,5 @@
 # Stage 1: Build the React application
-FROM node:22-alpine as build-stage
+FROM node:22.20.0-alpine AS build-stage
 
 # Set the working directory
 WORKDIR /app
@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install --legacy-peer-deps
+RUN npm ci
 
 # Copy the rest of the application code
 COPY . .

@@ -95,59 +95,63 @@ def run_analysis(model: dict, log_callback=None):
     # Initialize
     t0 = time.time()
     init()
-    _log(f"[ANALYSIS] ✓ Model initialized (3D, 6 DOF per node) in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Model initialized (3D, 6 DOF per node) in {time.time()-t0:.3f}s")
     
     # Create nodes
     t0 = time.time()
     create_nodes(nodes)
-    _log(f"[ANALYSIS] ✓ Created {len(nodes)} nodes in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Created {len(nodes)} nodes in {time.time()-t0:.3f}s")
 
     # Create transformation for beam-column elements
     t0 = time.time()
     create_geometric_transformation(members)
-    _log(f"[ANALYSIS] ✓ Created geometric transformations for {len(members)} members in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Created geometric transformations for {len(members)} members in {time.time()-t0:.3f}s")
 
     # Create sections 
     t0 = time.time()
     create_sections(sections)
-    _log(f"[ANALYSIS] ✓ Created {len(sections)} sections in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Created {len(sections)} sections in {time.time()-t0:.3f}s")
     
     # Create elements
     t0 = time.time()
     create_members(members)
     create_shells(shells)
-    _log(f"[ANALYSIS] ✓ Created elements (members + {len(shells)} shells) in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Created elements (members + {len(shells)} shells) in {time.time()-t0:.3f}s")
 
     # Apply boundary conditions
     t0 = time.time()
     apply_boundary_conditions(boundary_conditions)
-    _log(f"[ANALYSIS] ✓ Applied boundary conditions to {len(boundary_conditions)} constraint(s) in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Applied boundary conditions to {len(boundary_conditions)} constraint(s) in {time.time()-t0:.3f}s")
     
     # Apply loads
     t0 = time.time()
     apply_loads(loads)
-    _log(f"[ANALYSIS] ✓ Applied {len(loads)} load case(s) in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Applied {len(loads)} load case(s) in {time.time()-t0:.3f}s")
     
     # Run the analysis
     _log("[ANALYSIS] Starting static analysis...")
     t0 = time.time()
     run_static_analysis(model, _log)
-    _log(f"[ANALYSIS] ✓ Static analysis completed in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Static analysis completed in {time.time()-t0:.3f}s")
 
     # Extract results
     t0 = time.time()
     extract_results(_log, build_section_props(sections))
-    _log(f"[ANALYSIS] ✓ Results extracted in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Results extracted in {time.time()-t0:.3f}s")
     # print('output: ', output)
     
     # Clean up
     t0 = time.time()
     ops.wipe()
-    _log(f"[ANALYSIS] ✓ Model cleaned up in {time.time()-t0:.3f}s")
+    _log(f"[ANALYSIS] [OK] Model cleaned up in {time.time()-t0:.3f}s")
     
-    _log(f"[ANALYSIS] ✓ Total analysis time: {time.time() - start_total_time:.3f}s")
+    _log(f"[ANALYSIS] [OK] Total analysis time: {time.time() - start_total_time:.3f}s")
     return output
 
+  except HTTPException:
+      # Preserve the original status code (e.g. the 400s raised for invalid
+      # sections/members) instead of masking them as generic 500 failures.
+      raise
   except Exception as e:
       error_msg = str(e)
       # Check if this is a DPBSV error
@@ -239,7 +243,16 @@ def create_geometric_transformation(members):
 def create_sections(sections):
     """Creates a section for the beam-column elements."""
     for section in sections:
-        properties = compute_section_properties(section)
+        try:
+            properties = compute_section_properties(section)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid section {section.get('id')} "
+                    f"(name='{section.get('name')}', type='{section.get('type')}'): {exc}"
+                ),
+            ) from exc
         E = properties['E']
         A = properties['A']
         Iz = properties['Iz']
@@ -468,7 +481,7 @@ def create_shells(shells):
     
     # Skip degenerate shells (duplicate nodes — e.g. triangular gable passed as quad)
     if len(set(nodes)) < len(nodes):
-        print(f"Warning: Shell {shell_id} has duplicate node IDs {nodes} — skipping degenerate element")
+        print(f"Warning: Shell {shell_id} has duplicate node IDs {nodes} - skipping degenerate element")
         continue
     
     # Skip any shell that is not exactly 4 unique nodes
@@ -505,7 +518,7 @@ def apply_boundary_conditions(boundary_conditions):
     
       j_coord = ops.nodeCoord(target)
       
-      if(bdc_type == "elastic"):
+      if bdc_type == "elastic":
         support_node = int(random.random() * 0x7FFFFFFF)
         ops.node(support_node, j_coord[0], j_coord[1], j_coord[2])
       
@@ -532,10 +545,10 @@ def apply_boundary_conditions(boundary_conditions):
         ops.fix(support_node, 1, 1, 1, 1, 1, 1)
         # The spring ground node carries the elastic support reaction
         output['supported_nodes'][target] = support_node
-    else:      
+      else:
         # Standard engineering axis convention (X horizontal, Y horizontal,
         # Z vertical) is identical to OpenSees — no coordinate swap needed.
-        ops.fix(target, dx, dy, dz, rx, ry, rz)
+        ops.fix(target, *(int(value) for value in (dx, dy, dz, rx, ry, rz)))
         # The fixed node itself carries the rigid support reaction
         output['supported_nodes'][target] = target
 
@@ -578,8 +591,10 @@ def check_rigid_body_stability(members, shells, boundary_conditions, nodes, log_
   Raising a descriptive error here pinpoints the under-restrained part instead.
   """
   def _log(msg: str):
-    print(msg, flush=True)
-    if log_callback: log_callback(msg)
+    if log_callback:
+      log_callback(msg)
+    else:
+      print(msg, flush=True)
 
   parent = {}
   def find(a):
@@ -637,7 +652,7 @@ def check_rigid_body_stability(members, shells, boundary_conditions, nodes, log_
           warned_pairs.add(pair)
           _log(f"[ANALYSIS] Warning: {names.get(a['id'], a['id'])} and "
                f"{names.get(b['id'], b['id'])} are at the same coordinates but are "
-               f"separate nodes — elements connected to them are structurally "
+               f"separate nodes - elements connected to them are structurally "
                f"disconnected. Merge the nodes or re-draw with node snap enabled.")
 
   unstable = []
@@ -668,7 +683,7 @@ def check_rigid_body_stability(members, shells, boundary_conditions, nodes, log_
   warned = False
   for root in elastic_roots:
     if restrained.get(root, 0) < 6 and not warned:
-      _log("[ANALYSIS] Warning: some parts rely on elastic (spring) supports for stability — verify results carefully.")
+      _log("[ANALYSIS] Warning: some parts rely on elastic (spring) supports for stability - verify results carefully.")
       warned = True
 
 def record_nodal_load(node_id, fx, fy, fz, mx=0.0, my=0.0, mz=0.0):
@@ -766,12 +781,12 @@ def apply_loads(loads):
                 fx_total = value.get('x', 0) * area * 1000
                 fy_total = value.get('y', 0) * area * 1000
                 fz_total = value.get('z', 0) * area * 1000
-                print(f"[LOAD] Shell {shell_id}: Snow/vector load area={area:.3f}m², F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
+                print(f"[LOAD] Shell {shell_id}: Snow/vector load area={area:.3f}m2, F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
             else:
                 # Scalar magnitude (e.g. Wind): normal pressure perpendicular to surface
                 force_vec = float(magnitude) * area * 1000 * normal
                 fx_total, fy_total, fz_total = force_vec[0], force_vec[1], force_vec[2]
-                print(f"[LOAD] Shell {shell_id}: Wind/scalar load magnitude={magnitude} area={area:.3f}m², F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
+                print(f"[LOAD] Shell {shell_id}: Wind/scalar load magnitude={magnitude} area={area:.3f}m2, F=({fx_total:.1f},{fy_total:.1f},{fz_total:.1f})N")
             
             # Distribute equally to 4 corner nodes
             for node_id in shell_nodes:
@@ -784,8 +799,10 @@ def apply_loads(loads):
 def run_static_analysis(model: dict = None, log_callback=None):
     """Sets up and runs the static analysis."""
     def _log(msg: str):
-        print(msg, flush=True)
-        if log_callback: log_callback(msg)
+        if log_callback:
+            log_callback(msg)
+        else:
+            print(msg, flush=True)
 
     try:
         # Check system health
@@ -870,9 +887,9 @@ def extract_node_displacements():
     try:
       disp = ops.nodeDisp(node_id) 
       node['displacements'] = {
-        'ux': round(disp[0], 5),  
-        'uy': round(disp[1], 5),    
-        'uz': round(disp[2], 5),  
+        'ux': round(disp[0], 9),
+        'uy': round(disp[1], 9),
+        'uz': round(disp[2], 9),
         'rx': round(disp[3], 9),  
         'ry': round(disp[4], 9),  
         'rz': round(disp[5], 9),
@@ -1094,8 +1111,10 @@ def _station_stresses(values, sp):
 def extract_results(log_callback=None, section_props=None):
   """Extracts and processes results from the analysis."""
   def _log(msg: str):
-      print(msg, flush=True)
-      if log_callback: log_callback(msg)
+      if log_callback:
+          log_callback(msg)
+      else:
+          print(msg, flush=True)
       
   members = output['members']
   

@@ -1,4 +1,4 @@
-import { Box, Typography, Collapse, IconButton } from '@mui/material';
+import { Box, Typography, Collapse, IconButton, Tabs, Tab } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
   ChevronRight as ChevronRightIcon,
@@ -13,6 +13,7 @@ import {
   VisibilityOff as HiddenIcon,
   Straighten as LevelsIcon,
   Add as AddIcon,
+  ZoomIn as ZoomInIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
@@ -33,6 +34,7 @@ import AddOrEditLevel from '../Model/Levels/AddOrEdit';
 import { Level } from '../../types';
 import ElasticBeamColumn from '../../model/Elements/ElasticBeamColumn/ElasticBeamColumn';
 import BoundaryCondition from '../../model/BoundaryCondition/BoundaryCondition';
+import SelectionSets from './SelectionSets';
 interface LeftBarProps {
   isCollapsed?: boolean;
 }
@@ -147,6 +149,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
   const model = useModel();
   // Results lock: while locked, every tree editing action is disabled
   const isLocked = model?.isLocked ?? false;
+  /** Left panel tab: 0 = model Definition tree (unchanged), 1 = Selection Sets. */
+  const [activeTab, setActiveTab] = useState(0);
   const [addOrEditNode, setAddOrEditNode] = useState(false);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
 
@@ -181,6 +185,26 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
         pointerEvents: isCollapsed ? 'none' : 'auto',
       }}
     >
+      {/* Left panel tabs: the existing model tree becomes the "Definition" tab;
+          the Navisworks-style Selection Sets tab lives right beside it. */}
+      <Box
+        sx={{
+          px: 1,
+          pt: 0.5,
+          borderBottom: '1px solid ' + colors.border,
+          backgroundColor: colors.surface,
+        }}
+      >
+        <Tabs
+          value={activeTab}
+          onChange={(_event, value: number) => setActiveTab(value === 1 ? 1 : 0)}
+          sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, px: 1 } }}
+        >
+          <Tab label="Definition" value={0} />
+          <Tab label="Selection Sets" value={1} />
+        </Tabs>
+      </Box>
+
       {/* Tree View */}
       <Box
         sx={{
@@ -202,6 +226,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
           },
         }}
       >
+        {activeTab === 0 ? (
+        <>
         {/* Materials */}
         <TreeItem
           id="materials"
@@ -250,10 +276,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    const index = model?.materials.findIndex((m) => m.id === material.id);
-                    if (index !== undefined && index !== -1 && model) {
-                      model.materials.splice(index, 1);
-                    }
+                    model?.executeCommand({
+                      commandId: crypto.randomUUID(), type: 'DeleteMaterials', schemaVersion: '1.0',
+                      modelRevision: model.structuralDocument.revision, source: 'ui',
+                      payload: { ids: [material.id] },
+                    });
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -491,10 +518,19 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
             model.addNewNode();
           }}
         >
-          {model?.nodes?.slice(0, 50).map((node: Node) => (
+          {model?.nodes?.slice(0, 50).map((node: Node) => {
+            // Row state is answered from the canonical selection / hidden Sets;
+            // the revision reads inside the helpers keep this observer in sync.
+            const isSelected = model.isEntitySelected('nodes', node.id);
+            const isHidden = model.isEntityHidden('nodes', node.id);
+            return (
             <Box
               key={node.id}
-              onClick={() => model.focusNode(node.id)}
+              onClick={() => {
+                model.focusNode(node.id);
+                // Light the element up in the viewport as well.
+                model.selectInViewport('nodes', node.id);
+              }}
               sx={{
                 px: 2,
                 pl: 6,
@@ -503,12 +539,13 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                backgroundColor: isSelected ? 'rgba(74, 144, 226, 0.15)' : undefined,
                 '&:hover': {
                   backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
+              <Typography sx={{ fontSize: '0.75rem', color: isHidden ? colors.textFaint : isSelected ? colors.text : colors.textDim, fontStyle: isHidden ? 'italic' : undefined }}>
                 {node.name || `Node ${node.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -525,10 +562,32 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 </IconButton>
                 <IconButton
                   size="small"
+                  title="Zoom to node"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    model.zoomToEntity('nodes', node.id);
+                  }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                >
+                  <ZoomInIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  title={isHidden ? 'Show node' : 'Hide node'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    model.setEntitiesHidden('nodes', [node.id], !isHidden);
+                  }}
+                  sx={{ padding: '2px', color: isHidden ? colors.textFaint : colors.textDim, '&:hover': { color: colors.text } }}
+                >
+                  {isHidden ? <HiddenIcon sx={{ fontSize: 14 }} /> : <VisibleIcon sx={{ fontSize: 14 }} />}
+                </IconButton>
+                <IconButton
+                  size="small"
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    node.delete()
+                    model.deleteNodesById([node.id])
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -536,7 +595,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 </IconButton>
               </Box>
             </Box>
-          ))}
+            );
+          })}
           {(model?.nodes?.length || 0) > 50 && (
             <Box sx={{ px: 2, pl: 6, py: 0.8 }}>
               <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint, fontStyle: 'italic' }}>
@@ -557,10 +617,19 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
             setAddOrEditMember(true);
           }}
         >
-          {model?.members?.slice(0, 50).map((member: ElasticBeamColumn) => (
+          {model?.members?.slice(0, 50).map((member: ElasticBeamColumn) => {
+            // Row state is answered from the canonical selection / hidden Sets;
+            // the revision reads inside the helpers keep this observer in sync.
+            const isSelected = model.isEntitySelected('members', member.id);
+            const isHidden = model.isEntityHidden('members', member.id);
+            return (
             <Box
               key={member.id}
-              onClick={() => model.focusMember(member.id)}
+              onClick={() => {
+                model.focusMember(member.id);
+                // Light the element up in the viewport as well.
+                model.selectInViewport('members', member.id);
+              }}
               sx={{
                 px: 2,
                 pl: 6,
@@ -569,12 +638,13 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
+                backgroundColor: isSelected ? 'rgba(74, 144, 226, 0.15)' : undefined,
                 '&:hover': {
                   backgroundColor: colors.hover,
                 },
               }}
             >
-              <Typography sx={{ fontSize: '0.75rem', color: colors.textDim }}>
+              <Typography sx={{ fontSize: '0.75rem', color: isHidden ? colors.textFaint : isSelected ? colors.text : colors.textDim, fontStyle: isHidden ? 'italic' : undefined }}>
                 {member.label || `Member ${member.id}`}
               </Typography>
               <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -591,11 +661,32 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 </IconButton>
                 <IconButton
                   size="small"
+                  title="Zoom to member"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    model.zoomToEntity('members', member.id);
+                  }}
+                  sx={{ padding: '2px', color: colors.textDim, '&:hover': { color: colors.text } }}
+                >
+                  <ZoomInIcon sx={{ fontSize: 14 }} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  title={isHidden ? 'Show member' : 'Hide member'}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    model.setEntitiesHidden('members', [member.id], !isHidden);
+                  }}
+                  sx={{ padding: '2px', color: isHidden ? colors.textFaint : colors.textDim, '&:hover': { color: colors.text } }}
+                >
+                  {isHidden ? <HiddenIcon sx={{ fontSize: 14 }} /> : <VisibleIcon sx={{ fontSize: 14 }} />}
+                </IconButton>
+                <IconButton
+                  size="small"
                     disabled={isLocked}
                   onClick={(e) => {
                     e.stopPropagation();
-                    console.log('Delete member', member.id);
-                    member.remove()
+                    model.deleteMembersById([member.id])
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -603,7 +694,8 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                 </IconButton>
               </Box>
             </Box>
-          ))}
+            );
+          })}
           {(model?.members?.length || 0) > 50 && (
             <Box sx={{ px: 2, pl: 6, py: 0.8 }}>
               <Typography sx={{ fontSize: '0.7rem', color: colors.textFaint, fontStyle: 'italic' }}>
@@ -663,7 +755,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                     const support = model.boundaryConditions.find((b) => b.id === bc.id);
                     console.log('Delete support', support?.id);
                     if (support) {
-                      support.delete();
+                      model.deleteBoundaryConditionsById([support.id]);
                     }
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
@@ -723,7 +815,7 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
                   onClick={(e) => {
                     e.stopPropagation();
                     console.log('Delete load', load.id);
-                    load.delete()
+                    model.deleteLoadsById([load.id])
                   }}
                   sx={{ padding: '2px', color: colors.danger, '&:hover': { color: colors.danger }, '&.Mui-disabled': { color: colors.textFaint } }}
                 >
@@ -732,7 +824,11 @@ const LeftBar = observer(({ isCollapsed = false }: LeftBarProps) => {
               </Box>
             </Box>
           ))}
-        </TreeItem>
+          </TreeItem>
+        </>
+        ) : (
+          <SelectionSets disabled={isLocked} />
+        )}
       </Box>
 
       <AddOrEditNode

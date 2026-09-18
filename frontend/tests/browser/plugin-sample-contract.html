@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src 'self' blob: data:; frame-src 'self' blob:; connect-src 'self'; style-src 'self' 'unsafe-inline'">
+</head><body><pre id="result">running</pre><script type="module">
+import { parseZipBundle } from '/packages/plugin-sdk/src/bundle.ts';
+import { WorkerRuntime } from '/src/core/plugins/WorkerRuntime.ts';
+import { spawnSandboxedPluginWorker } from '/src/core/plugins/SandboxedPluginWorker.ts';
+const report = { ready: false, opened: 0, notifications: [], error: null };
+const show = () => { document.getElementById('result').textContent = JSON.stringify(report); };
+let runtime;
+try {
+  const response = await fetch('/examples/hello-buckle.zip');
+  if (!response.ok) throw new Error(`ZIP HTTP ${response.status}`);
+  const bundle = parseZipBundle(new Uint8Array(await response.arrayBuffer()));
+  const worker = bundle.files.get('worker.js');
+  if (!worker) throw new Error('Sample Worker missing');
+  runtime = new WorkerRuntime({
+    spawn: () => spawnSandboxedPluginWorker(worker),
+    handlers: {
+      'model.query': () => ({ nodes: [{id:1}], members: [] }),
+      'ui.notify': ({params}) => { report.notifications.push(params?.message); show(); },
+      'ui.openPanel': () => { report.opened += 1; show(); },
+    },
+    onCrash: reason => { if (reason !== 'terminated') { report.error = reason; show(); } },
+  });
+  const commands = await runtime.waitReady();
+  report.ready = commands.includes('com.buckle.examples.hello.run');
+  await runtime.invokeCommand('com.buckle.examples.hello.run');
+  show();
+} catch (error) {
+  report.error = String(error);
+  show();
+} finally { runtime?.terminate(); }
+</script></body></html>

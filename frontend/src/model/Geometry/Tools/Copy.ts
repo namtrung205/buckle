@@ -18,7 +18,7 @@ interface MeshData {
 class CopyTool implements Tool {
   private static instance: CopyTool | null = null;
 
-  uuid: String = 'Copy'
+  uuid: string = 'Copy'
 
   enabled = false
   model : Model
@@ -99,8 +99,8 @@ class CopyTool implements Tool {
     if(this.model.snapper.snappedScreenCoords) mouse = this.model.snapper.snappedScreenCoords
 
     this.rayCaster.setFromCamera(mouse, this.camera.cam);
-    const nodes = this.model.nodes.map((node) => node.mesh)
-    const members = this.model.members.map(member => member.mesh)
+    const nodes = this.model.nodes.map((node) => node.mesh).filter(Boolean)
+    const members = this.model.members.map(member => member.mesh).filter(Boolean)
     const grid = this.model.gridHelper.grid
     const meshesArray = [...nodes, ...members, grid]
     const intersects: THREE.Intersection[] = this.rayCaster.intersectObjects(meshesArray);
@@ -122,9 +122,9 @@ class CopyTool implements Tool {
             mesh.applyMatrix4(matrixWorld)
             mesh.userData = {...userData}
 
-            let offset = new THREE.Vector3()
-            let inverseMatrix = matrixWorld.clone().invert()
-            let elPosition = new THREE.Vector3().setFromMatrixPosition(matrixWorld)
+            const offset = new THREE.Vector3()
+            const inverseMatrix = matrixWorld.clone().invert()
+            const elPosition = new THREE.Vector3().setFromMatrixPosition(matrixWorld)
             offset.copy(elPosition).sub(this.copyStart)
             
             return {
@@ -169,6 +169,17 @@ class CopyTool implements Tool {
     }
   }
   paste() {
+    const plannedNodes: Node[] = []
+    const nodeRecords: any[] = []
+    const memberRecords: any[] = []
+    const findTargetNode = (position: THREE.Vector3) =>
+      findNodeAtPosition([...this.model.nodes, ...plannedNodes], position, 0.01)
+    const planNode = (position: THREE.Vector3) => {
+      const node = new Node(position)
+      plannedNodes.push(node)
+      nodeRecords.push({ id: node.id, name: node.name, position: [node.x, node.z, node.y] })
+      return node
+    }
     for (const item of this.meshesData) {
       const copy = item.mesh as THREE.Mesh
       const userData = copy.userData
@@ -177,13 +188,9 @@ class CopyTool implements Tool {
       if (userData.type === 'node') {
         copyPosition = copy.position.clone()
         // Check if node already exists at this position
-        let targetNode = findNodeAtPosition(this.model.nodes, copyPosition, 0.01)
+        let targetNode = findTargetNode(copyPosition)
         if (!targetNode) {
-          // Create new node
-          targetNode = new Node(copyPosition)
-          targetNode.model = this.model
-          targetNode.create()
-          this.model.nodes.push(targetNode)
+          targetNode = planNode(copyPosition)
         }
       
       } else if (userData.type === 'elasticBeamColumn') {
@@ -207,43 +214,39 @@ class CopyTool implements Tool {
           )
 
           // Find or create node at position I
-          let newNodeI = findNodeAtPosition(
-            this.model.nodes,
-            newPosI,
-            0.01
-          )
+          let newNodeI = findTargetNode(newPosI)
           if (!newNodeI) {
-            newNodeI = new Node(newPosI)
-            newNodeI.model = this.model
-            newNodeI.create()
-            this.model.nodes.push(newNodeI)
+            newNodeI = planNode(newPosI)
           }
 
           // Find or create node at position J
-          let newNodeJ = findNodeAtPosition(
-            this.model.nodes,
-            newPosJ,
-            0.01
-          )
+          let newNodeJ = findTargetNode(newPosJ)
           if (!newNodeJ) {
-            newNodeJ = new Node(newPosJ)
-            newNodeJ.model = this.model
-            newNodeJ.create()
-            this.model.nodes.push(newNodeJ)
+            newNodeJ = planNode(newPosJ)
           }
 
           // Create new member with found/created nodes
-          const newMember = new ElasticBeamColumn(
-            this.model,
-            originalMember.label,
-            [newNodeI, newNodeJ],
-            originalMember.section,
-            undefined // let it generate new ID
-          )
-          newMember.create()
-          this.model.members.push(newMember)
+          memberRecords.push({
+            id: Math.floor(Math.random() * 0x7fffffff),
+            label: originalMember.label,
+            nodeI: newNodeI.id, nodeJ: newNodeJ.id,
+            sectionId: originalMember.section.id,
+            referenceAxis: [originalMember.vecxz.x, originalMember.vecxz.z, originalMember.vecxz.y],
+            gammaDegrees: originalMember.gamma, release: originalMember.release,
+          })
         }
       }
+    }
+
+    if (nodeRecords.length || memberRecords.length) {
+      this.model.executeCommand({
+        commandId: crypto.randomUUID(), type: 'Transaction', schemaVersion: '1.0',
+        modelRevision: this.model.structuralDocument.revision, source: 'ui',
+        payload: { operations: [
+          ...(nodeRecords.length ? [{ type: 'CreateNodes' as const, payload: { nodes: nodeRecords } }] : []),
+          ...(memberRecords.length ? [{ type: 'CreateMembers' as const, payload: { members: memberRecords } }] : []),
+        ] },
+      })
     }
 
     // Clean up temporary cloned meshes

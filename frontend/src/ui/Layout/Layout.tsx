@@ -11,6 +11,9 @@ import Legend from '../Results/Components/Legend/Legend';
 import FpsOverlay from './FpsOverlay';
 import StatusBar from './StatusBar';
 import ContextMenu from './ContextMenu';
+import CopilotPanel from '../Copilot/CopilotPanel';
+import ContributionPanelHost from './ContributionPanelHost';
+import PluginLoader from './PluginLoader';
 
 interface LayoutProps {
   children: ReactNode;
@@ -18,6 +21,7 @@ interface LayoutProps {
 
 const Layout = observer(({ children }: LayoutProps) => {
   const [isLeftBarCollapsed, setIsLeftBarCollapsed] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
   const model = useModel();
 
   const handleMenuClick = () => {
@@ -36,7 +40,8 @@ const Layout = observer(({ children }: LayoutProps) => {
       }}
     >
       {/* Top Bar (Ribbon) */}
-      <TopBar onMenuClick={handleMenuClick} />
+      <TopBar onMenuClick={handleMenuClick} onPluginsClick={() => setPluginsOpen(true)} />
+      <PluginLoader open={pluginsOpen} onClose={() => setPluginsOpen(false)} />
 
       {/* Main content area with left bar */}
       <Box
@@ -73,11 +78,13 @@ const Layout = observer(({ children }: LayoutProps) => {
 
         {/* Right dock panel — inline properties for the focused entity, Results, or Draw */}
         {(model?.hasFocus() || model?.activeDialog === 'results' || model?.activeDialog === 'reactions' || model?.activeDialog === 'draw') && <RightPanel />}
+        <ContributionPanelHost />
       </Box>
 
       {/* Bottom Status Bar */}
       <StatusBar />
       <ContextMenu />
+      {model && <CopilotPanel />}
     </Box>
   );
 });

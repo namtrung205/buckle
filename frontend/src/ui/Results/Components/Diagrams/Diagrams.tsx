@@ -54,6 +54,12 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     return active;
   });
 
+  const showActiveStructuralPass = () => {
+    model.visibility.showOrHideMembers(true);
+    model.visibility.showOrHideSections(model.renderMode === 'thin-shell');
+    model.applyRenderModeVisibility();
+  };
+
   const applyForce = (type: string | null) => {
     if (!type) return;
     // Result visualizations are exclusive: applying a diagram clears the reactions
@@ -62,8 +68,10 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     post.showDiagram(type, selectedMembers);
     // Forces render on the member centreline - hide the solid section; contour paints the
     // centreline with the colormap (hiding the neutral grey line), otherwise keep it
-    model.visibility.showOrHideSections(false);
-    model.visibility.showOrHideMembers(!post.showContour);
+    if (model.renderMode === 'solid-extrude') {
+      model.visibility.showOrHideSections(false);
+      model.visibility.showOrHideMembers(!post.showContour);
+    } else showActiveStructuralPass();
     model.visibility.showOrHideLoads(false);
   };
 
@@ -76,8 +84,10 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     // so the solid sections must be SHOWN exactly when the option is on, and
     // hidden when the option is off (centreline-only fallback).
     const showSolid = post.showStressSolid;
-    model.visibility.showOrHideSections(showSolid);
-    model.visibility.showOrHideMembers(!showSolid);
+    if (model.renderMode === 'solid-extrude') {
+      model.visibility.showOrHideSections(showSolid);
+      model.visibility.showOrHideMembers(!showSolid);
+    } else showActiveStructuralPass();
     model.visibility.showOrHideLoads(false);
   };
 
@@ -101,15 +111,17 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
     else if (post.activeType) applyForce(post.activeType);
   };
 
-  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine' | 'showLegend' | 'showStressSolid') =>
+  const handleToggle = (key: 'showRibbon' | 'showHatch' | 'showContour' | 'showLabels' | 'showRefLine' | 'showLegend' | 'showStressSolid' | 'useDeformedDiagramReference') =>
     (event: ChangeEvent<HTMLInputElement>) => {
       post[key] = event.target.checked;
       if (key === 'showLegend') return; // pure on-canvas UI flag — no 3D re-render needed
       if (key === 'showContour') {
         // Line-only display: sections always hidden; contour paints the centreline
         // strips, so the neutral grey line only shows when the colours are off
-        model.visibility.showOrHideSections(false);
-        model.visibility.showOrHideMembers(!post.showContour);
+        if (model.renderMode === 'solid-extrude') {
+          model.visibility.showOrHideSections(false);
+          model.visibility.showOrHideMembers(!post.showContour);
+        }
       }
       renderActive();
     };
@@ -127,7 +139,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
           multiple
           value={selectedMembers}
           onChange={(e) => setSelectedMembers(e.target.value as number[])}
-          renderValue={(selected) => (selected as number[]).map(id => model.members.find((m: any) => m.id === id)?.label || id).join(', ')}
+          renderValue={(selected) => (selected as number[]).map(id => model.members.find((member) => member.id === id)?.label || id).join(', ')}
           sx={{
             backgroundColor: UI.panel,
             fontSize: '0.8rem',
@@ -138,7 +150,7 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
             '& .MuiSelect-select': { py: 0.9, color: UI.text },
           }}
         >
-          {model.members?.map((member: any) => (
+          {model.members?.map((member) => (
             <MenuItem key={member.id} value={member.id}>
               <Checkbox checked={selectedMembers.indexOf(member.id) > -1} size="small" sx={{ color: UI.dim, '&.Mui-checked': { color: UI.accent } }} />
               {member.label || `Member ${member.id}`}
@@ -203,6 +215,9 @@ const Diagrams = observer(({ variant }: DiagramsProps) => {
           <>
             <FormControlLabel control={<Switch size="small" checked={post.showRibbon} onChange={handleToggle('showRibbon')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Filled ribbon</Typography>} sx={{ margin: 0 }} />
             <FormControlLabel control={<Switch size="small" checked={post.showHatch} onChange={handleToggle('showHatch')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Hatch lines</Typography>} sx={{ margin: 0 }} />
+            {model.renderMode !== 'solid-extrude' && (
+              <FormControlLabel control={<Switch size="small" checked={post.useDeformedDiagramReference} onChange={handleToggle('useDeformedDiagramReference')} sx={switchSx} />} label={<Typography sx={{ fontSize: '0.78rem', color: UI.text }}>Diagram on deformed reference</Typography>} sx={{ margin: 0 }} />
+            )}
           </>
         )}
         {isStress && (

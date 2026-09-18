@@ -7,30 +7,11 @@ import {
 import { useModel } from '../../../../model/Context';
 import { UI } from '../ui';
 
-interface DisplacementData {
-  id: number;
-  x: number;
-  y: number;
-  z: number;
-  displacements: {
-    ux: number;
-    uy: number;
-    uz: number;
-    rx: number;
-    ry: number;
-    rz: number;
-  };
-}
-
-interface DisplacementsProps {
-  data?: DisplacementData[];
-}
-
 const Displacements = () => {
   const model = useModel()
 
-  const rows: GridRowsProp = model.output?.nodes?.map((item : DisplacementData) => ({
-    label : model.nodes.find((node: any) => node.id === item.id)?.name || '',
+  const rows: GridRowsProp = model.output?.nodes?.map((item) => ({
+    label : model.nodes.find((node) => node.id === item.id)?.name || '',
     id: item.id,
     x: item.x,
     y: item.y,
@@ -38,9 +19,9 @@ const Displacements = () => {
     ux: item.displacements.ux,
     uy: item.displacements.uy,
     uz: item.displacements.uz,
-    rx: item.displacements.rx,
-    ry: item.displacements.ry,
-    rz: item.displacements.rz,
+    rx: item.displacements.rx ?? 0,
+    ry: item.displacements.ry ?? 0,
+    rz: item.displacements.rz ?? 0,
   })) ?? [];
 
   const columns: GridColDef[] = [

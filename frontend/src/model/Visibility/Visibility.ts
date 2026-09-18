@@ -1,7 +1,5 @@
 import Model from "../Model"
 import Labeler from "../Labeler/Labeler"
-import { Label } from "../../types"
-import * as THREE from "three";
 import { makeAutoObservable } from "mobx";
 class Visibility {
   labeler : Labeler
@@ -11,11 +9,26 @@ class Visibility {
   members : boolean = true
   memberLabels : boolean = false
   sections : boolean = true
+  /** Load visibility master switch. When false nothing load-related renders:
+   *  the instanced arrow/batch hides AND the label stream skips load values
+   *  regardless of the two sub-flags below. */
   loads : boolean = true
+  /** Sub-toggle: load SYMBOLS (nodal/element arrows + distributed bands —
+   *  the GPU instanced batch). Only meaningful while `loads` is on. */
+  loadSymbols : boolean = true
+  /** Sub-toggle: load VALUES (numeric labels riding the GPU annotation
+   *  stream). Only meaningful while `loads` is on. */
+  loadValues : boolean = true
   // Startup defaults: structural axis grids and the level datum set stay
-  // HIDDEN until enabled in Settings → Visibility. GridSystem / LevelVisual
+  // HIDDEN until enabled in Settings → Level. GridSystem / LevelVisual
   // read these flags when they are created, so the 3D view and this dialog
   // always start in sync.
+  /** Support glyphs (fixed / pinned DOF markers) share the symbol batch;
+   *  toggling this just rebuilds the stream without them. */
+  supports : boolean = true
+  /** Member release pins (green GPU circles). Always part of the shared
+   *  symbol batch — toggling this just rebuilds the stream without it. */
+  releases : boolean = true
   grids : boolean = false
   levels : boolean = false
   
@@ -28,11 +41,17 @@ class Visibility {
 
   showOrHideMembers(visible : boolean){
     this.members = visible
+    this.model.centerlineRenderer?.setMembersVisible(visible)
+    this.model.thinShellRenderer?.setMembersVisible(visible && this.sections)
     this.model.members.forEach((member) => {
       // member.mesh.visible = visible
 
       const line = member.line
-      if(line) line.mesh.visible = visible
+      if(line) {
+        line.mesh.visible = this.model.renderMode === 'solid-extrude'
+          && visible
+          && this.model.isStructuralMemberVisible(member.id)
+      }
 
     })
   }
@@ -40,87 +59,81 @@ class Visibility {
   showOrHideMemberLabels(visible : boolean) {
     this.memberLabels = visible
     const ids = this.model.members.map((member) => `member-${member.id}`)
-    const delta = 0.1
-    if(!visible) {
-      this.model.labeler.batchDelete(ids) 
-      return
-    } 
-
-    const labels : Label[] = this.model.members.map((member) => {
-      const nodes = member.nodes
-      const iNode = nodes[0]
-      const jNode = nodes[1]
-
-      const xCenter = (iNode.x + jNode.x) / 2
-      const yCenter = (iNode.y + jNode.y) / 2
-      const zCenter = (iNode.z + jNode.z) / 2
-      return(
-        {
-          id : `member-${member.id}`,
-          position : new THREE.Vector3(xCenter, yCenter + delta, zCenter),
-          text : member.label ? member.label : '',
-        }
-      )
-    })
-    
-    this.model.labeler.batchUpdateOrCreate(labels)
+    // Remove labels created by older sessions and use one instanced GPU stream.
+    this.model.labeler.batchDelete(ids)
+    this.model.gpuAnnotations.setMemberLabels(visible)
   }
   
   showOrHideNodes(visible : boolean){
     this.nodes = visible
+    this.model.centerlineRenderer?.setNodesVisible(visible)
     this.model.nodes.forEach((node) => {
-      node.mesh.visible = visible
+      if (node.mesh) node.mesh.visible = this.model.renderMode === 'solid-extrude' && visible
     })
   }
 
   showOrHideNodeLabels(visible : boolean) {
     this.nodeLabels = visible
     const ids = this.model.nodes.map((node) => `node-${node.id}`)
-    const delta = 0.1
-    if(!visible) {
-      this.model.labeler.batchDelete(ids) 
-      return
-    } 
-
-    const labels : Label[] = this.model.nodes.map((node) => {
-      return(
-        {
-          id : `node-${node.id}`,
-          position : new THREE.Vector3(node.x, node.y + delta, node.z),
-          text : node.name ? node.name : '',
-        }
-      )
-    })
-    
-    this.model.labeler.batchUpdateOrCreate(labels)
+    this.model.labeler.batchDelete(ids)
+    this.model.gpuAnnotations.setNodeLabels(visible)
   }
 
   showOrHideSections(visible : boolean){
     this.sections = visible
+    this.model.thinShellRenderer?.setMembersVisible(visible && this.members)
     this.model.members.forEach((member) => {
-      member.mesh.visible = visible
-      member.edges.visible = visible
+      const entityVisible = this.model.isStructuralMemberVisible(member.id)
+      if (member.mesh) member.mesh.visible = this.model.renderMode === 'solid-extrude' && visible && entityVisible
+      if (member.edges) member.edges.visible = this.model.renderMode === 'solid-extrude' && visible && entityVisible
     })
   }
 
   showOrHideLoads(visible : boolean){
     this.loads = visible
-    this.model.loads.forEach((load) => {
-      load.mesh.forEach(m => m.visible = visible)
-      if (visible) {
-        load.createLabels()
-      } else {
-        load.removeAllLabels()
-      }
-    })
+    // Master switch: flip the instanced batch (3 draw calls total) and gate
+    // the label stream; the sub-flags (loadSymbols / loadValues below) are
+    // irrelevant while this is off.
+    this.model.loadGpuRenderer?.setVisible(visible)
+    this.model.syncGpuAnnotations()
   }
 
-  /** Show/hide every structural axis grid (Settings → Visibility). */
+  /** Show/hide load symbol geometry only (arrows + bands). Load value labels
+   *  keep following loadValues - the two sub-toggles are independent. */
+  showOrHideLoadSymbols(visible : boolean){
+    this.loadSymbols = visible
+    this.model.loadGpuRenderer?.setVisible(visible && this.loads)
+    this.model.syncGpuAnnotations()
+  }
+
+  /** Show/hide numeric load value labels only (GPU annotation stream). */
+  showOrHideLoadValues(visible : boolean){
+    this.loadValues = visible
+    this.model.syncGpuAnnotations()
+  }
+
+  /** Show/hide every structural axis grid (Settings → Level). */
   showOrHideGrids(visible : boolean){
     this.grids = visible
     this.model.grids.forEach((grid) => {
       grid.setVisible(visible)
     })
+  }
+
+  /** Show/hide the support glyphs (Settings → Boundary → Supports). */
+  showOrHideSupports(visible : boolean){
+    this.supports = visible
+    // Supports live in the shared instanced symbol batch; rebuilding the
+    // stream is the cheapest toggle and costs zero extra draw calls.
+    this.model.syncGpuAnnotations()
+  }
+
+  /** Show/hide the member release pins (Settings → Visibility → Releases). */
+  showOrHideReleases(visible : boolean){
+    this.releases = visible
+    // Release pins live in the shared instanced symbol batch; rebuilding the
+    // stream is the cheapest toggle and costs zero extra draw calls.
+    this.model.syncGpuAnnotations()
   }
 
   /** Show/hide the level datum set (3D datums + their text labels). */

@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,8 @@ from mcp_tools import mcp_server
 import mcp_tools
 from opensees import run_analysis
 from opensees.helpers import compute_section_properties
+from schemas import AnalysisResponse, Model as StructuralModel
+from copilot import router as copilot_router
 
 class ConnectionManager:
     def __init__(self):
@@ -54,16 +57,44 @@ app = FastAPI(
     lifespan=lambda app: mcp_server.session_manager.run()
 )
 
-# Configurer CORS
-origins = ["*"]
+# Configure CORS: explicit allow-list (never "*") so credentialed requests stay
+# safe. Override per environment with CORS_ORIGINS="https://host,https://host2".
+_origins = os.environ.get(
+    "CORS_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173",
+)
+origins = [origin.strip() for origin in _origins.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    # X-Copilot-Session is required by every /api/copilot endpoint
+    # (backend/copilot.py) and must be listed or the browser preflight
+    # (OPTIONS) fails with 400 "Disallowed CORS headers".
+    allow_headers=["Authorization", "Content-Type", "X-Copilot-Session"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def structural_validation_error(_request: Request, exc: RequestValidationError):
+    """Return stable, machine-readable validation errors for UI and AI clients."""
+    errors = []
+    for error in exc.errors():
+        location = [str(part) for part in error.get("loc", ()) if part != "body"]
+        context = error.get("ctx") or {}
+        expected = context.get("expected") or context.get("pattern") or error.get("msg")
+        received = error.get("input")
+        errors.append(
+            {
+                "path": ".".join(location) or "$",
+                "code": error.get("type", "validation_error"),
+                "expected": str(expected),
+                "received": received,
+            }
+        )
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 # Récupération de la variable d'environnement
 env_path = pathlib.Path(__file__).parent.parent / '.env'  # Chemin vers .env.development
@@ -76,6 +107,7 @@ build_dir = os.path.join(os.path.dirname(__file__), '../frontend', 'build')
 
 # Inclure les routeurs
 app.include_router(auth_router)
+app.include_router(copilot_router)
 
 # En mode développement, rediriger les requêtes frontend vers le serveur React
 @app.middleware("http")
@@ -217,13 +249,14 @@ async def get_benchmark(id: str):
       continue
   raise HTTPException(status_code=404, detail=f"Benchmark with id '{id}' not found")
 
-@app.post("/analysis")
-async def get_analysis(model : dict):
+@app.post("/analysis", response_model=AnalysisResponse)
+async def get_analysis(model: StructuralModel):
   try :
+    model_data = model.model_dump(by_alias=True)
     print("\n" + "="*80)
     print(f"[{datetime.now().strftime('%H:%M:%S')}] RECEIVED NEW ANALYSIS REQUEST")
-    print(f"Nodes: {len(model.get('nodes', []))}, Members: {len(model.get('members', []))}, Loads: {len(model.get('loads', []))}")
-    print(f"RAW INPUT (First 500 chars): {str(model)[:500]}...", flush=True)
+    print(f"Nodes: {len(model_data['nodes'])}, Members: {len(model_data['members'])}, Loads: {len(model_data['loads'])}")
+    print(f"RAW INPUT (First 500 chars): {str(model_data)[:500]}...", flush=True)
     print("="*80 + "\n")
     
     loop = asyncio.get_running_loop()
@@ -234,12 +267,14 @@ async def get_analysis(model : dict):
             loop
         )
 
-    output = await anyio.to_thread.run_sync(run_analysis, model, send_log)
+    output = await anyio.to_thread.run_sync(run_analysis, model_data, send_log)
     return {
       "status": "Analysis completed successfully",
       "output": output
     }
     
+  except HTTPException:
+    raise
   except Exception as e:
     print('ERROR: ', e)
     raise HTTPException(status_code=500, detail=str(e))
@@ -424,7 +459,12 @@ async def websocket_endpoint(websocket: WebSocket, client_id: int):
   
   except WebSocketDisconnect:
     manager.disconnect(websocket)
-    await manager.broadcast(f"Client #{client_id} left the chat")
+    if mcp_tools.client_connection is websocket:
+      mcp_tools.client_connection = None
+    await manager.broadcast(json.dumps({
+      "message": "client_disconnected",
+      "data": {"clientId": client_id}
+    }))
   
   except Exception as e:
     print(f"WebSocket error: {e}") 

@@ -1,6 +1,23 @@
 import { Model } from "../Model"
 import * as THREE from 'three'
-import type { Label, SupportFixity } from "../Labeler/Labeler"
+import { runInAction } from 'mobx'
+import type Node from '../Elements/Node/Node'
+
+export type BoundaryConditionInput = {
+  id?: number
+  type: BoundaryCondition['type']
+  targets: number[]
+  name?: string
+  dx?: number
+  dy?: number
+  dz?: number
+  rx?: number
+  ry?: number
+  rz?: number
+  rotation?: number
+  mesh?: THREE.Mesh[]
+}
+
 class BoundaryCondition {
   type : 'fixed' | 'pinned' |  'roller' | 'roller-x' | 'roller-y' | 'custom' | 'elastic' = 'fixed'
   targets : number[] = []
@@ -15,11 +32,11 @@ class BoundaryCondition {
   rz? : number
   rotation : number = 0
   mesh : THREE.Mesh [] = []
-  constructor(model: Model, boundaryCondition: BoundaryCondition) {
+  constructor(model: Model, boundaryCondition: BoundaryConditionInput) {
     this.model = model
     this.type = boundaryCondition.type
     this.targets = boundaryCondition.targets
-    this.name = boundaryCondition.name
+    this.name = boundaryCondition.name ?? ''
     this.id = boundaryCondition.id || Math.floor(Math.random() * 0x7FFFFFFF)
     this.mesh = boundaryCondition.mesh || []
     this.rotation = boundaryCondition.rotation || 0
@@ -84,22 +101,22 @@ class BoundaryCondition {
         break
     }
     const index = this.model.boundaryConditions.findIndex(item => item.id === this.id)
-    if(index === -1){
-      this.model.boundaryConditions.push(this)
-    }else{
-      this.model.boundaryConditions[index] = this
-    }
+    runInAction(() => {
+      if(index === -1) this.model.boundaryConditions.push(this)
+      else this.model.boundaryConditions[index] = this
+    })
+    this.model.syncGpuAnnotations()
 
   }
 
   delete(){
     const index = this.model.boundaryConditions.findIndex(item => item.id === this.id)
-    const id = this.id
     
     if(index !== -1){
-      this.model.boundaryConditions.splice(index, 1)
+      runInAction(() => this.model.boundaryConditions.splice(index, 1))
     }
     this.dispose()
+    this.model.syncGpuAnnotations()
   }
 
   /**
@@ -121,44 +138,19 @@ class BoundaryCondition {
 
   /**
    * Midas-Civil style support symbol: a hexagon split into 6 sectors
-   * (X, Y, Z, MX, MY, MZ — clockwise from the upper-right) colored green when
-   * the DOF is restrained and red when it is free. Rendered as a CSS2D
-   * annotation pinned to the node so it always draws on top of every other
-   * object, with a constant screen size (no 3D geometry involved).
+   * (Dx, Dy, Dz, Rx, Ry, Rz) colored green when the DOF is restrained and red
+   * when it is free. 80%-black radial and perimeter edges keep all six
+   * triangular sectors readable. It is rendered in one GPU symbol batch.
    */
   createSupportSymbols(){
-    const labels : Label[] = []
-    for(const target of this.targets){
-      const node = this.model.nodes.find(item => item.id === target)
-      if(!node) continue
-
-      const fixity : SupportFixity = {
-        x : !!this.dx,
-        y : !!this.dy,
-        z : !!this.dz,
-        mx : !!this.rx,
-        my : !!this.ry,
-        mz : !!this.rz
-      }
-
-      labels.push({
-        id : `support-${this.id}-${target}`,
-        position : new THREE.Vector3(node.x, node.y, node.z),
-        text : '',
-        type : 'support',
-        fixity,
-        rotation : this.rotation || 0
-      })
-    }
-
-    // Rebuild from scratch so restraint-flag changes re-render the sector colors
     this.removeSupportSymbols()
-    if(labels.length) this.model.labeler.create(labels)
+    this.model.syncGpuAnnotations()
   }
 
   removeSupportSymbols(){
     const ids = this.targets.map(target => `support-${this.id}-${target}`)
     if(ids.length) this.model.labeler.batchDelete(ids)
+    this.model.gpuAnnotations?.markDirty()
   }
 
   createElasticSupport(target: number){
@@ -167,17 +159,17 @@ class BoundaryCondition {
     if(!node) return 
 
     const hasXSpring = (this.dx !== 0 && this.dx !== 1) || (this.rx !== 0 && this.rx !== 1)
-    if (hasXSpring) this.createSpring(node, new THREE.Vector3(1, 0, 0), 'x')
+    if (hasXSpring) this.createSpring(node, new THREE.Vector3(1, 0, 0))
     
     const hasYSpring = (this.dy !== 0 && this.dy !== 1) || (this.ry !== 0 && this.ry !== 1)
-    if (hasYSpring) this.createSpring(node, new THREE.Vector3(0, 1, 0), 'y')
+    if (hasYSpring) this.createSpring(node, new THREE.Vector3(0, 1, 0))
     
     const hasZSpring = (this.dz !== 0 && this.dz !== 1) || (this.rz !== 0 && this.rz !== 1)
-    if (hasZSpring) this.createSpring(node, new THREE.Vector3(0, 0, 1), 'z')
+    if (hasZSpring) this.createSpring(node, new THREE.Vector3(0, 0, 1))
     
   }
 
-  createSpring(node: any, direction: THREE.Vector3, name: string){
+  createSpring(node: Node, direction: THREE.Vector3){
     const springHeight = 0.5
     const springRadius = 0.15
     const springTurns = 4
@@ -248,13 +240,13 @@ class BoundaryCondition {
   private dispose = () => {
     this.removeSupportSymbols()
     if(!this.mesh) return 
-    function removeObjWithChildren(obj : any) {
+    function removeObjWithChildren(obj: THREE.Object3D) {
       if (obj.children.length > 0) {
-        for (var x = obj.children.length - 1; x >= 0; x--) {
+        for (let x = obj.children.length - 1; x >= 0; x--) {
           removeObjWithChildren(obj.children[x])
         }
       }
-      if (obj.isMesh || obj.isLine) {
+      if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
         obj.geometry.dispose();
         if( Array.isArray(obj.material)){
           for(let i = 0; i < obj.material.length; i++){

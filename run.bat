@@ -1,7 +1,21 @@
 @echo off
 setlocal
 
+:: ============================================
+:: Clean up any previously running instances
+:: ============================================
+echo Cleaning up old processes...
+
+:: Close old backend/frontend windows by title
+taskkill /F /FI "WINDOWTITLE eq Buckle Backend*" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Buckle Frontend*" >nul 2>&1
+
+:: Give Windows a moment to release file handles
+timeout /t 1 >nul
+
+:: ============================================
 :: Start Backend in a new window
+:: ============================================
 echo Starting Backend...
 cd backend
 start "Buckle Backend" cmd /k ".\venv\Scripts\activate && python main.py"
@@ -14,7 +28,9 @@ if %errorlevel% neq 0 (
 :: Wait a moment for backend to initialize
 timeout /t 2 >nul
 
+:: ============================================
 :: Start Frontend in a new window
+:: ============================================
 echo Starting Frontend...
 cd ..\frontend
 start "Buckle Frontend" cmd /k "npm run dev"

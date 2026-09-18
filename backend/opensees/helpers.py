@@ -56,6 +56,28 @@ def _canonical_type(type_str: str) -> str:
     return _TYPE_ALIASES.get((type_str or "").lower(), (type_str or "").lower())
 
 
+def _dim(section: Dict, key: str, default: float = 0.0) -> float:
+    """Read an optional numeric dimension that may be missing or JSON-null.
+
+    Pydantic serialises unset optional fields as explicit ``None`` values, so
+    ``section.get(key, default)`` alone is unsafe: the key can exist while
+    holding ``None``. Coerce that case back to ``default``.
+    """
+    value = section.get(key, default)
+    return float(default if value is None else value)
+
+
+def _required_dim(section: Dict, key: str) -> float:
+    """Read a mandatory numeric dimension with a descriptive failure."""
+    value = section.get(key)
+    if value is None:
+        raise ValueError(
+            f"Section '{section.get('name') or section.get('id')}' "
+            f"(type '{section.get('type')}') is missing required dimension '{key}'."
+        )
+    return float(value)
+
+
 def compute_section_properties(section: Dict) -> Dict[str, float]:
     """
     Compute the section properties for an elastic beam-column section.
@@ -75,10 +97,19 @@ def compute_section_properties(section: Dict) -> Dict[str, float]:
     # ---- amorphous / properties-only section: A, Iy, Iz, Jxx given directly ----
     props_override = section.get("properties")
     if props_override and {"A", "Iy", "Iz"} <= set(props_override):
-        a = float(props_override["A"])
-        iy = float(props_override["Iy"])
-        iz = float(props_override["Iz"])
-        jxx = float(props_override.get("Jxx", props_override.get("J", 0.0)))
+        try:
+            a = float(props_override["A"])
+            iy = float(props_override["Iy"])
+            iz = float(props_override["Iz"])
+            jxx = props_override.get("Jxx")
+            if jxx is None:
+                jxx = props_override.get("J")
+            jxx = float(jxx) if jxx is not None else 0.0
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Section '{section.get('name') or section.get('id')}' properties "
+                f"override must carry numeric A/Iy/Iz values, got: {props_override}"
+            ) from exc
         return {
             "E": E,
             "G_mod": G_mod,
@@ -99,74 +130,75 @@ def compute_section_properties(section: Dict) -> Dict[str, float]:
     # ---- build the canonical polygon outline and integrate it ----
     j = 0.0  # torsion constant (computed alongside each shape)
     if kind == "rectangular":
-        b = section["width"] * mm
-        h = section["height"] * mm
+        b = _required_dim(section, "width") * mm
+        h = _required_dim(section, "height") * mm
         polys = cat.rectangle(b, h)
         j = geo.rect_torsion(b, h)
     elif kind == "circular":
-        d = section["diameter"] * mm
+        d = _required_dim(section, "diameter") * mm
         polys = cat.solid_circle(d)
         j = geo.circle_torsion(d)
     elif kind == "hollow_circular":
-        d = section["diameter"] * mm
-        t = section["thickness"] * mm
+        d = _required_dim(section, "diameter") * mm
+        t = _required_dim(section, "thickness") * mm
         polys = cat.circular_hollow(d, t)
         j = geo.annulus_torsion(d, t)
     elif kind == "i":
-        h = section["depth"] * mm
-        b = section["width"] * mm
-        tf = section["tf"] * mm
-        tw = section["tw"] * mm
-        r = section.get("r", 0.0) * mm
+        h = _required_dim(section, "depth") * mm
+        b = _required_dim(section, "width") * mm
+        tf = _required_dim(section, "tf") * mm
+        tw = _required_dim(section, "tw") * mm
+        r = _dim(section, "r") * mm
         polys = cat.i_section(h, b, tw, tf, r)
         j = geo.open_thin_strip([
             (h - 2.0 * tf, tw),
             (2.0 * b, tf),
         ]) * (1.25 if r > 0 else 1.0)  # filleted rolled profile ~1.25x thin-strip
     elif kind == "ipn":
-        h = section["depth"] * mm
-        b = section["width"] * mm
-        tf = section["tf"] * mm
-        tw = section["tw"] * mm
+        h = _required_dim(section, "depth") * mm
+        b = _required_dim(section, "width") * mm
+        tf = _required_dim(section, "tf") * mm
+        tw = _required_dim(section, "tw") * mm
         polys = cat.ipn_section(h, b, tw, tf)
         j = geo.open_thin_strip([(h - 2.0 * tf, tw), (2.0 * b, tf)]) * 1.29
     elif kind == "rectangular_hollow":
-        h = section["height"] * mm
-        b = section["width"] * mm
-        t = section["thickness"] * mm
-        if "height" not in section and "depth" in section:
-            h = section["depth"] * mm
-        ri = (section.get("ri") or section.get("r", 0.0)) * mm
+        if section.get("height") is None and section.get("depth") is not None:
+            h = _required_dim(section, "depth") * mm
+        else:
+            h = _required_dim(section, "height") * mm
+        b = _required_dim(section, "width") * mm
+        t = _required_dim(section, "thickness") * mm
+        ri = (_dim(section, "ri") or _dim(section, "r")) * mm
         polys = cat.rectangular_hollow_rounded(b, h, t, ri)
         j = geo.bredt_rrhs(b, h, t)
     elif kind == "channel":
-        h = section["depth"] * mm
-        b = section["width"] * mm
-        tf = section["tf"] * mm
-        tw = section["tw"] * mm
-        r = section.get("r", 0.0) * mm
+        h = _required_dim(section, "depth") * mm
+        b = _required_dim(section, "width") * mm
+        tf = _required_dim(section, "tf") * mm
+        tw = _required_dim(section, "tw") * mm
+        r = _dim(section, "r") * mm
         polys = cat.channel_section(h, b, tw, tf) if r <= 0 else cat.channel_section(h, b, tw, tf)
         j = geo.open_thin_strip([(h - 2.0 * tf, tw), (2.0 * b, tf)])
     elif kind == "upn":
-        h = section["depth"] * mm
-        b = section["width"] * mm
-        tf = section["tf"] * mm
-        tw = section["tw"] * mm
+        h = _required_dim(section, "depth") * mm
+        b = _required_dim(section, "width") * mm
+        tf = _required_dim(section, "tf") * mm
+        tw = _required_dim(section, "tw") * mm
         polys = cat.upn_section(h, b, tw, tf)
         j = geo.open_thin_strip([(h - 2.0 * tf, tw), (2.0 * b, tf)])
     elif kind == "angle":
-        b = section["width"] * mm
-        t = section["thickness"] * mm
-        r = section.get("r", 0.0) * mm
+        b = _required_dim(section, "width") * mm
+        t = _required_dim(section, "thickness") * mm
+        r = _dim(section, "r") * mm
         polys = (cat.angle_section_filleted(b, b, t, r, r * 0.5)
                  if r > 0 else cat.angle_section(b, b, t))
         j = geo.open_thin_strip([(2.0 * b - t, t)]) / 1.0  # thin rectangles
     elif kind == "tee":
-        h = section["depth"] * mm
-        b = section["width"] * mm
-        tf = section["tf"] * mm
-        tw = section["tw"] * mm
-        r = section.get("r", 0.0) * mm
+        h = _required_dim(section, "depth") * mm
+        b = _required_dim(section, "width") * mm
+        tf = _required_dim(section, "tf") * mm
+        tw = _required_dim(section, "tw") * mm
+        r = _dim(section, "r") * mm
         polys = (cat.tee_section_filleted(h, b, tw, tf, r, r * 0.5)
                  if r > 0 else cat.tee_section(h, b, tw, tf))
         j = geo.open_thin_strip([(h - tf, tw), (b, tf)])

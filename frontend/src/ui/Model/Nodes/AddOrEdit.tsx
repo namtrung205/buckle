@@ -14,10 +14,10 @@ import { observer } from 'mobx-react-lite';
 import { useModel } from '../../../model/Context';
 import Dialog from '../../../components/Dialog/Dialog';
 import Node from '../../../model/Elements/Node/Node';
-import * as THREE from 'three';
 import Move from './Components/Move/Move';
 import TextField from '../../../components/TextField/TextField';
 import { fieldLabelSx } from '../../../theme';
+import { COMMAND_SCHEMA_VERSION } from '../../../core/structural';
 
 interface NodesProps {
   open: boolean;
@@ -57,23 +57,30 @@ const AddOrEdit = observer(({ open, onClose, selectedNode }: NodesProps) => {
   }, [open, selectedNode]);
 
   const handleSave = () => {
-    const coordinates = new THREE.Vector3(
-      Number(node.x),
-      Number(node.y),
-      Number(node.z)
-    );
+    // Form/Three.js is Y-up; command records use canonical engineering Z-up.
+    const position = [Number(node.x), Number(node.z), Number(node.y)] as const;
 
     if (selectedNode) {
-      selectedNode.update(coordinates, node.name || undefined);
-      onClose();
+      model.executeCommand({
+        commandId: crypto.randomUUID(),
+        type: 'MoveNodes',
+        schemaVersion: COMMAND_SCHEMA_VERSION,
+        modelRevision: model.structuralDocument.revision,
+        payload: { nodes: [{ id: selectedNode.id, position, name: node.name || selectedNode.name }] },
+        source: 'ui',
+      });
     } else {
       const name = node.name || `Node ${(model.nodes?.length || 0) + 1}`;
-      const newNode = new Node(coordinates, name);
-      newNode.model = model;
-      newNode.create();
-      model.nodes.push(newNode);
-      onClose();
+      model.executeCommand({
+        commandId: crypto.randomUUID(),
+        type: 'CreateNodes',
+        schemaVersion: COMMAND_SCHEMA_VERSION,
+        modelRevision: model.structuralDocument.revision,
+        payload: { nodes: [{ name, position }] },
+        source: 'ui',
+      });
     }
+    onClose();
   };
 
   const handleCancel = () => {

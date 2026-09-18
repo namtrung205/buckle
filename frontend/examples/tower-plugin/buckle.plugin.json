@@ -1,0 +1,37 @@
+{
+  "id": "com.buckle.examples.tower",
+  "name": "Tower Lab (Plugin Experiment)",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "permissions": [
+    "model.read",
+    "storage.project",
+    "ui.notify",
+    "ui.panel",
+    "model.write.nodes",
+    "model.write.members",
+    "model.write.loads",
+    "model.write.supports",
+    "model.write.parametric",
+    "model.delete.nodes",
+    "model.delete.members",
+    "model.delete.loads",
+    "model.delete.supports",
+    "model.delete.parametric"
+  ],
+  "entrypoints": { "worker": "worker.js" },
+  "contributions": {
+    "commands": [{ "id": "com.buckle.examples.tower.open", "title": "Open the Tower Lab experiment panel" }],
+    "ribbonTabs": [{ "id": "com.buckle.examples.tower.tab", "label": "Tower Lab", "order": 46 }],
+    "panels": [{ "id": "com.buckle.examples.tower.panel", "title": "Tower Lab (Plugin)", "entry": "panel.html" }],
+    "ribbon": [{
+      "id": "com.buckle.examples.tower.ribbon",
+      "tabId": "com.buckle.examples.tower.tab",
+      "groupId": "tower",
+      "groupLabel": "Generate",
+      "commandId": "com.buckle.examples.tower.open",
+      "label": "Tower (plugin)",
+      "title": "Transmission tower generator — third-party plugin experiment"
+    }]
+  }
+}

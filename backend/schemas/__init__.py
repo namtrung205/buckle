@@ -1,14 +1,35 @@
-from .structural_analysis import Node, Member, Material, Model, ClientResponse, BoundaryCondition, SupportType, LinearLoad, Vector3
+from .structural_analysis import (
+    SCHEMA_VERSION,
+    AnalysisResponse,
+    BoundaryCondition,
+    ClientResponse,
+    LinearLoad,
+    Load,
+    Material,
+    Member,
+    MemberCreate,
+    Model,
+    Node,
+    Section,
+    Shell,
+    SupportType,
+    Vector3,
+)
 
 __all__ = [
-    "Node",
-    "Member",
-    "Material",
-    "Model",
-    "ClientResponse",
+    "SCHEMA_VERSION",
+    "AnalysisResponse",
     "BoundaryCondition",
-    "SupportType",
+    "ClientResponse",
     "LinearLoad",
-    "Vector3"
+    "Load",
+    "Material",
+    "Member",
+    "MemberCreate",
+    "Model",
+    "Node",
+    "Section",
+    "Shell",
+    "SupportType",
+    "Vector3",
 ]
-

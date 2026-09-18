@@ -1,0 +1,348 @@
+import * as THREE from 'three'
+import {
+  ENTITY_HOVERED,
+  ENTITY_SELECTED,
+  ENTITY_VISIBLE,
+  type StructuralSceneDB,
+} from './StructuralSceneDB.ts'
+import type { QualityProfile } from './contracts'
+import type { ResultBinding } from './ResultStore.ts'
+import { clampShrinkRatio } from '../Utils/shrink.ts'
+
+const VERTICES_PER_MEMBER = 2
+
+/** Midas-style Shrink: clamp the per-end trim ratio to a safe display range. */
+const clampShrink = (perEnd: number) => clampShrinkRatio(perEnd)
+
+const LINE_VERTEX_SHADER = /* glsl */ `
+  attribute float entityFlags;
+  attribute float resultU;
+  attribute float resultRow;
+  varying float vFlags;
+  varying float vResultU;
+  varying float vResultRow;
+
+  void main() {
+    vFlags = entityFlags;
+    vResultU = resultU;
+    vResultRow = resultRow;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`
+
+const LINE_FRAGMENT_SHADER = /* glsl */ `
+  precision highp float;
+  varying float vFlags;
+  varying float vResultU;
+  varying float vResultRow;
+  uniform sampler2D resultTexture;
+  uniform sampler2D resultColorLut;
+  uniform vec2 resultTextureSize;
+  uniform float resultStationCount;
+  uniform float resultEnabled;
+  uniform float resultMin;
+  uniform float resultMax;
+
+  bool hasFlag(float value, float flag) {
+    return mod(floor(value / flag), 2.0) > 0.5;
+  }
+  float resultTexel(float linearIndex) {
+    float x = mod(linearIndex, resultTextureSize.x);
+    float y = floor(linearIndex / resultTextureSize.x);
+    return texture2D(resultTexture, (vec2(x, y) + 0.5) / resultTextureSize).r;
+  }
+
+  void main() {
+    if (!hasFlag(vFlags, 1.0)) discard;
+    vec3 color = vec3(0.63, 0.68, 0.72);
+    if (hasFlag(vFlags, 4.0)) color = vec3(1.0, 0.72, 0.12);
+    if (hasFlag(vFlags, 2.0)) color = vec3(1.0, 0.22, 0.12);
+    if (resultEnabled > 0.5 && !hasFlag(vFlags, 2.0) && !hasFlag(vFlags, 4.0)) {
+      float station = clamp(vResultU, 0.0, 1.0) * (resultStationCount - 1.0);
+      float lower = floor(station);
+      float rowStart = floor(vResultRow + 0.5) * resultStationCount;
+      float value = mix(resultTexel(rowStart + lower), resultTexel(rowStart + min(lower + 1.0, resultStationCount - 1.0)), fract(station));
+      if (value == value) {
+        float maxAbs = max(max(abs(resultMin), abs(resultMax)), 0.000000000001);
+        color = texture2D(resultColorLut, vec2(clamp(0.5 + 0.5 * value / maxAbs, 0.0, 1.0), 0.5)).rgb;
+      }
+    }
+    gl_FragColor = vec4(color, 1.0);
+  }
+`
+
+const NODE_VERTEX_SHADER = /* glsl */ `
+  attribute float entityFlags;
+  uniform float pointSize;
+  varying float vFlags;
+
+  void main() {
+    vFlags = entityFlags;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = pointSize;
+  }
+`
+
+const NODE_FRAGMENT_SHADER = /* glsl */ `
+  precision mediump float;
+  varying float vFlags;
+
+  bool hasFlag(float value, float flag) {
+    return mod(floor(value / flag), 2.0) > 0.5;
+  }
+
+  void main() {
+    if (!hasFlag(vFlags, 1.0)) discard;
+    vec2 centered = gl_PointCoord * 2.0 - 1.0;
+    if (dot(centered, centered) > 1.0) discard;
+    vec3 color = vec3(0.15, 0.36, 1.0);
+    if (hasFlag(vFlags, 4.0)) color = vec3(1.0, 0.72, 0.12);
+    if (hasFlag(vFlags, 2.0)) color = vec3(1.0, 0.22, 0.12);
+    gl_FragColor = vec4(color, 1.0);
+  }
+`
+
+/**
+ * Goal-2 WebGL2 centerline pass. One LineSegments plus one Points object render
+ * every structural member/node; no per-entity Object3D is created.
+ */
+export default class CenterlineRenderer {
+  readonly group = new THREE.Group()
+  readonly lineGeometry = new THREE.BufferGeometry()
+  readonly nodeGeometry = new THREE.BufferGeometry()
+  readonly lines: THREE.LineSegments
+  readonly nodes: THREE.Points
+  private database: StructuralSceneDB | null = null
+  private memberFlags = new Float32Array(0)
+  private nodeFlags = new Float32Array(0)
+  /** Midas-style Shrink: fraction of member length trimmed at EACH end (0 = off). */
+  private shrinkPerEnd = 0
+  private readonly lineMaterial: THREE.ShaderMaterial
+
+  constructor(scene: THREE.Scene, layer: number) {
+    this.lineMaterial = new THREE.ShaderMaterial({
+      vertexShader: LINE_VERTEX_SHADER,
+      fragmentShader: LINE_FRAGMENT_SHADER,
+      uniforms: {
+        resultTexture: { value: null as THREE.DataTexture | null },
+        resultColorLut: { value: null as THREE.DataTexture | null },
+        resultTextureSize: { value: new THREE.Vector2(1, 1) },
+        resultStationCount: { value: 2 },
+        resultEnabled: { value: 0 },
+        resultMin: { value: 0 },
+        resultMax: { value: 1 },
+      },
+      depthTest: true,
+      depthWrite: true,
+    })
+    const nodeMaterial = new THREE.ShaderMaterial({
+      vertexShader: NODE_VERTEX_SHADER,
+      fragmentShader: NODE_FRAGMENT_SHADER,
+      uniforms: { pointSize: { value: 4 } },
+      depthTest: true,
+      depthWrite: true,
+    })
+    this.lines = new THREE.LineSegments(this.lineGeometry, this.lineMaterial)
+    this.nodes = new THREE.Points(this.nodeGeometry, nodeMaterial)
+    // The single global batch is also the first spatial chunk. Three.js can
+    // reject it as a unit when the complete model is outside the frustum.
+    this.lines.frustumCulled = true
+    this.nodes.frustumCulled = true
+    this.lines.userData.type = 'structural-centerlines'
+    this.nodes.userData.type = 'structural-nodes'
+    this.group.name = 'StructuralCenterlineRenderer'
+    this.group.layers.set(layer)
+    this.lines.layers.set(layer)
+    this.nodes.layers.set(layer)
+    this.group.add(this.lines, this.nodes)
+    this.group.visible = false
+    scene.add(this.group)
+  }
+
+  upload(database: StructuralSceneDB) {
+    this.database = database
+    const memberCount = database.memberCount
+    const nodeCount = database.nodeCount
+    const positions = database.memberEndpoints.slice(0, memberCount * 6)
+    if (this.shrinkPerEnd > 0) {
+      for (let index = 0; index < memberCount; index++) this.writeMemberEndpoints(positions, database, index)
+    }
+    const resultU = new Float32Array(memberCount * VERTICES_PER_MEMBER)
+    const resultRows = new Float32Array(memberCount * VERTICES_PER_MEMBER)
+    this.memberFlags = new Float32Array(memberCount * VERTICES_PER_MEMBER)
+    for (let index = 0; index < memberCount; index++) {
+      const flags = database.memberFlags[index]
+      this.memberFlags[index * 2] = flags
+      this.memberFlags[index * 2 + 1] = flags
+      resultU[index * 2 + 1] = 1
+      resultRows[index * 2] = resultRows[index * 2 + 1] = index
+    }
+    const nodePositions = new Float32Array(nodeCount * 3)
+    nodePositions.set(database.nodePositions.subarray(0, nodeCount * 3))
+    this.nodeFlags = new Float32Array(nodeCount)
+    for (let index = 0; index < nodeCount; index++) this.nodeFlags[index] = database.nodeFlags[index]
+    this.lineGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    this.lineGeometry.setAttribute('entityFlags', new THREE.BufferAttribute(this.memberFlags, 1))
+    this.lineGeometry.setAttribute('resultU', new THREE.BufferAttribute(resultU, 1))
+    this.lineGeometry.setAttribute('resultRow', new THREE.BufferAttribute(resultRows, 1))
+    this.lineGeometry.setDrawRange(0, memberCount * VERTICES_PER_MEMBER)
+    this.nodeGeometry.setAttribute('position', new THREE.BufferAttribute(nodePositions, 3))
+    this.nodeGeometry.setAttribute('entityFlags', new THREE.BufferAttribute(this.nodeFlags, 1))
+    this.nodeGeometry.setDrawRange(0, nodeCount)
+    this.lineGeometry.computeBoundingSphere()
+    this.nodeGeometry.computeBoundingSphere()
+    database.clearDirtyRanges()
+  }
+
+  syncDirty() {
+    const database = this.database
+    if (!database) return
+    const range = database.dirtyMembers
+    if (range) {
+      const position = this.lineGeometry.getAttribute('position') as THREE.BufferAttribute
+      const flags = this.lineGeometry.getAttribute('entityFlags') as THREE.BufferAttribute
+      for (let index = range.min; index < range.maxExclusive; index++) {
+        this.writeMemberEndpoints(position.array as Float32Array, database, index)
+        this.memberFlags[index * 2] = database.memberFlags[index]
+        this.memberFlags[index * 2 + 1] = database.memberFlags[index]
+      }
+      position.needsUpdate = true
+      flags.needsUpdate = true
+      this.lineGeometry.setDrawRange(0, database.memberCount * 2)
+    }
+    const nodeRange = database.dirtyNodes
+    if (nodeRange) {
+      const position = this.nodeGeometry.getAttribute('position') as THREE.BufferAttribute
+      const flags = this.nodeGeometry.getAttribute('entityFlags') as THREE.BufferAttribute
+      for (let index = nodeRange.min; index < nodeRange.maxExclusive; index++) {
+        const offset = index * 3
+        position.setXYZ(
+          index,
+          database.nodePositions[offset],
+          database.nodePositions[offset + 1],
+          database.nodePositions[offset + 2],
+        )
+        this.nodeFlags[index] = database.nodeFlags[index]
+      }
+      position.needsUpdate = true
+      flags.needsUpdate = true
+      this.nodeGeometry.setDrawRange(0, database.nodeCount)
+    }
+    database.clearDirtyRanges()
+  }
+
+  /** Midas-style Shrink display: trim BOTH ends of every member by `perEnd`
+   *  (fraction of the member length). 0 restores full-length centerlines.
+   *  Display-only — the GPU picker keeps using full-length geometry. */
+  setShrink(perEnd: number) {
+    const next = clampShrink(perEnd)
+    if (next === this.shrinkPerEnd) return
+    this.shrinkPerEnd = next
+    const database = this.database
+    const position = this.lineGeometry.getAttribute('position') as THREE.BufferAttribute | undefined
+    if (!database || !position) return
+    const array = position.array as Float32Array
+    for (let index = 0; index < database.memberCount; index++) this.writeMemberEndpoints(array, database, index)
+    position.needsUpdate = true
+    this.lineGeometry.computeBoundingSphere()
+  }
+
+  /** Writes the display endpoints of `memberIndex` (shrink applied) into `target`. */
+  private writeMemberEndpoints(target: Float32Array, database: StructuralSceneDB, memberIndex: number) {
+    const offset = memberIndex * 6
+    const startX = database.memberEndpoints[offset]
+    const startY = database.memberEndpoints[offset + 1]
+    const startZ = database.memberEndpoints[offset + 2]
+    const endX = database.memberEndpoints[offset + 3]
+    const endY = database.memberEndpoints[offset + 4]
+    const endZ = database.memberEndpoints[offset + 5]
+    const trim = this.shrinkPerEnd
+    target[offset] = startX + (endX - startX) * trim
+    target[offset + 1] = startY + (endY - startY) * trim
+    target[offset + 2] = startZ + (endZ - startZ) * trim
+    target[offset + 3] = endX - (endX - startX) * trim
+    target[offset + 4] = endY - (endY - startY) * trim
+    target[offset + 5] = endZ - (endZ - startZ) * trim
+  }
+
+  setVisible(visible: boolean) {
+    this.group.visible = visible
+  }
+
+  setMembersVisible(visible: boolean) {
+    this.lines.visible = visible
+  }
+
+  setNodesVisible(visible: boolean) {
+    this.nodes.visible = visible
+  }
+
+  setQualityProfile(profile: QualityProfile) {
+    const sizes: Record<QualityProfile, number> = { low: 3, balanced: 4, high: 5, custom: 4 }
+    ;(this.nodes.material as THREE.ShaderMaterial).uniforms.pointSize.value = sizes[profile]
+  }
+
+  bindResult(binding: ResultBinding | null) {
+    const uniforms = this.lineMaterial.uniforms
+    uniforms.resultEnabled.value = binding ? 1 : 0
+    if (!binding) return
+    uniforms.resultTexture.value = binding.texture
+    uniforms.resultColorLut.value = binding.colorLut
+    uniforms.resultTextureSize.value.set(binding.textureWidth, binding.textureHeight)
+    uniforms.resultStationCount.value = binding.stationCount
+    uniforms.resultMin.value = binding.min
+    uniforms.resultMax.value = binding.max
+  }
+
+  setResultRange(min: number, max: number) {
+    this.lineMaterial.uniforms.resultMin.value = min
+    this.lineMaterial.uniforms.resultMax.value = max
+  }
+
+  setMemberState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
+    const database = this.database
+    if (!database) return
+    if (state.visible !== undefined) database.setMemberFlag(entityId, ENTITY_VISIBLE, state.visible)
+    if (state.selected !== undefined) database.setMemberFlag(entityId, ENTITY_SELECTED, state.selected)
+    if (state.hovered !== undefined) database.setMemberFlag(entityId, ENTITY_HOVERED, state.hovered)
+    this.syncDirty()
+  }
+
+  setNodeState(entityId: number, state: { visible?: boolean; selected?: boolean; hovered?: boolean }) {
+    const database = this.database
+    if (!database) return
+    if (state.visible !== undefined) database.setNodeFlag(entityId, ENTITY_VISIBLE, state.visible)
+    if (state.selected !== undefined) database.setNodeFlag(entityId, ENTITY_SELECTED, state.selected)
+    if (state.hovered !== undefined) database.setNodeFlag(entityId, ENTITY_HOVERED, state.hovered)
+    this.syncDirty()
+  }
+
+  /** Copy workspace flags in one CPU pass and schedule one GPU upload per
+   * attribute. This avoids incrementing BufferAttribute versions per entity. */
+  syncAllEntityStates() {
+    const database = this.database
+    if (!database) return
+    for (let index = 0; index < database.memberCount; index++) {
+      const flags = database.memberFlags[index]
+      this.memberFlags[index * 2] = flags
+      this.memberFlags[index * 2 + 1] = flags
+    }
+    this.nodeFlags.set(database.nodeFlags.subarray(0, database.nodeCount))
+    ;(this.lineGeometry.getAttribute('entityFlags') as THREE.BufferAttribute).needsUpdate = true
+    ;(this.nodeGeometry.getAttribute('entityFlags') as THREE.BufferAttribute).needsUpdate = true
+    database.clearDirtyRanges()
+  }
+
+  entityIdForVertexIndex(vertexIndex: number) {
+    return this.database?.entityIdForMemberIndex(Math.floor(vertexIndex / VERTICES_PER_MEMBER))
+  }
+
+  dispose() {
+    this.group.removeFromParent()
+    this.lineGeometry.dispose()
+    this.nodeGeometry.dispose()
+    ;(this.lines.material as THREE.Material).dispose()
+    ;(this.nodes.material as THREE.Material).dispose()
+    this.database = null
+  }
+}

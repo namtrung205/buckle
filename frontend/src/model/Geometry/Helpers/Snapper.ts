@@ -6,6 +6,17 @@ import { Vector3 } from 'three';
 import { ElementType } from '../../../types';
 import { findNodeAtPosition } from './utils';
 import { makeAutoObservable } from "mobx";
+import {
+  closestProjectedMemberPoint,
+  MEMBER_SNAP_RATIOS,
+  memberSnapRatioLabel,
+} from './structuralSnap';
+
+export type SnappedMemberPoint = Readonly<{
+  memberId: number
+  ratio: number
+  position: THREE.Vector3
+}>
 
 type Label = {
   id : string
@@ -23,7 +34,15 @@ class Snapper {
   snappedCoords : THREE.Vector3 | null
   snappedScreenCoords : THREE.Vector2 | null 
   snappedNode : Node | undefined
+  snappedMemberPoint : SnappedMemberPoint | undefined
   model : Model  
+  /** Endpoint snap provenance for the viewport interaction adapter (Goal 3):
+   *  the snapped node id plus the (possibly plane-projected) position. `exact`
+   *  mirrors the 1e-4 on-plane rule — only an exact on-plane node keeps its
+   *  identity when a plugin interaction reuses it. */
+  snappedEndpoint : { id : number, position : THREE.Vector3, exact : boolean } | undefined
+  /** Grid snap position when the current pointer snapped to the grid. */
+  snappedGrid : THREE.Vector3 | undefined
   threshold : number = 0.1
   /** Max perpendicular distance (m) a node/point may sit from the active working
    *  plane to still count as "on the plane" — tighter than the endpoint screen
@@ -41,6 +60,7 @@ class Snapper {
     this.snappedCoords = null
     this.snappedScreenCoords = null
     this.snappedNode = undefined
+    this.snappedMemberPoint = undefined
     this.enabled = false
     this.setupEvent = true
     makeAutoObservable(this)
@@ -109,61 +129,55 @@ class Snapper {
     const gridDivisions = this.model.gridHelper.divisions
     const gridStep = gridSize / gridDivisions
     const snappedGrid = threeD ? null : this.snapToGrid(this.model.pointerCoords, gridStep)
-    const {snappedEndPoint, elementId } = this.getClosestEndPoint(threeD) || { snappedEndPoint: null, elementId: null }
+    const {snappedEndPoint, elementId, memberPoint } = this.getClosestEndPoint(threeD)
+      || { snappedEndPoint: null, elementId: null, memberPoint: undefined }
     
 
     this.snappedNode = undefined
+    this.snappedMemberPoint = undefined
     this.snappedCoords = null
     this.snappedScreenCoords = null
 
+    this.snappedEndpoint = undefined
+    this.snappedGrid = undefined
     if(this.onNode && snappedEndPoint){
-      // The hovered mesh may be a NODE mesh (elementId = node id) or a MEMBER
-      // (elementId = member id, whose two endpoint vertices are the candidates)
-      // — resolve the real node by position so member endpoints are snappable.
       const node = this.model?.nodes?.find((n) => n.id === elementId)
         ?? findNodeAtPosition(this.model.nodes, snappedEndPoint)
       if(node){
         if (threeD) {
-          // 3D mode: any existing node is a valid snap at its TRUE position —
-          // no plane-distance rejection, no projection onto a plane. The member
-          // will connect exactly where the node lives.
           this.snappedCoords = snappedEndPoint.clone()
           this.snappedNode = node
-          this.model?.labeler?.batchUpdateOrCreate([{
-            id : 'endPointSnap',
-            position : snappedEndPoint.clone(),
-            text : '',
-            type : 'endPointSnap'
-          }])
-          const projected = this.snappedCoords.clone().project(this.model.camera.cam)
-          this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
         } else {
-        const plane = this.model.worldPlane
-        // Only snap a node that lies on the active working plane — never let a
-        // draw pick snap to a node sitting on another level / axis.
-        const distance = Math.abs(plane.distanceToPoint(snappedEndPoint))
-        if (distance <= this.planeThreshold) {
-          // Project the point ONTO the active plane. Plane.projectPoint
-          // respects the plane's constant/offset; Vector3.projectOnPlane only
-          // strips the normal component and would move the point onto the
-          // parallel plane THROUGH THE ORIGIN (wrong elevation/offset).
-          const p = plane.projectPoint(snappedEndPoint.clone(), new THREE.Vector3())
-          this.model?.labeler?.batchUpdateOrCreate([{
-            id : 'endPointSnap',
-            position : p,
-            text : '',
-            type : 'endPointSnap'
-          }])
-          this.snappedCoords = p
-          // Reuse the existing node's id only when it truly lies ON the plane:
-          // a node merely NEAR the plane is projected to a free point so the
-          // drawn member lands on the working plane without re-binding to (and
-          // contradicting) the off-plane node.
-          this.snappedNode = distance <= 1e-4 ? node : undefined
-          const projected = this.snappedCoords.clone().project(this.model.camera.cam)
-          this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
+          const plane = this.model.worldPlane
+          const distance = Math.abs(plane.distanceToPoint(snappedEndPoint))
+          if (distance <= this.planeThreshold) {
+            this.snappedCoords = plane.projectPoint(snappedEndPoint.clone(), new THREE.Vector3())
+            this.snappedNode = distance <= 1e-4 ? node : undefined
+          }
         }
+      } else if (memberPoint) {
+        // This station becomes a real node only when Line commits the split.
+        const p = threeD
+          ? memberPoint.position.clone()
+          : this.model.worldPlane.projectPoint(memberPoint.position, new THREE.Vector3())
+        this.snappedCoords = p
+        this.snappedMemberPoint = { ...memberPoint, position: p.clone() }
+      }
+
+      if (this.snappedCoords) {
+        if (this.snappedNode !== undefined) {
+          this.snappedEndpoint = { id: this.snappedNode.id, position: this.snappedCoords.clone(), exact: true }
+        } else if (node) {
+          this.snappedEndpoint = { id: node.id, position: this.snappedCoords.clone(), exact: false }
         }
+        this.model?.labeler?.batchUpdateOrCreate([{
+          id: 'endPointSnap',
+          position: this.snappedCoords,
+          text: memberPoint ? memberSnapRatioLabel(memberPoint.ratio) : '',
+          type: 'endPointSnap',
+        }])
+        const projected = this.snappedCoords.clone().project(this.model.camera.cam)
+        this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
       }
     }
     else if(!threeD && this.onGrid && snappedGrid){
@@ -174,6 +188,7 @@ class Snapper {
         type : 'gridSnap'
       }])
       this.snappedCoords = snappedGrid
+      this.snappedGrid = snappedGrid.clone()
       const projected = this.snappedCoords.clone().project(this.model.camera.cam)
       this.snappedScreenCoords = new THREE.Vector2(projected.x, projected.y)
     }
@@ -197,6 +212,50 @@ class Snapper {
   getClosestEndPoint(threeD: boolean = false) {
     if(!this.onNode) return
 
+    // Centerline and thin-shell modes do not expose one raycastable mesh per
+    // entity. Resolve the stable node/member IDs through the shared GPU picker
+    // instead of waiting for Selector.hovered (which is legacy solid-only).
+    if (this.model.renderMode !== 'solid-extrude') {
+      // Snapper is constructed before the structural picker during Model
+      // bootstrap, and its event setup performs one immediate update.
+      if (!this.model.structuralPicker) return
+
+      const pointer = new THREE.Vector2(this.model.pointerCoords.x, this.model.pointerCoords.y)
+      const camera = this.model.camera.cam
+      const accepts = (position: THREE.Vector3) => threeD || Math.abs(this.model.worldPlane.distanceToPoint(position)) <= this.planeThreshold
+
+      if (this.model.visibility?.nodes) {
+        const nodePick = this.model.structuralPicker.pick(pointer.x, pointer.y, camera, 'node')
+        if (nodePick) {
+          const node = this.model.nodes.find(candidate => candidate.id === nodePick.entityId)
+          if (node) {
+            const position = new THREE.Vector3(node.x, node.y, node.z)
+            if (accepts(position)) return { snappedEndPoint: position, elementId: node.id }
+          }
+        }
+      }
+
+      // A node hit wins. Otherwise choose only an intentional station on the
+      // picked member, never an arbitrary point along its projected line.
+      const memberPick = this.model.structuralPicker.pick(pointer.x, pointer.y, camera, 'member')
+      const member = memberPick ? this.model.members.find(candidate => candidate.id === memberPick.entityId) : undefined
+      if (!member) return
+      const start = new THREE.Vector3(member.nodes[0].x, member.nodes[0].y, member.nodes[0].z)
+      const end = new THREE.Vector3(member.nodes[1].x, member.nodes[1].y, member.nodes[1].z)
+      const ratios = this.model.visibility?.nodes ? MEMBER_SNAP_RATIOS : [0, ...MEMBER_SNAP_RATIOS, 1]
+      const closest = closestProjectedMemberPoint(pointer, camera, member.id, start, end, this.threshold, ratios)
+      if (!closest || !accepts(closest.position)) return
+      if (closest.ratio === 0 || closest.ratio === 1) {
+        const node = closest.ratio === 0 ? member.nodes[0] : member.nodes[1]
+        return { snappedEndPoint: closest.position, elementId: node.id }
+      }
+      return {
+        snappedEndPoint: closest.position,
+        elementId: member.id,
+        memberPoint: { memberId: member.id, ratio: closest.ratio, position: closest.position },
+      }
+    }
+
     const mesh = this.model.selector?.hovered 
     // const lineTool = Line.getInstance()
     if(!mesh) return
@@ -219,7 +278,7 @@ class Snapper {
 
     let v1: number[] = [];
     let v2: number[] = [];
-    let v3: number[] = [];
+    const v3: number[] = [];
     let vertices: number[][] = [];
     switch(type){
       case '3dLine':
@@ -282,6 +341,8 @@ class Snapper {
     this.model.labeler?.deleteOne('gridSnap')
     this.model.labeler?.deleteOne('endPointSnap')
     this.enabled = false
+    this.snappedEndpoint = undefined
+    this.snappedGrid = undefined
   }
 
   enable() {

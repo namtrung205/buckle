@@ -252,13 +252,7 @@ const AddOrEdit = observer(({ open, onClose, selectedBoundaryCondition = null }:
       boundaryConditionData.rz = bc.rz === '1' ? 1 : 0;
     }
 
-    if (selectedBoundaryCondition) {
-      Object.assign(selectedBoundaryCondition, boundaryConditionData);
-      selectedBoundaryCondition.createOrUpdate();
-    } else {
-      const newBC = new BoundaryCondition(model, boundaryConditionData as any);
-      newBC.createOrUpdate();
-    }
+    model.createOrUpdateBoundaryConditions([boundaryConditionData]);
 
     reset();
     onClose();

@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; frame-src 'self' blob:; connect-src 'self'">
+</head><body><pre id="result">running</pre><script type="module">
+import { hardenPluginPanelHtml } from '/src/core/plugins/PanelHtmlSecurity.ts';
+const endpoint = new URL('/index.html', location.href).href;
+const panelHtml = `<!doctype html><html><head><script>
+  parent.postMessage({kind:'panel.ready'}, '*');
+  fetch(${JSON.stringify(endpoint)}).then(() => parent.postMessage({kind:'panel.network-readable'}, '*'))
+    .catch(() => parent.postMessage({kind:'panel.network-blocked'}, '*'));
+<\/script></head><body>panel</body></html>`;
+const frame = document.createElement('iframe');
+frame.sandbox = 'allow-scripts';
+frame.src = URL.createObjectURL(new Blob([hardenPluginPanelHtml(panelHtml)], {type:'text/html'}));
+const report = {ready:false, networkBlocked:false, error:null};
+window.addEventListener('message', event => {
+  if (event.source !== frame.contentWindow) return;
+  if (event.data?.kind === 'panel.ready') report.ready = true;
+  if (event.data?.kind === 'panel.network-blocked') report.networkBlocked = true;
+  if (event.data?.kind === 'panel.network-readable') report.error = 'panel read app origin';
+  document.getElementById('result').textContent = JSON.stringify(report);
+});
+document.body.appendChild(frame);
+setTimeout(() => {
+  if (!report.ready || !report.networkBlocked) report.error ??= 'timeout';
+  document.getElementById('result').textContent = JSON.stringify(report);
+}, 5000);
+</script></body></html>

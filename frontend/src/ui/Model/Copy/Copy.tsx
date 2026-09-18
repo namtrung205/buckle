@@ -23,8 +23,8 @@ const Copy = observer(({ open, onClose }: CopyProps) => {
   };
 
   const handleCopy = () => {
-    let currentTool = model.toolsController.getCurrentTool()
-    let toolUuid = currentTool?.uuid
+    const currentTool = model.toolsController.getCurrentTool()
+    const toolUuid = currentTool?.uuid
     if (toolUuid !== 'Copy') {
       currentTool?.stop()
     

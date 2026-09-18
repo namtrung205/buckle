@@ -65,6 +65,32 @@ const Dialog: React.FC<DialogProps> = ({
 }) => {
   const PaperComponent = draggable ? DraggablePaper : undefined;
 
+  // Merge caller-supplied PaperProps OVER the defaults below instead of letting
+  // the `{...rest}` spread replace them wholesale (JSX later-props-wins), so a
+  // dialog can pin a fixed width/height without losing the surface theme.
+  const { PaperProps: callerPaperProps, ...dialogRest } = rest;
+  const paperProps: PaperProps = {
+    ...callerPaperProps,
+    sx: [
+      {
+        backgroundColor: colors.surface,
+        borderRadius: '8px',
+        border: `1px solid ${colors.border}`,
+        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
+        overflow: 'hidden',
+        color: colors.text,
+        maxHeight: '85vh',
+        display: 'flex',
+        flexDirection: 'column',
+      },
+      ...(callerPaperProps?.sx
+        ? Array.isArray(callerPaperProps.sx)
+          ? callerPaperProps.sx
+          : [callerPaperProps.sx]
+        : []),
+    ],
+  };
+
   return (
     <MuiDialog
       open={open}
@@ -91,20 +117,8 @@ const Dialog: React.FC<DialogProps> = ({
               },
             }),
       }}
-      PaperProps={{
-        sx: {
-          backgroundColor: colors.surface,
-          borderRadius: '8px',
-          border: `1px solid ${colors.border}`,
-          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.45)',
-          overflow: 'hidden',
-          color: colors.text,
-          maxHeight: '85vh',
-          display: 'flex',
-          flexDirection: 'column',
-        },
-      }}
-      {...rest}
+      PaperProps={paperProps}
+      {...dialogRest}
     >
       {title && (
         <DialogTitle
