@@ -229,3 +229,82 @@ export const buildLoadInstances = (model: LoadInstanceModel): LoadInstances => {
   return { arrows, bands }
 }
 
+
+export type ReactionComponentName = 'Fx' | 'Fy' | 'Fz' | 'Mx' | 'My' | 'Mz'
+
+export type ReactionInstanceRow = {
+  id: number
+  x?: number
+  y?: number
+  z?: number
+  Fx?: number
+  Fy?: number
+  Fz?: number
+  Mx?: number
+  My?: number
+  Mz?: number
+}
+
+export type ReactionInstanceDeps = {
+  /** Scene nodes (three.js Y-up) - the arrow tip lands on the node position. */
+  nodes: readonly LoadInstanceNode[]
+  /** Raw solver rows (OpenSees Z-up: ops X/Y horizontal, ops Z vertical). */
+  reactions: readonly ReactionInstanceRow[]
+  /** Checked reaction components; only these are drawn. */
+  components: readonly ReactionComponentName[]
+}
+
+/** Support reactions reuse the nodal-load arrow language: one shaft + slim
+ *  cone diving INTO the support node (tip on the node = the reaction acts on
+ *  the structure). Backend rows are OpenSees Z-up while the scene is
+ *  three.js Y-up, so both the axis and the position are converted
+ *  (ops X->X, ops Y->Z, ops Z->Y); the scene node position is authoritative
+ *  and the raw row coordinates are only a fallback. Moment reactions draw a
+ *  double-headed arrow (two staggered cones) along the moment axis. */
+export const buildReactionInstances = ({ nodes, reactions, components }: ReactionInstanceDeps): LoadArrowInstance[] => {
+  const arrows: LoadArrowInstance[] = []
+  if (!components.length) return arrows
+  for (const reaction of reactions) {
+    const sceneNode = nodes.find(node => node.id === reaction.id)
+    const tip: Vec3 = sceneNode
+      ? [sceneNode.x, sceneNode.y, sceneNode.z]
+      : [reaction.x ?? 0, reaction.z ?? 0, reaction.y ?? 0] // Z-up -> Y-up fallback
+    for (const component of components) {
+      const value = Number(reaction[component] ?? 0)
+      if (!Number.isFinite(value) || Math.abs(value) < 1e-9) continue
+      // ops X -> scene X, ops Y -> scene Z, ops Z (vertical) -> scene Y.
+      const axis: Vec3 = component[1] === 'x' ? [1, 0, 0] : component[1] === 'y' ? [0, 0, 1] : [0, 1, 0]
+      const direction = vecScale(axis, value >= 0 ? 1 : -1)
+      const color: LoadRgb = component[0] === 'M' ? [1, .62, .05] : [0.2, .45, 1]
+      if (component[0] !== 'M') {
+        arrows.push({
+          origin: vecAdd(tip, vecScale(direction, -NODAL_ARROW_LENGTH)),
+          tip,
+          headLength: NODAL_HEAD.length,
+          headWidth: NODAL_HEAD.width,
+          color,
+        })
+        continue
+      }
+      // Double head: outer cone tip on the node, inner cone staggered behind
+      // it - both point into the node (right-hand-rule direction).
+      arrows.push(
+        {
+          origin: vecAdd(tip, vecScale(direction, -NODAL_ARROW_LENGTH)),
+          tip,
+          headLength: NODAL_HEAD.length,
+          headWidth: NODAL_HEAD.width,
+          color,
+        },
+        {
+          origin: vecAdd(tip, vecScale(direction, -0.55)),
+          tip: vecAdd(tip, vecScale(direction, -0.25)),
+          headLength: NODAL_HEAD.length,
+          headWidth: NODAL_HEAD.width,
+          color,
+        },
+      )
+    }
+  }
+  return arrows
+}
